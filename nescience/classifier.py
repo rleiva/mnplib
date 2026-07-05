@@ -1,565 +1,526 @@
 """
-classifier.py
+Minimum-nescience classifier.
 
-Machine learning
-with the minimum nescience principle
+This module implements a simplified AutoML-style classifier based on the
+Minimum Nescience Principle. It is designed for the revised mnplib architecture:
+
+    * ``Miscoding`` computes feature deficiency and surplus.
+    * ``Inaccuracy`` computes prediction mismatch.
+    * ``Surfeit`` computes redundancy of a canonical model description.
+    * ``Nescience`` aggregates the four components.
+
+The class does not split the data into train/test subsets. In the theory of
+nescience, the selected model is the one that minimizes nescience with respect
+to the available effective representation ``(X, y)``. Model complexity and
+excessive descriptive structure are penalized internally through the nescience
+components, especially surfeit and surplus.
+
+The class relies on the scikit-learn adapter layer to translate fitted models
+into explicit nescience artifacts:
+
+    model + X -> subset, predictions, model_string
+
+Supported models depend on the serializers registered in ``mnplib.models``.
+The default candidate set uses only classifiers supported by the current stable
+adapter implementation:
+
+    * LogisticRegression
+    * DecisionTreeClassifier
 
 @author:    Rafael Garcia Leiva
 @mail:      rgarcialeiva@gmail.com
-@web:       http://www.mathematicsunknown.com/
 @copyright: GNU GPLv3
 """
 
-from .nescience import Nescience
+from __future__ import annotations
 
-import numpy  as np
-from joblib import Parallel, delayed
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from typing import Any, Literal
 
-from sklearn.base import BaseEstimator, ClassifierMixin												
-														
-from sklearn.utils            import check_X_y
-from sklearn.utils            import check_array
+import numpy as np
+import pandas as pd
+
+from sklearn.base import BaseEstimator, ClassifierMixin, clone
+from sklearn.linear_model import LogisticRegression
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.utils import check_X_y, check_array
 from sklearn.utils.validation import check_is_fitted
 
-from scipy.optimize import differential_evolution
-
-# Supported classifiers
-
-from sklearn.naive_bayes    import MultinomialNB
-from sklearn.tree           import DecisionTreeClassifier
-from sklearn.svm            import LinearSVC
-from sklearn.neural_network import MLPClassifier
-from sklearn.svm			import SVC
+from .nescience import Nescience
+from .models import SerializationConfig, sklearn_model_artifacts
 
 
-class Classifier(BaseEstimator, ClassifierMixin):
+XType = Literal["auto", "numeric", "categorical"]
+BinSpec = int | Literal["auto"]
+Aggregation = Literal[
+    "euclidean",
+    "arithmetic",
+    "geometric",
+    "harmonic",
+    "maximum",
+    "addition",
+    "product",
+]
+
+
+@dataclass(frozen=True)
+class CandidateResult:
     """
-    Given a dataset X = {x1, ..., xp} composed by p features, and a target
-    variable y, automatically select the best model for a classification problem.
-    In particular, it computes the optimal subset of features, select
-    the best family of models, and the best hyperparameters for the model
-    selected.
+    Result obtained by evaluating one candidate classifier.
 
-    Example of usage:
+    Parameters
+    ----------
+    name : str
+        Candidate name.
 
-        from nescience.classifier import Classifer
-        from sklearn.dataset import load_digits
-        X, y = load_digits(return_X_y=True)
-        model = Classifer()
-        model.fit(X, y)
-        model.score(X, y)
+    estimator : object
+        Fitted scikit-learn classifier.
+
+    nescience : float
+        Aggregated nescience value.
+
+    components : dict
+        Four scalar nescience components: deficiency, surplus, inaccuracy, and
+        surfeit.
+
+    estimator_score : float
+        Native estimator score on the full representation. For scikit-learn
+        classifiers this is usually accuracy.
+
+    artifacts : object
+        ``ModelArtifacts`` object returned by the scikit-learn adapter.
+
+    metadata : dict
+        Optional adapter/model metadata.
     """
-    
-    def __init__(self, auto=True, fast=True, verbose=False, random_state=None):
-        """
-        Initialization of the class Classifier
-        
-        Parameters
-        ----------
-        auto         : find automatically the optimal model
-        fast         : use a greedy approach for fast training
-        verbose      : print addtional information
-        random_state : seed for the radom numbers generator
-        """
 
-        self.auto         = auto
-        self.fast         = fast
-        self.verbose      = verbose
+    name: str
+    estimator: object
+    nescience: float
+    components: dict[str, float]
+    estimator_score: float
+    artifacts: object
+    metadata: dict[str, Any]
+
+
+class NescienceClassifier(BaseEstimator, ClassifierMixin):
+    """
+    Select a classification model by minimizing nescience.
+
+    The estimator evaluates a set of candidate scikit-learn classifiers on the
+    same representation ``(X, y)`` used for fitting. The selected candidate is
+    the one with the lowest aggregated nescience.
+
+    Parameters
+    ----------
+    candidates : "default", mapping, sequence, or None, default="default"
+        Candidate classifiers to evaluate.
+
+        If ``"default"`` or ``None``, a built-in set of supported classifiers is
+        used. A mapping should map names to estimators. A sequence may contain
+        estimators or ``(name, estimator)`` pairs.
+
+    X_type : {"auto", "numeric", "categorical"}, default="numeric"
+        Type of the feature matrix used by ``Nescience``.
+
+    aggregation : {"euclidean", "arithmetic", "geometric", "harmonic",
+                   "maximum", "addition", "product"}, default="euclidean"
+        Aggregation method used by ``Nescience``.
+
+    weights : mapping or sequence of 4 floats, optional
+        Component weights passed to ``Nescience``.
+
+    n_bins : int or "auto", default="auto"
+        Number of bins used for numeric variables by the underlying metrics.
+
+    threshold_fraction : float, default=0.01
+        Passed to the internal ``Nescience`` object and used by its
+        ``Miscoding`` component.
+
+    surplus_penalty : float, default=1.0
+        Passed to the internal ``Nescience`` object and used by its
+        ``Miscoding`` component.
+
+    zlib_level : int, default=9
+        Compression level used by ``Surfeit``.
+
+    zlib_overhead : int, default=6
+        zlib wrapper overhead subtracted by ``Surfeit``.
+
+    serialization_config : SerializationConfig, optional
+        Configuration used by the model serializers. If omitted, the default
+        canonical serialization configuration is used.
+
+    random_state : int, RandomState instance, or None, default=None
+        Random seed assigned to default candidates that expose a
+        ``random_state`` parameter.
+
+    verbose : int, default=0
+        Verbosity level. If greater than zero, candidate scores are printed
+        during fitting.
+    """
+
+    def __init__(
+        self,
+        candidates="default",
+        X_type: XType = "numeric",
+        aggregation: Aggregation = "euclidean",
+        weights: Mapping[str, float] | Sequence[float] | None = None,
+        n_bins: BinSpec = "auto",
+        threshold_fraction: float = 0.01,
+        surplus_penalty: float = 1.0,
+        zlib_level: int = 9,
+        zlib_overhead: int = 6,
+        serialization_config: SerializationConfig | None = None,
+        random_state=None,
+        verbose: int = 0,
+    ):
+        self.candidates = candidates
+        self.X_type = X_type
+        self.aggregation = aggregation
+        self.weights = weights
+        self.n_bins = n_bins
+        self.threshold_fraction = threshold_fraction
+        self.surplus_penalty = surplus_penalty
+        self.zlib_level = zlib_level
+        self.zlib_overhead = zlib_overhead
+        self.serialization_config = serialization_config
         self.random_state = random_state
-        
-        return None
+        self.verbose = verbose
 
-    
     def fit(self, X, y):
         """
-        Select the best model that explains y given X.
-        
+        Fit all candidate classifiers and select the one with minimum nescience.
+
         Parameters
         ----------
-        X : array-like, shape (n_samples, n_features)
-            Sample vectors from which to compute miscoding.
-            
-        y : array-like, shape (n_samples)
-            The target values as numbers.
-                    
+        X : array-like or pandas.DataFrame of shape (n_samples, n_features)
+            Input representation.
+
+        y : array-like of shape (n_samples,)
+            Categorical target representation.
+
         Returns
         -------
-        self
-        """        
-                
-        # Supported Classifiers
-        self.classifiers_ = [
-            self.MultinomialNB,
-            self.DecisionTreeClassifier,
-            self.LinearSVC,
-            self.SVC,            
-            self.MLPClassifier
-        ]
+        self : NescienceClassifier
+            Fitted selector.
+        """
+        feature_names = self._resolve_input_feature_names(X)
 
-        self.X_, self.y_ = check_X_y(X, y, dtype=None)
+        X_checked, y_checked = check_X_y(X, y, dtype=None, ensure_2d=True)
 
-        self.nescience_ = Nescience(X_type="numeric", y_type="categorical")
+        self.X_ = X_checked
+        self.y_ = y_checked
+        self.n_samples_in_, self.n_features_in_ = X_checked.shape
+        self.feature_names_in_ = np.asarray(feature_names, dtype=object)
+        self.classes_ = np.unique(y_checked)
+        self.serialization_config_ = self._resolve_serialization_config()
+
+        self.nescience_ = Nescience(
+            X_type=self.X_type,
+            y_type="categorical",
+            aggregation=self.aggregation,
+            weights=self.weights,
+            n_bins=self.n_bins,
+            threshold_fraction=self.threshold_fraction,
+            surplus_penalty=self.surplus_penalty,
+            zlib_level=self.zlib_level,
+            zlib_overhead=self.zlib_overhead,
+        )
         self.nescience_.fit(self.X_, self.y_)
-        
-        # new y contains class indexes rather than labels in the range [0, n_classes]
-        self.classes_, self.y_ = np.unique(self.y_, return_inverse=True)						  
-        
-        nsc = 1
-        self.model_ = None
-        self.viu_   = None
-        
-        # Find optimal model
-        if self.auto:
-        
-            for clf in self.classifiers_:
-            
-                if self.verbose:
-                    print("Classifier: " + str(clf), end='')
-                
-                # If X contains negative values, MultinomialNB is skipped
-                if clf == self.MultinomialNB and not (self.X_>=0).all():
-                    if self.verbose:
-                        print("Skipped!")                
-                    continue
-                
-                (new_nsc, new_model, new_viu) = clf()
 
-                if self.verbose:
-                    print("Nescience:", new_nsc)                
+        self.candidates_ = self._resolve_candidates()
+        self.results_ = []
 
-                if new_nsc < nsc:
-                    nsc         = new_nsc
-                    self.model_ = new_model
-                    self.viu_   = new_viu
+        best_result = None
 
+        for name, estimator in self.candidates_:
+            result = self._evaluate_candidate(name, estimator)
+            self.results_.append(result)
+
+            if self.verbose:
+                print(
+                    f"{name}: nescience={result.nescience:.6f}, "
+                    f"estimator_score={result.estimator_score:.6f}"
+                )
+
+            if best_result is None or result.nescience < best_result.nescience:
+                best_result = result
+
+        if best_result is None:
+            raise RuntimeError("No candidate classifier was successfully evaluated.")
+
+        self.best_result_ = best_result
+        self.model_ = best_result.estimator
+        self.best_nescience_ = float(best_result.nescience)
+        self.best_components_ = dict(best_result.components)
+        self.best_artifacts_ = best_result.artifacts
+        self.best_candidate_name_ = best_result.name
+
+        # Keep classes_ aligned with the selected estimator where possible.
+        if hasattr(self.model_, "classes_"):
+            self.classes_ = np.asarray(self.model_.classes_)
+
+        self.is_fitted_ = True
         return self
-
 
     def predict(self, X):
         """
-        Predict class given a dataset
-    
+        Predict classes using the selected minimum-nescience classifier.
+
         Parameters
         ----------
-        X : array-like, shape (n_samples, n_features)   
+        X : array-like of shape (n_samples, n_features)
+            Input samples.
 
         Returns
         -------
-        A list of classes predicted
+        numpy.ndarray
+            Predicted class labels.
         """
-        
         check_is_fitted(self)
-        X = check_array(X)
-        
-        if self.viu_ is None:
-            msdX = X
-        else:
-            msdX = X[:,np.where(self.viu_)[0]]
 
-        return self.classes_[self.model_.predict(msdX)]
-
+        X_checked = check_array(X, dtype=None, ensure_2d=True)
+        return self.model_.predict(X_checked)
 
     def predict_proba(self, X):
         """
-        Predict the probability of being in a class given a dataset
-    
-        Parameters
-        ----------
-        X : array-like, shape (n_samples, n_features)   
-
-        Returns
-        -------      
-        An array of probabilities. The order of the list match
-        the order the internal attribute classes_
-        """
-        
-        check_is_fitted(self)
-        X = check_array(X)
-
-        if self.viu_ is None:
-            msdX = X
-        else:
-            msdX = X[:,np.where(self.viu_)[0]]
-					
-        return self.model_.predict_proba(msdX)
-
-
-    def score(self, X, y):
-        """
-        Evaluate the performance of the current model given a test dataset
-
-        Parameters
-        ----------
-        X : array-like, shape (n_samples, n_features)   
-        y : (optional) array-like, shape (n_samples)
+        Predict class probabilities using the selected classifier.
 
         Returns
         -------
-        One minus the mean error
+        numpy.ndarray
+            Class probabilities in the order of ``self.classes_``.
+
+        Raises
+        ------
+        AttributeError
+            If the selected classifier does not implement ``predict_proba``.
         """
-        
         check_is_fitted(self)
-        X, y = check_X_y(X, y, dtype=None)
-        
-        if self.viu_ is None:
-            msdX = X
-        else:
-            msdX = X[:,np.where(self.viu_)[0]]        
-        
-        return self.model_.score(msdX, y)
-	
-	
+
+        if not hasattr(self.model_, "predict_proba"):
+            raise AttributeError(
+                "The selected classifier does not implement predict_proba()."
+            )
+
+        X_checked = check_array(X, dtype=None, ensure_2d=True)
+        return self.model_.predict_proba(X_checked)
+
+    def score(self, X, y):
+        """
+        Return the native score of the selected classifier.
+
+        For standard scikit-learn classifiers this is usually accuracy. This
+        method follows the scikit-learn ``ClassifierMixin`` convention and is
+        therefore not the nescience score.
+        """
+        check_is_fitted(self)
+
+        X_checked, y_checked = check_X_y(X, y, dtype=None, ensure_2d=True)
+        return self.model_.score(X_checked, y_checked)
+
+    def nescience_score(self) -> float:
+        """
+        Return the selected model's nescience value.
+
+        Lower values are better.
+        """
+        check_is_fitted(self)
+        return float(self.best_nescience_)
+
+    def components(self) -> dict[str, float]:
+        """
+        Return the four nescience components of the selected model.
+        """
+        check_is_fitted(self)
+        return dict(self.best_components_)
+
+    def explain(self) -> dict[str, object]:
+        """
+        Return the nescience explanation for the selected model.
+        """
+        check_is_fitted(self)
+
+        explanation = self.nescience_.explain(
+            **self.best_artifacts_.to_nescience_kwargs()
+        )
+        explanation["candidate_name"] = self.best_candidate_name_
+        explanation["model_type"] = self.best_artifacts_.model_type
+        explanation["model_metadata"] = self.best_artifacts_.metadata
+
+        return explanation
+
     def get_model(self):
         """
-        Get access to the private attribute model
-		
-        Return self.model_
+        Return the selected fitted scikit-learn classifier.
         """
+        check_is_fitted(self)
         return self.model_
 
-
-    def MultinomialNB(self):
-        
-        # No hyperparameters to optimize
-        
-        model = MultinomialNB()
-        model.fit(self.X_, self.y_)
-
-        nsc = self.nescience_.nescience(model)
-            
-        return (nsc, model, None)
-
-    
-    def LinearSVC(self):
-        
-        # No hyperparameters to optimize
-        
-        model = SVC(kernel='linear', probability=True, random_state=self.random_state, decision_function_shape='ovo')
-        model.fit(self.X_, self.y_)
-
-        nsc = self.nescience_.nescience(model)
-            
-        return (nsc, model, None)
-
-
-    def SVC(self): 
-       
-        # Different searches are possible to find the best hyperparameters
-        # The following one produced good results on the three datasets it was tested on
-        
-        # The four hyperparameters to optimize
-        hyper_param_default = ['degree', 'C', 'gamma', 'coef0']
-		
-        # The order in which they will be treated in the search
-        hyper_param_order = [1, 2, 3, 4]
-		
-        # gamma is searched among the same values as C and coef0 but is always multiplied by inv (its default value)
-        inv = 1/(len(self.X_[0])*np.var(self.X_))
-		
-        # maximum number of iterations to fit the SVC models in this search. Could be reduced to 1e5 or 1e4
-        max_iter = 1e6
-
-        hyper_param = [] 
-        for i in range(4):
-            hyper_param.append(hyper_param_default[hyper_param_order[i]-1])
-        
-        # Default values
-        param_value = {'degree': 5, 'C': 1, 'gamma': inv, 'coef0': 1}
-		
-        tmp_model = SVC(kernel='poly', max_iter=max_iter)
-        tmp_model.set_params(**param_value)
-        tmp_model.fit(self.X_, self.y_)
-        tmp_nsc = self.nescience_.nescience(tmp_model)
-    
-        decreased = True
-        while (decreased):
-        
-            decreased = False
-            
-            for param in hyper_param:
-                
-                if param=='degree':
-                
-                    # Test degree=degree+1
-                    tmp_model.set_params(**{param: param_value[param]+1})
-                    tmp_model.fit(self.X_, self.y_)
-                    new_nsc = self.nescience_.nescience(tmp_model)
-                    if new_nsc<tmp_nsc:
-                        tmp_nsc = new_nsc
-                        param_value[param] += 1
-                        decreased = True
-                    else:
-					
-                        # Test degree=degree-1
-                        tmp_model.set_params(**{param: param_value[param]-1})
-                        tmp_model.fit(self.X_, self.y_)
-                        new_nsc = self.nescience_.nescience(tmp_model)
-                        if new_nsc<tmp_nsc:
-                            tmp_nsc = new_nsc
-                            decreased = True
-                            param_value[param] -= 1
-                        else:
-				
-                            # Test degree=degree+2
-                            tmp_model.set_params(**{param: param_value[param]+2})
-                            tmp_model.fit(self.X_, self.y_)
-                            new_nsc = self.nescience_.nescience(tmp_model)
-                            if new_nsc<tmp_nsc:
-                                tmp_nsc = new_nsc
-                                param_value[param] += 2
-                                decreased = True
-                            else:
-					
-                                # Test degree=degree-2
-                                tmp_model.set_params(**{param: param_value[param]-2})
-                                tmp_model.fit(self.X_, self.y_)
-                                new_nsc = self.nescience_.nescience(tmp_model)
-                                if new_nsc<tmp_nsc:
-                                    tmp_nsc = new_nsc
-                                    decreased = True
-                                    param_value[param] -= 2
-                                else:
-                                    tmp_model.set_params(**{param: param_value[param]})
-                
-                else: # param = 'C' or 'coef0' or 'gamma'
-                
-                    # Test param=param*2
-                    tmp_model.set_params(**{param: param_value[param]*2})
-                    tmp_model.fit(self.X_, self.y_)
-                    new_nsc = self.nescience_.nescience(tmp_model)
-                    if new_nsc<tmp_nsc:
-                        tmp_nsc = new_nsc
-                        param_value[param] *= 2
-                        decreased = True
-                    else:
-					
-                        # Test param=param/2
-                        tmp_model.set_params(**{param: param_value[param]/2})
-                        tmp_model.fit(self.X_, self.y_)
-                        new_nsc = self.nescience_.nescience(tmp_model)
-                        if new_nsc<tmp_nsc:
-                            tmp_nsc = new_nsc
-                            param_value[param] /= 2
-                            decreased = True
-                        else:
-                            tmp_model.set_params(**{param: param_value[param]})
-                            if param=='coef0':
-							
-                                # Test coef0=-coef0
-                                tmp_model.set_params(**{param: -param_value[param]})
-                                tmp_model.fit(self.X_, self.y_)
-                                new_nsc = self.nescience_.nescience(tmp_model)
-                                if new_nsc<tmp_nsc:
-                                    tmp_nsc = new_nsc
-                                    param_value[param] *= -1
-                                    decreased = True
-                                else:
-                                    tmp_model.set_params(**{param: param_value[param]})
-    
-
-        model = tmp_model.fit(self.X_, self.y_)
-        nsc = tmp_nsc
-        
-        if self.auto==False:
-            self.model_ = model
-            
-        return (nsc, model, None)
-
-
-    # Helper function to train an optimal decison tree in parallel
-    def _create_tree_helper(self, ccp_alpha, min_samples_leaf=5):
-
-        model = DecisionTreeClassifier(ccp_alpha=ccp_alpha, min_samples_leaf=min_samples_leaf, max_features="auto")
-        model.fit(self.X_, self.y_)
-        nsc = self.nescience_.nescience(model)
-
-        return (nsc, model)
-
-
-    def DecisionTreeClassifier(self, min_samples_leaf=5, alpha_tol=1e-7, n_jobs=1):
+    def results_dataframe(self) -> pd.DataFrame:
         """
-        Find the best model (hyperparameters optimization) in the familiy of decision trees    
+        Return a tabular summary of all evaluated candidates.
 
-        Parameters
-        ----------
-        min_samples_leaf : We can restrict the minimum number of samples per leave,
-                           if the algorithm is too slow
-        alpha_tol:         Tolerance factor for the ccp_alpha values
-        n_jobs:            Number of parallel jobs
-   
-        Return
-        ------
-        best_nsc   : best nescience achieved
-        best_model : a trained DecisionTreeClassifer
-        best_viu   : None, since all the variables are used as input
+        Returns
+        -------
+        pandas.DataFrame
+            Candidate results sorted by ascending nescience.
         """
+        check_is_fitted(self)
 
-        # Compute all the possible prunning points
+        rows = []
+        for result in self.results_:
+            row = {
+                "candidate": result.name,
+                "model_type": result.artifacts.model_type,
+                "nescience": result.nescience,
+                "estimator_score": result.estimator_score,
+                "n_features_in_use": len(result.artifacts.subset),
+                "description_length": len(
+                    result.artifacts.model_string.encode("utf-8")
+                ),
+            }
+            row.update(result.components)
+            rows.append(row)
 
-        clf    = DecisionTreeClassifier(min_samples_leaf=min_samples_leaf, max_features="auto", random_state=self.random_state)
-        path   = clf.cost_complexity_pruning_path(self.X_, self.y_)
-        
-        # Some alphas are duplicated
-        ccp_alphas = np.unique(path.ccp_alphas) 
-        
-        # Some alphas are too close
-        alphas = list()
-        prev_alpha = 1
-        for new_alpha in reversed(ccp_alphas):
-            if prev_alpha - new_alpha < alpha_tol:
-                 continue
-            alphas.append(new_alpha)
-            prev_alpha = new_alpha
+        return pd.DataFrame(rows).sort_values("nescience").reset_index(drop=True)
 
-        # Search for the best prunning point
+    def model_string(self) -> str:
+        """
+        Return the canonical model string of the selected model.
+        """
+        check_is_fitted(self)
+        return str(self.best_artifacts_.model_string)
 
-        if n_jobs != 1:    # Parallel search
-            results = Parallel(n_jobs=n_jobs)(delayed(self._create_tree_helper)(ccp_alpha) for ccp_alpha in alphas)
+    def _evaluate_candidate(self, name: str, estimator) -> CandidateResult:
+        """
+        Fit and evaluate a candidate classifier on the full representation.
+        """
+        model = clone(estimator)
+        model.fit(self.X_, self.y_)
 
-        else:              # Sequential search
+        artifacts = sklearn_model_artifacts(
+            model,
+            self.X_,
+            feature_names=list(self.feature_names_in_),
+            config=self.serialization_config_,
+        )
 
-            results = list()
-            previous_nodes = -1
+        components = self.nescience_.components(**artifacts.to_nescience_kwargs())
+        value = self.nescience_.aggregate_components(**components)
 
-            for ccp_alpha in reversed(alphas):
-    
-                model = DecisionTreeClassifier(ccp_alpha=ccp_alpha, min_samples_leaf=min_samples_leaf, max_features="auto", random_state=self.random_state)
-                model.fit(self.X_, self.y_)
-    
-                # Skip evaluation if nothing has changed
-                if model.tree_.node_count == previous_nodes:
-                    continue
-    
-                previous_nodes = model.tree_.node_count
-                nsc = self.nescience_.nescience(model)
+        return CandidateResult(
+            name=name,
+            estimator=model,
+            nescience=float(value),
+            components=dict(components),
+            estimator_score=float(model.score(self.X_, self.y_)),
+            artifacts=artifacts,
+            metadata=dict(artifacts.metadata),
+        )
 
-                results.append((nsc, model))
+    def _resolve_candidates(self) -> list[tuple[str, object]]:
+        """
+        Resolve user-supplied or default candidate classifiers.
+        """
+        if self.candidates is None or self.candidates == "default":
+            return self._default_candidates()
+
+        if isinstance(self.candidates, Mapping):
+            return [(str(name), estimator) for name, estimator in self.candidates.items()]
+
+        resolved = []
+        for index, item in enumerate(self.candidates):
+            if isinstance(item, tuple) and len(item) == 2:
+                name, estimator = item
+                resolved.append((str(name), estimator))
+            else:
+                resolved.append((f"{type(item).__name__}_{index}", item))
+
+        if not resolved:
+            raise ValueError("At least one candidate classifier must be provided.")
+
+        return resolved
+
+    def _default_candidates(self) -> list[tuple[str, object]]:
+        """
+        Return the default candidate classifiers.
+
+        Only models supported by the stable adapter serializers are included.
+        """
+        candidates = [
+            (
+                "logistic_C_0.1",
+                LogisticRegression(
+                    C=0.1,
+                    max_iter=1000,
+                    random_state=self.random_state,
+                ),
+            ),
+            (
+                "logistic_C_1",
+                LogisticRegression(
+                    C=1.0,
+                    max_iter=1000,
+                    random_state=self.random_state,
+                ),
+            ),
+            (
+                "logistic_C_10",
+                LogisticRegression(
+                    C=10.0,
+                    max_iter=1000,
+                    random_state=self.random_state,
+                ),
+            ),
+            (
+                "tree_depth_2",
+                DecisionTreeClassifier(max_depth=2, random_state=self.random_state),
+            ),
+            (
+                "tree_depth_3",
+                DecisionTreeClassifier(max_depth=3, random_state=self.random_state),
+            ),
+            (
+                "tree_depth_5",
+                DecisionTreeClassifier(max_depth=5, random_state=self.random_state),
+            ),
+            (
+                "tree_unrestricted",
+                DecisionTreeClassifier(random_state=self.random_state),
+            ),
+        ]
+
+        return candidates
+
+    def _resolve_serialization_config(self) -> SerializationConfig:
+        """
+        Return the serialization configuration used during fitting.
+        """
+        if self.serialization_config is None:
+            return SerializationConfig()
+
+        if not isinstance(self.serialization_config, SerializationConfig):
+            raise TypeError(
+                "serialization_config must be an instance of SerializationConfig "
+                "or None."
+            )
+
+        return self.serialization_config
+
+    @staticmethod
+    def _resolve_input_feature_names(X) -> list[str]:
+        """
+        Resolve feature names before scikit-learn validation strips DataFrames.
+        """
+        if hasattr(X, "columns"):
+            return [str(name) for name in X.columns]
+
+        n_features = int(getattr(X, "shape")[1])
+        return [f"x{i}" for i in range(n_features)]
 
 
-        # Find the best prunning point
-        best_nsc = 10e6
-        for nsc, model in results:
-            if nsc < best_nsc:
-                best_nsc   = nsc
-                best_model = model
-
-        return (best_nsc, best_model, None)
-
-    
-    def MLPClassifier(self):
-        
-        # Relevance of features
-        tmp_msd = msd = self.nescience_.miscoding_.miscoding_features()
-        
-        # Variables in use
-        tmp_viu = viu = np.zeros(self.X_.shape[1], dtype=np.int)
-
-        # Create the initial neural network
-        #  - two features
-        #  - one hidden layer
-        #  - three units
-        
-        tmp_hu = hu = [3]
-
-        # Select the two most relevant features
-        viu[np.argmax(msd)] = 1        
-        msd[np.where(viu)] = -1
-        viu[np.argmax(msd)] = 1
-        msd[np.where(viu)] = -1
-        
-        msdX = self.X_[:,np.where(viu)[0]]
-        tmp_nn = nn = MLPClassifier(hidden_layer_sizes = hu, random_state=self.random_state)
-        nn.fit(msdX, self.y_)
-        prd  = nn.predict(msdX)
-        tmp_nsc = nsc = self.nescience_.nescience(nn, subset=viu, predictions=prd)
-        
-        # While the nescience decreases
-        decreased = True        
-        while (decreased):
-            
-            decreased = False
-
-            #
-            # Test adding a new feature  
-            #
-            
-            # Check if therer are still more variables to add
-            if np.sum(viu) != viu.shape[0]:
-            
-                new_msd = msd.copy()
-                new_viu = viu.copy()
-            
-                new_viu[np.argmax(new_msd)] = 1
-                new_msd[np.where(viu)] = -1
-
-                msdX    = self.X_[:,np.where(new_viu)[0]]
-                new_nn  = MLPClassifier(hidden_layer_sizes = hu, random_state=self.random_state)        
-                new_nn.fit(msdX, self.y_)
-                prd     = new_nn.predict(msdX)
-                new_nsc = self.nescience_.nescience(new_nn, subset=new_viu, predictions=prd)
-            
-                # Save data if nescience has been reduced                        
-                if new_nsc < tmp_nsc:                                
-                    decreased = True
-                    tmp_nn  = new_nn
-                    tmp_nsc = new_nsc
-                    tmp_msd = new_msd
-                    tmp_viu = new_viu
-                    tmp_hu  = hu
-                    
-            #
-            # Test adding a new layer
-            #
-            
-            new_hu = hu.copy()
-            new_hu.append(3)
-
-            msdX    = self.X_[:,np.where(viu)[0]]
-            new_nn  = MLPClassifier(hidden_layer_sizes = new_hu, random_state=self.random_state)
-            new_nn.fit(msdX, self.y_)
-            prd     = new_nn.predict(msdX)
-            new_nsc = self.nescience_.nescience(new_nn, subset=viu, predictions=prd)
-            
-            # Save data if nescience has been reduced 
-            if new_nsc < tmp_nsc:                                
-                decreased = True
-                tmp_nn  = new_nn
-                tmp_nsc = new_nsc
-                tmp_msd = msd
-                tmp_viu = viu
-                tmp_hu  = new_hu
-
-            #
-            # Test adding a new unit
-            #
-            
-            for i in np.arange(len(hu)):
-                
-                new_hu    = hu.copy()
-                new_hu[i] = new_hu[i] + 1            
-
-                msdX    = self.X_[:,np.where(viu)[0]]
-                new_nn  = MLPClassifier(hidden_layer_sizes = new_hu, random_state=self.random_state)
-                new_nn.fit(msdX, self.y_)
-                prd     = new_nn.predict(msdX)
-                new_nsc = self.nescience_.nescience(new_nn, subset=viu, predictions=prd)
-            
-                # Save data if nescience has been reduced                        
-                if new_nsc < tmp_nsc:                                
-                    decreased = True
-                    tmp_nn  = new_nn
-                    tmp_nsc = new_nsc
-                    tmp_msd = msd
-                    tmp_viu = viu
-                    tmp_hu  = new_hu
-                
-            # Update neural network
-            nn      = tmp_nn
-            nsc     = tmp_nsc
-            viu     = tmp_viu
-            msd     = tmp_msd
-            hu      = tmp_hu
-
-        # -> end while
-
-        return (nsc, nn, viu)
+# Backward-compatible alias. Prefer NescienceClassifier in new code.
+Classifier = NescienceClassifier

@@ -1,580 +1,905 @@
 """
-miscoding.py
+Labeled miscoding based on empirical code lengths.
 
-Machine learning
-with the minimum nescience principle
+This module provides the :class:`Miscoding` estimator, a scikit-learn-compatible
+utility for measuring how well a set of features represents a target variable.
+
+The estimator provides feature-level diagnostics and subset-level diagnostics.
+Feature-level diagnostics are computed from empirical code lengths. Subset-level
+diagnostics aggregate the feature-level quantities through a redundancy-discounted
+product of deficiencies and a redundancy-weighted surplus average.
+
+The code-length estimates are computed through the stateless empirical
+distribution utilities.
 
 @author:    Rafael Garcia Leiva
 @mail:      rgarcialeiva@gmail.com
-@web:       http://www.mathematicsunknown.com/
-@copyright: GNU GPLv3
 """
 
-from .utils import optimal_code_length
+from __future__ import annotations
 
+from typing import Literal
+
+import numpy as np
 import pandas as pd
-import numpy  as np
 
-from sklearn.base import BaseEstimator													
-from sklearn.utils            import check_array
-from sklearn.utils            import column_or_1d
+from sklearn.base import BaseEstimator
+from sklearn.utils import check_X_y
+from sklearn.utils.multiclass import type_of_target
 from sklearn.utils.validation import check_is_fitted
 
-# Supported classifiers
+from .utils import empirical_distribution
 
-from sklearn.naive_bayes    import MultinomialNB
-from sklearn.tree           import DecisionTreeClassifier
-from sklearn.svm            import LinearSVC
-from sklearn.neural_network import MLPClassifier
-from sklearn.svm			import SVC
 
-# Supported regressors
-
-from sklearn.linear_model   import LinearRegression
-from sklearn.tree           import DecisionTreeRegressor
-from sklearn.svm            import LinearSVR
-from sklearn.neural_network import MLPRegressor
+XType = Literal["auto", "numeric", "categorical"]
+YType = Literal["auto", "numeric", "categorical"]
+BinSpec = int | Literal["auto"]
+SubsetMode = Literal["deficiency", "surplus", "miscoding"]
 
 
 class Miscoding(BaseEstimator):
     """
-    Given a dataset X = {x1, ..., xp} composed by p features, and a target
-    variable y, the miscoding of the feature xj measures how difficult is to
-    reconstruct y given xj, and the other way around. We are not only
-    interested in to identify how much information xj contains about y, but
-    also if xj contains additional information that is not related
-    to y (which is a bad thing). Miscoding also takes into account that
-    feature xi might be redundant with respect to feature xj.
+    Analyze supervised miscoding through deficiency and surplus.
 
-    The Miscoding class allow us to compute the relevance of
-    features, the quality of a dataset, and select the optimal subset of
-    features to include in a study
+    For each feature ``X_j`` and target ``Y``, the estimator computes
 
-    Example of usage:
-        
-        from nescience.miscoding import Miscoding
-        from sklearn.datasets import load_beast_cancer
+        deficiency_j = K(Y | X_j) / K(Y)
+        surplus_j    = K(X_j | Y) / K(X_j)
+        miscoding_j  = max(deficiency_j, surplus_j)
 
-        X, y = load_breast_cancer(return_X_y=True)
+    For a subset of features ``S``, the estimator uses a
+    redundancy-discounted aggregation:
 
-        miscoding = Miscoding()
-        miscoding.fit(X, y)
-        mscd = miscoding.miscoding_features()
+        D(S) = product_j deficiency_j ** alpha_j,
+
+    where
+
+        alpha_j = 1 / (1 + sum_{k != j} rho_{jk}).
+
+    Here ``rho_{jk}`` is the pairwise redundancy between features ``X_j`` and
+    ``X_k``. The subset surplus is computed as a redundancy-weighted average of
+    the individual feature surpluses. Subset miscoding is the maximum of the
+    aggregated deficiency and surplus.
+
+    Feature selection is performed greedily. At each step, the estimator adds
+    the feature whose inclusion produces the largest reduction in subset
+    miscoding according to the same redundancy-discounted aggregation.
     """
 
-    def __init__(self, X_type="numeric", y_type="numeric", redundancy=False):
+    _VALID_X_TYPES = ("auto", "numeric", "categorical")
+    _VALID_Y_TYPES = ("auto", "numeric", "categorical")
+    _VALID_SUBSET_MODES = ("deficiency", "surplus", "miscoding")
+
+    def __init__(
+        self,
+        X_type: XType = "auto",
+        y_type: YType = "auto",
+        n_bins: BinSpec = "auto",
+        min_improvement: float = 0.0,
+    ):
         """
-        Initialization of the class Miscoding
-        
+        Initialize the estimator.
+
         Parameters
         ----------
-        X_type:     The type of the features, numeric, mixed or categorical
-        y_type:     The type of the target, numeric or categorical
-        redundancy: if "True" takes into account the redundancy between features
-                    to compute the miscoding, if "False" only the miscoding with
-                    respect to the target variable is computed.
-          
-        """        
+        X_type : {"auto", "numeric", "categorical"}, default="auto"
+            Encoding strategy for the feature variables.
 
-        valid_X_types = ("numeric", "mixed", "categorical")
-        valid_y_types = ("numeric", "categorical")
+        y_type : {"auto", "numeric", "categorical"}, default="auto"
+            Encoding strategy for the target variable.
 
-        if X_type not in valid_X_types:
-            raise ValueError("Valid options for 'X_type' are {}. "
-                             "Got vartype={!r} instead."
-                             .format(valid_X_types, X_type))
+        n_bins : int or "auto", default="auto"
+            Number of uniform bins used to discretize numeric variables.
 
-        if y_type not in valid_y_types:
-            raise ValueError("Valid options for 'y_type' are {}. "
-                             "Got vartype={!r} instead."
-                             .format(valid_y_types, y_type))
-
-        self.X_type     = X_type
-        self.y_type     = y_type
-        self.redundancy = redundancy
-        
-        return None
-    
-    
-    def fit(self, X, y=None):
+        min_improvement : float, default=0.0
+            Minimum reduction in subset miscoding required to accept a feature
+            during greedy feature selection. The value is measured on the
+            normalized miscoding scale.
         """
-        Learn empirically the miscoding of the features of X
-        as a representation of y.
-        
+        self._validate_init(
+            X_type=X_type,
+            y_type=y_type,
+            min_improvement=min_improvement,
+        )
+
+        self.X_type = X_type
+        self.y_type = y_type
+        self.n_bins = n_bins
+        self.min_improvement = min_improvement
+
+    def fit(self, X, y):
+        """
+        Estimate feature-level code lengths, feature miscoding values, and
+        pairwise feature redundancies.
+
         Parameters
         ----------
-        X : array-like, shape (n_samples, n_features)
-            Sample vectors from which to compute miscoding.
-            array-like, numpy or pandas array in case of numerical types
-            pandas array in case of mixed or categorical types
-            
-        y : (optional) array-like, shape (n_samples)
-            The target values as numbers or strings.
-            
+        X : array-like or pandas.DataFrame of shape (n_samples, n_features)
+            Feature matrix. pandas DataFrames preserve column names and allow
+            automatic per-column type inference.
+
+        y : array-like of shape (n_samples,)
+            Target vector.
+
         Returns
         -------
-        self
+        self : Miscoding
+            Fitted estimator.
         """
+        if y is None:
+            raise ValueError("Miscoding.fit requires a target vector y.")
 
-        if self.X_type == "mixed" or self.X_type == "categorical":
+        self.X_, self.y_ = self._validate_X_y(X, y)
+        self.n_samples_in_, self.n_features_in_ = self.X_.shape
+        self.X_isnumeric_ = self._infer_X_isnumeric(X, self.X_)
+        self.y_isnumeric_ = self._infer_y_isnumeric(self.y_)
 
-            if isinstance(X, pd.DataFrame):
-                self.X_isnumeric = [np.issubdtype(my_type, np.number) for my_type in X.dtypes]
-                self.X_ = np.array(X)
-            else:
-                raise ValueError("Only DataFrame is allowed for X of type 'mixed' and 'categorical."
-                                 "Got type {!r} instead."
-                                 .format(type(X)))
-                
-        else:
-            self.X_ = check_array(X)
-            self.X_isnumeric = [True] * X.shape[1]
+        self._code_length_cache_ = {}
+        self.target_code_length_ = self._code_length_for_indices(y_included=True)
 
-        if y is not None:
+        self.feature_code_lengths_ = np.array(
+            [
+                self._code_length_for_indices(features=[j])
+                for j in range(self.n_features_in_)
+            ],
+            dtype=float,
+        )
 
-            self.y_ = column_or_1d(y)
+        target_given_feature = np.array(
+            [
+                self._conditional_target_length([j])
+                for j in range(self.n_features_in_)
+            ],
+            dtype=float,
+        )
 
-            # Miscoding wrt the target is computed only if we have a target
+        feature_given_target = np.array(
+            [
+                self._conditional_feature_length(j, selected=[], y_included=True)
+                for j in range(self.n_features_in_)
+            ],
+            dtype=float,
+        )
 
-            if self.y_type == "numeric":
-                self.y_isnumeric = True
-            else:
-                self.y_isnumeric = False
-        
-            if self.redundancy:
-                self.regular_ = self._miscoding_features_joint()
-            else:
-                self.regular_ = self._miscoding_features_single()
+        self.deficiency_ = np.clip(
+            self._safe_divide(
+                target_given_feature,
+                self.target_code_length_,
+                default=0.0,
+            ),
+            0.0,
+            1.0,
+        )
 
-            self.adjusted_ = 1 - self.regular_
+        self.surplus_ = np.clip(
+            self._safe_divide(
+                feature_given_target,
+                self.feature_code_lengths_,
+                default=0.0,
+            ),
+            0.0,
+            1.0,
+        )
 
-            if np.sum(self.adjusted_) != 0:
-                self.adjusted_ = self.adjusted_ / np.sum(self.adjusted_)
+        self.miscoding_ = np.maximum(self.deficiency_, self.surplus_)
+        self.redundancy_ = self._feature_redundancy_matrix()
 
-            if np.sum(self.regular_) != 0:
-                self.partial_  = self.adjusted_ - self.regular_ / np.sum(self.regular_)
-            else:
-                self.partial_  = self.adjusted_
-        
-        else:
-
-            self.X_ = column_or_1d(X)
-            self.y_isnumeric = self.X_isnumeric[0]
-
-            self.regular_  = []
-            self.adjusted_ = []
-            self.partial_  = []
-
+        self.is_fitted_ = True
         return self
 
+    #
+    # Public feature-level diagnostics
+    #
 
-    def miscoding_features(self, mode='adjusted'):
+    def feature_deficiency(self) -> np.ndarray:
         """
-        Return the miscoding of the target given the features
-
-        Parameters
-        ----------
-        mode  : the mode of miscoding, possible values are 'regular' for
-                the true miscoding, 'adjusted' for the normalized inverted
-                values, and 'partial' with positive and negative
-                contributions to dataset miscoding.
-            
-        Returns
-        -------
-        Return a numpy array with the miscodings
-        """
-        
-        check_is_fitted(self)
-        
-        if mode == 'regular':
-            return self.regular_
-        elif mode == 'adjusted':
-            return self.adjusted_
-        elif mode == 'partial':
-            return self.partial_
-        else:
-            valid_modes = ('regular', 'adjusted', 'partial')
-            raise ValueError("Valid options for 'mode' are {}. "
-                             "Got mode={!r} instead."
-                            .format(valid_modes, mode))
-
-        return None 
-
-
-    def miscoding_model(self, model, mode='partial'):
-        """
-        Compute the joint miscoding of the dataset used by a model
-        
-        Parameters
-        ----------
-        model : a model of one of the supported classes
-        mode  : the mode of miscoding, possible values are 'regular' for
-                the true miscoding, 'adjusted' for the normalized inverted
-                values, and 'partial' with positive and negative
-                contributions to dataset miscoding.
-                    
-        Returns
-        -------
-        Return the miscoding (float)
-        """
-
-        check_is_fitted(self)
-
-        valid_modes = ('adjusted', 'partial')
-
-        if mode not in valid_modes:
-            raise ValueError("Valid options for 'mode' are {}. "
-                             "Got mode={!r} instead."
-                            .format(valid_modes, mode))
-
-        if isinstance(model, MultinomialNB):
-            subset = self._MultinomialNB(model)
-        elif isinstance(model, DecisionTreeClassifier):
-            subset = self._DecisionTreeClassifier(model)
-        elif isinstance(model, SVC) and model.get_params()['kernel']=='linear':
-            subset = self._LinearSVC(model)
-        elif isinstance(model, SVC) and model.get_params()['kernel']=='poly':
-            subset = self._SVC(model)
-        elif isinstance(model, MLPClassifier):
-            subset = self._MLPClassifier(model)
-        elif isinstance(model, LinearRegression):
-            subset = self._LinearRegression(model)
-        elif isinstance(model, DecisionTreeRegressor):
-            subset = self._DecisionTreeRegressor(model)
-        elif isinstance(model, LinearSVR):
-            subset = self._LinearSVR(model)
-        elif isinstance(model, MLPRegressor):
-            subset = self._MLPRegressor(model)            
-        else:
-            # Rise exception
-            raise NotImplementedError('Model {!r} not supported'
-                                     .format(type(model)))
-
-        return self.miscoding_subset(subset, mode)
-        
-
-    def miscoding_subset(self, subset, mode='partial'):
-        """
-        Compute the joint miscoding of a subset of the features
-        
-        Parameters
-        ----------
-        subset : array-like, shape (n_features)
-                 1 if the attribute is in use, 0 otherwise
-        mode   : the mode of miscoding, possible values are 'adjusted' for
-                 the normalized inverted values and 'partial' with positive
-                 and negative contributions to dataset miscoding.                 
-        
-        Returns
-        -------
-        Return the miscoding (float)
-        """
-
-        valid_modes = ('adjusted', 'partial')
-
-        check_is_fitted(self)
-
-        if mode == 'adjusted':
-            miscoding = 1 - np.dot(subset, self.adjusted_)
-
-        elif mode == 'partial':
-            # Avoid miscoding greater than 1
-            top_mscd = 1 + np.sum(self.partial_[self.partial_ < 0])
-            miscoding = top_mscd - np.dot(subset, self.partial_)
-                
-        else:
-            raise ValueError("Valid options for 'mode' are {}. "
-                             "Got mode={!r} instead."
-                            .format(valid_modes, mode))
-
-        # Avoid miscoding smaller than zero
-        if miscoding < 0:
-            miscoding = 0
-
-        return miscoding
-
-
-    def features_matrix(self, mode="adjusted"):
-        """
-        Compute a matrix of adjusted miscodings for the features
-
-        Parameters
-        ----------
-        mode  : the mode of miscoding, possible values are 'regular' for the true
-                miscoding and 'adjusted' for the normalized inverted values
+        Return the deficiency of each feature.
 
         Returns
         -------
-        Return the matrix (n_features x n_features) with the miscodings (float)
+        numpy.ndarray of shape (n_features,)
+            Values of ``K(Y | X_j) / K(Y)`` for each feature.
         """
-
         check_is_fitted(self)
-        
-        valid_modes = ('regular', 'adjusted')
+        return self.deficiency_.copy()
 
-        if mode not in valid_modes:
-            raise ValueError("Valid options for 'mode' are {}. "
-                             "Got mode={!r} instead."
-                            .format(valid_modes, mode))
+    def feature_surplus(self) -> np.ndarray:
+        """
+        Return the surplus of each feature.
 
-        miscoding = np.zeros([self.X_.shape[1], self.X_.shape[1]])
+        Returns
+        -------
+        numpy.ndarray of shape (n_features,)
+            Values of ``K(X_j | Y) / K(X_j)`` for each feature.
+        """
+        check_is_fitted(self)
+        return self.surplus_.copy()
 
-        # Compute the regular matrix
+    def feature_miscoding(self) -> np.ndarray:
+        """
+        Return the miscoding of each feature.
 
-        for i in np.arange(self.X_.shape[1]-1):
-            
-            ldm_X1 = optimal_code_length(x1=self.X_[:,i], numeric1=self.X_isnumeric[i])
+        Returns
+        -------
+        numpy.ndarray of shape (n_features,)
+            Values of ``max(deficiency, surplus)`` for each feature.
+        """
+        check_is_fitted(self)
+        return self.miscoding_.copy()
 
-            for j in np.arange(i+1, self.X_.shape[1]):
+    def feature_redundancy(self) -> pd.DataFrame:
+        """
+        Return the pairwise redundancy matrix between features.
 
-                ldm_X2   = optimal_code_length(x1=self.X_[:,j], numeric1=self.X_isnumeric[j])
-                ldm_X1X2 = optimal_code_length(x1=self.X_[:,i], numeric1=self.X_isnumeric[i], x2=self.X_[:,j], numeric2=self.X_isnumeric[j])
-                       
-                mscd = ( ldm_X1X2 - min(ldm_X1, ldm_X2) ) / max(ldm_X1, ldm_X2)
-                
-                miscoding[i, j] = mscd
-                miscoding[j, i] = mscd
+        Returns
+        -------
+        pandas.DataFrame
+            Square matrix indexed and labeled by feature name. Values close to
+            one indicate highly redundant features. Values close to zero
+            indicate little shared information according to the empirical
+            code-length approximation.
+        """
+        check_is_fitted(self)
+        return pd.DataFrame(
+            self.redundancy_.copy(),
+            index=self.feature_names_in_,
+            columns=self.feature_names_in_,
+        )
 
-        if mode == "regular":
-            return miscoding
-                
-        # Compute the normalized matrix
-        
-        normalized = np.zeros([self.X_.shape[1], self.X_.shape[1]])
-        
-        for i in np.arange(self.X_.shape[1]):
+    def feature_analysis(self) -> pd.DataFrame:
+        """
+        Return feature-level diagnostics in tabular form.
 
-            normalized[i,:] = 1 - miscoding[i,:]
-            normalized[i,:] = normalized[i,:] / np.sum(normalized[i,:])
+        Returns
+        -------
+        pandas.DataFrame
+            Table with one row per feature and the columns ``feature_index``,
+            ``feature_name``, ``is_numeric``, ``code_length``, ``deficiency``,
+            ``surplus``, and ``miscoding``. Rows are sorted from lowest to
+            highest miscoding.
+        """
+        check_is_fitted(self)
 
-        return normalized
+        table = pd.DataFrame(
+            {
+                "feature_index": np.arange(self.n_features_in_),
+                "feature_name": self.feature_names_in_,
+                "is_numeric": self.X_isnumeric_,
+                "code_length": self.feature_code_lengths_,
+                "deficiency": self.deficiency_,
+                "surplus": self.surplus_,
+                "miscoding": self.miscoding_,
+            }
+        )
+        return table.sort_values(
+            by=["miscoding", "deficiency", "surplus"],
+            ascending=[True, True, True],
+            ignore_index=True,
+        )
+
+    #
+    # Subset-level diagnostics
+    #
+
+    def miscoding_subset(
+        self,
+        subset,
+        mode: SubsetMode = "miscoding",
+    ) -> float:
+        """
+        Compute a redundancy-discounted subset-level miscoding quantity.
+
+        Parameters
+        ----------
+        subset : array-like
+            Binary mask of selected features or list of selected feature indices.
+
+        mode : {"deficiency", "surplus", "miscoding"}, default="miscoding"
+            Quantity to return.
+
+        Returns
+        -------
+        float
+            Requested subset-level value.
+        """
+        check_is_fitted(self)
+
+        if mode not in self._VALID_SUBSET_MODES:
+            raise ValueError(
+                "Valid options for 'mode' are {}. Got mode={!r} instead."
+                .format(self._VALID_SUBSET_MODES, mode)
+            )
+
+        return float(self._subset_measures(subset)[mode])
+
+    def subset_analysis(self, subset) -> dict[str, object]:
+        """
+        Return detailed redundancy-discounted diagnostics for a feature subset.
+
+        Parameters
+        ----------
+        subset : array-like
+            Binary mask of selected features or list of selected feature indices.
+
+        Returns
+        -------
+        dict
+            Dictionary containing deficiency, surplus, miscoding, selected
+            feature metadata, redundancy weights, and feature weights.
+        """
+        check_is_fitted(self)
+        return self._subset_measures(subset)
+
+    #
+    # Greedy feature selection
+    #
+
+    def select_features(
+        self,
+        *,
+        max_features: int | None = None,
+        min_improvement: float | None = None,
+        return_details: bool = False,
+    ):
+        """
+        Select features by greedy redundancy-penalized aggregation.
+
+        At each step, the method evaluates every candidate feature not yet
+        selected and adds the feature that produces the largest reduction in
+        subset miscoding. The subset score is computed with the same
+        redundancy-discounted aggregation used by :meth:`miscoding_subset`.
+
+        Parameters
+        ----------
+        max_features : int, optional
+            Maximum number of features to select. If omitted, all features are
+            eligible.
+
+        min_improvement : float, optional
+            Minimum reduction in subset miscoding required to accept a feature.
+            If omitted, the estimator's configured ``min_improvement`` is used.
+
+        return_details : bool, default=False
+            If ``False``, return a binary selection mask. If ``True``, return a
+            dictionary with the mask, selected indices, selected names, selection
+            path, and final subset diagnostics.
+
+        Returns
+        -------
+        numpy.ndarray or dict
+            Binary selection mask by default, or detailed selection output when
+            ``return_details=True``.
+        """
+        check_is_fitted(self)
+
+        improvement_threshold = (
+            self.min_improvement
+            if min_improvement is None
+            else float(min_improvement)
+        )
+        if improvement_threshold < 0:
+            raise ValueError("min_improvement must be non-negative.")
+
+        max_features = (
+            self.n_features_in_
+            if max_features is None
+            else min(int(max_features), self.n_features_in_)
+        )
+        if max_features < 0:
+            raise ValueError("max_features must be non-negative.")
+
+        selected: list[int] = []
+        path: list[dict[str, object]] = []
+        current = self._subset_measures(selected)
+
+        while len(selected) < max_features:
+            candidates = self._selection_candidates(selected, current["miscoding"])
+            if candidates.empty:
+                break
+
+            best = candidates.iloc[0]
+            improvement = float(best["improvement"])
+
+            if improvement <= improvement_threshold:
+                break
+
+            feature = int(best["feature_index"])
+            selected.append(feature)
+            current = self._subset_measures(selected)
+
+            path.append(
+                {
+                    "step": len(path) + 1,
+                    "feature_index": feature,
+                    "feature_name": str(self.feature_names_in_[feature]),
+                    "deficiency": current["deficiency"],
+                    "surplus": current["surplus"],
+                    "miscoding": current["miscoding"],
+                    "improvement": improvement,
+                    "selected_feature_indices": tuple(selected),
+                    "selected_feature_names": tuple(
+                        str(self.feature_names_in_[j]) for j in selected
+                    ),
+                }
+            )
+
+        mask = np.zeros(self.n_features_in_, dtype=int)
+        mask[selected] = 1
+
+        if not return_details:
+            return mask
+
+        return {
+            "selected_features": mask,
+            "selected_feature_indices": selected,
+            "selected_feature_names": [
+                str(self.feature_names_in_[j])
+                for j in selected
+            ],
+            "min_improvement": float(improvement_threshold),
+            "path": pd.DataFrame(path),
+            "subset": self._subset_measures(selected),
+            "features": self.feature_analysis(),
+            "redundancy": self.feature_redundancy(),
+        }
+
+    #
+    # Validation and type inference
+    #
+
+    def _validate_X_y(self, X, y) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Validate inputs and establish feature names.
+
+        pandas DataFrames preserve their column names; other array-like inputs
+        receive generated names ``x0``, ``x1``, and so on.
+        """
+        y_arr = np.ravel(np.asarray(y))
+        if y_arr.size == 0:
+            raise ValueError("y must not be empty.")
+
+        if isinstance(X, pd.DataFrame):
+            if len(X) != len(y_arr):
+                raise ValueError(
+                    f"X and y have inconsistent lengths: {len(X)} != {len(y_arr)}."
+                )
+            self.feature_names_in_ = np.asarray(X.columns, dtype=object)
+            return X.to_numpy(), y_arr
+
+        X_arr, y_arr = check_X_y(X, y_arr, dtype=None, ensure_2d=True)
+        self.feature_names_in_ = np.asarray(
+            [f"x{i}" for i in range(X_arr.shape[1])],
+            dtype=object,
+        )
+        return X_arr, y_arr
+
+    def _infer_X_isnumeric(self, X_original, X_array: np.ndarray) -> list[bool]:
+        """
+        Infer whether each feature should be treated as numeric.
+
+        Explicit ``X_type`` values override automatic inference. DataFrames
+        allow automatic per-column numeric/categorical inference.
+        """
+        if self.X_type == "numeric":
+            return [True] * X_array.shape[1]
+        if self.X_type == "categorical":
+            return [False] * X_array.shape[1]
+        if isinstance(X_original, pd.DataFrame):
+            return [
+                bool(pd.api.types.is_numeric_dtype(dtype))
+                for dtype in X_original.dtypes
+            ]
+        return (
+            [True] * X_array.shape[1]
+            if np.issubdtype(X_array.dtype, np.number)
+            else [
+                bool(np.issubdtype(np.asarray(X_array[:, j]).dtype, np.number))
+                for j in range(X_array.shape[1])
+            ]
+        )
+
+    def _infer_y_isnumeric(self, y: np.ndarray) -> bool:
+        """Infer whether the target should be encoded as numeric or categorical."""
+        if self.y_type == "numeric":
+            return True
+        if self.y_type == "categorical":
+            return False
+
+        target_type = type_of_target(y)
+        if target_type in ("binary", "multiclass"):
+            return False
+        if target_type == "continuous":
+            return True
+
+        raise ValueError(
+            "Unsupported target type {!r}. Supported one-dimensional target "
+            "types are binary, multiclass, and continuous."
+            .format(target_type)
+        )
+
+    #
+    # Code-length computations
+    #
+
+    def _code_length(self, columns, numeric) -> float:
+        """
+        Compute an empirical joint code length.
+
+        Parameters
+        ----------
+        columns : sequence of iterable
+            Variables to include in the joint code-length computation.
+
+        numeric : sequence of bool
+            Flags indicating whether each variable should be treated as numeric.
+
+        Returns
+        -------
+        float
+            Empirical code length of the supplied variables.
+        """
+        return float(
+            empirical_distribution(
+                columns=columns,
+                numeric=numeric,
+                n_bins=self.n_bins,
+            ).code_length
+        )
+
+    def _code_length_for_indices(
+        self,
+        features: list[int] | tuple[int, ...] | None = None,
+        y_included: bool = False,
+    ) -> float:
+        """
+        Compute and cache a code length for a feature subset and optional target.
+        """
+        features = [] if features is None else list(features)
+        feature_tuple = tuple(sorted(int(j) for j in features))
+        key = feature_tuple + ((-1,) if y_included else tuple())
+
+        if key in self._code_length_cache_:
+            return self._code_length_cache_[key]
+
+        columns = [self.X_[:, j] for j in feature_tuple]
+        numeric = [self.X_isnumeric_[j] for j in feature_tuple]
+
+        if y_included:
+            columns.append(self.y_)
+            numeric.append(self.y_isnumeric_)
+
+        value = 0.0 if not columns else self._code_length(columns, numeric)
+        self._code_length_cache_[key] = value
+        return value
+
+    def _conditional_target_length(self, selected) -> float:
+        """Return ``K(Y | X_S)`` for a selected feature subset ``S``."""
+        selected = list(selected)
+        return max(
+            0.0,
+            self._code_length_for_indices(features=selected, y_included=True)
+            - self._code_length_for_indices(features=selected, y_included=False),
+        )
+
+    def _conditional_feature_length(
+        self,
+        feature: int,
+        *,
+        selected,
+        y_included: bool,
+    ) -> float:
+        """
+        Estimate the conditional code length of one feature.
+
+        If ``y_included`` is false, the conditioning set is ``X_S``. If
+        ``y_included`` is true, the conditioning set is ``(X_S, Y)``.
+        """
+        selected = list(selected)
+        if feature in selected:
+            return 0.0
+
+        return max(
+            0.0,
+            self._code_length_for_indices(
+                features=selected + [int(feature)],
+                y_included=y_included,
+            )
+            - self._code_length_for_indices(
+                features=selected,
+                y_included=y_included,
+            ),
+        )
+
+    #
+    # Redundancy-discounted aggregation
+    #
+
+    def _feature_redundancy_matrix(self) -> np.ndarray:
+        """
+        Estimate pairwise redundancy between features.
+
+        Redundancy is defined as ``1 - mu(X_i, X_j)``, where ``mu`` is the
+        symmetric normalized code-length distance between the two feature
+        strings. The diagonal is set to one.
+        """
+        redundancy = np.eye(self.n_features_in_, dtype=float)
+
+        for i in range(self.n_features_in_):
+            for j in range(i + 1, self.n_features_in_):
+                value = self._feature_pair_redundancy(i, j)
+                redundancy[i, j] = value
+                redundancy[j, i] = value
+
+        return redundancy
+
+    def _feature_pair_redundancy(self, i: int, j: int) -> float:
+        """
+        Estimate the redundancy between two features.
+        """
+        k_i = float(self.feature_code_lengths_[i])
+        k_j = float(self.feature_code_lengths_[j])
+        k_ij = float(self._code_length_for_indices(features=[i, j]))
+
+        denominator = max(k_i, k_j)
+        if denominator <= 0.0:
+            return 1.0
+
+        miscoding = (k_ij - min(k_i, k_j)) / denominator
+        return float(np.clip(1.0 - miscoding, 0.0, 1.0))
+
+    def _redundancy_weights(self, selected: list[int]) -> np.ndarray:
+        """
+        Compute redundancy-discounting exponents for a selected subset.
+        """
+        if len(selected) == 0:
+            return np.array([], dtype=float)
+
+        matrix = self.redundancy_[np.ix_(selected, selected)]
+        off_diagonal_sum = np.sum(matrix, axis=1) - np.diag(matrix)
+        return 1.0 / (1.0 + off_diagonal_sum)
+
+    def _subset_measures(self, subset) -> dict[str, object]:
+        """
+        Compute redundancy-discounted deficiency, surplus, and miscoding for a
+        selected feature subset.
+        """
+        selected = self._selected_indices(subset)
+
+        mask = np.zeros(self.n_features_in_, dtype=int)
+        mask[selected] = 1
+
+        if len(selected) == 0:
+            deficiency = 0.0 if self.target_code_length_ <= 0.0 else 1.0
+            return {
+                "deficiency": deficiency,
+                "surplus": 0.0,
+                "miscoding": deficiency,
+                "features_in_use": mask,
+                "n_features_in_use": 0,
+                "selected_feature_indices": [],
+                "selected_feature_names": [],
+                "redundancy_weights": np.array([], dtype=float),
+                "feature_weights": np.array([], dtype=float),
+            }
+
+        selected_array = np.asarray(selected, dtype=int)
+        alpha = self._redundancy_weights(selected)
+        feature_lengths = self.feature_code_lengths_[selected_array]
+
+        deficiency_values = np.clip(self.deficiency_[selected_array], 0.0, 1.0)
+        surplus_values = np.clip(self.surplus_[selected_array], 0.0, 1.0)
+
+        deficiency = float(
+            np.prod(np.power(deficiency_values, alpha))
+        )
+
+        feature_weights = alpha * feature_lengths
+        weight_sum = float(np.sum(feature_weights))
+        surplus = (
+            0.0
+            if weight_sum <= 0.0
+            else float(np.sum(feature_weights * surplus_values) / weight_sum)
+        )
+
+        deficiency = float(np.clip(deficiency, 0.0, 1.0))
+        surplus = float(np.clip(surplus, 0.0, 1.0))
+
+        return {
+            "deficiency": deficiency,
+            "surplus": surplus,
+            "miscoding": max(deficiency, surplus),
+            "features_in_use": mask,
+            "n_features_in_use": int(np.sum(mask)),
+            "selected_feature_indices": selected,
+            "selected_feature_names": [
+                str(self.feature_names_in_[j])
+                for j in selected
+            ],
+            "redundancy_weights": alpha,
+            "feature_weights": feature_weights,
+        }
+
+    def _selection_candidates(
+        self,
+        selected: list[int],
+        current_miscoding: float,
+    ) -> pd.DataFrame:
+        """
+        Evaluate all candidate features for the next greedy selection step.
+        """
+        selected_set = set(selected)
+        rows: list[dict[str, object]] = []
+
+        for feature in range(self.n_features_in_):
+            if feature in selected_set:
+                continue
+
+            candidate_subset = selected + [feature]
+            values = self._subset_measures(candidate_subset)
+            improvement = current_miscoding - float(values["miscoding"])
+
+            rows.append(
+                {
+                    "feature_index": feature,
+                    "feature_name": str(self.feature_names_in_[feature]),
+                    "deficiency": float(values["deficiency"]),
+                    "surplus": float(values["surplus"]),
+                    "miscoding": float(values["miscoding"]),
+                    "improvement": float(improvement),
+                    "candidate_subset": tuple(candidate_subset),
+                }
+            )
+
+        if not rows:
+            return pd.DataFrame(
+                columns=[
+                    "feature_index",
+                    "feature_name",
+                    "deficiency",
+                    "surplus",
+                    "miscoding",
+                    "improvement",
+                    "candidate_subset",
+                ]
+            )
+
+        return pd.DataFrame(rows).sort_values(
+            by=["miscoding", "deficiency", "surplus", "feature_index"],
+            ascending=[True, True, True, True],
+            ignore_index=True,
+        )
+
+    #
+    # Index handling and numerical helpers
+    #
+
+    def _selected_indices(self, selected) -> list[int]:
+        """
+        Normalize a binary mask or index list into validated feature indices.
+        """
+        if selected is None:
+            return []
+
+        arr = np.asarray(selected)
+        if arr.size == 0:
+            return []
+        if arr.ndim != 1:
+            raise ValueError("selected must be a one-dimensional mask or index list.")
+
+        is_mask = (
+            arr.shape[0] == self.n_features_in_
+            and np.all(np.isin(arr, [0, 1, False, True]))
+        )
+
+        indices = (
+            [int(j) for j in np.flatnonzero(arr.astype(int))]
+            if is_mask
+            else [int(j) for j in arr.tolist()]
+        )
+
+        if len(indices) != len(set(indices)):
+            raise ValueError("selected contains duplicate feature indices.")
+        if any(j < 0 or j >= self.n_features_in_ for j in indices):
+            raise ValueError(
+                f"selected indices must lie in [0, {self.n_features_in_ - 1}]."
+            )
+
+        return indices
+
+    @staticmethod
+    def _safe_divide(numerator, denominator, *, default: float) -> np.ndarray:
+        """
+        Safely divide arrays, assigning ``default`` where division is invalid.
+        """
+        numerator, denominator = np.broadcast_arrays(
+            np.asarray(numerator, dtype=float),
+            np.asarray(denominator, dtype=float),
+        )
+        result = np.full_like(numerator, default, dtype=float)
+        valid = (
+            (denominator > 0)
+            & np.isfinite(denominator)
+            & np.isfinite(numerator)
+        )
+        np.divide(numerator, denominator, out=result, where=valid)
+        return result
+
+    @classmethod
+    def _validate_init(
+        cls,
+        *,
+        X_type,
+        y_type,
+        min_improvement,
+    ):
+        """
+        Validate constructor arguments before storing them on the estimator.
+        """
+        if X_type not in cls._VALID_X_TYPES:
+            raise ValueError(
+                f"Valid options for 'X_type' are {cls._VALID_X_TYPES}. "
+                f"Got {X_type!r}."
+            )
+        if y_type not in cls._VALID_Y_TYPES:
+            raise ValueError(
+                f"Valid options for 'y_type' are {cls._VALID_Y_TYPES}. "
+                f"Got {y_type!r}."
+            )
+        if min_improvement < 0:
+            raise ValueError("min_improvement must be non-negative.")
 
 
+#
+# Functional interface
+#
+
+
+def feature_analysis(X, y, **kwargs) -> pd.DataFrame:
     """
-    Return the regular miscoding of the target given the features
-            
-    Returns
-    -------
-    Return a numpy array with the regular miscodings
+    Return feature analysis using a functional interface.
     """
-    def _miscoding_features_single(self):
-                 
-        miscoding = list()
-                
-        ldm_y = optimal_code_length(x1=self.y_, numeric1=self.y_isnumeric)
-
-        for i in np.arange(self.X_.shape[1]):
-                        
-            ldm_X  = optimal_code_length(x1=self.X_[:,i], numeric1=self.X_isnumeric[i])
-            ldm_Xy = optimal_code_length(x1=self.X_[:,i], numeric1=self.X_isnumeric[i], x2=self.y_, numeric2=self.y_isnumeric)
-                       
-            mscd = ( ldm_Xy - min(ldm_X, ldm_y) ) / max(ldm_X, ldm_y)
-                
-            miscoding.append(mscd)
-                
-        miscoding = np.array(miscoding)
-
-        return miscoding
+    metric = Miscoding(**kwargs).fit(X, y)
+    return metric.feature_analysis()
 
 
+def feature_redundancy(X, y, **kwargs) -> pd.DataFrame:
     """
-    Return the joint regular miscoding of the target given pairs features
-            
-    Returns
-    -------
-    Return a numpy array with the regular miscodings
+    Return pairwise feature redundancy using a functional interface.
     """
-    # TODO: Warning! Experimental implementation, do not use in production.
-    def _miscoding_features_joint(self):
-
-        # Compute non-redundant miscoding
-        mscd = self._miscoding_features_single()
-
-        if self.X_.shape[1] == 1:
-            # With one single attribute we cannot compute the joint miscoding
-            return mscd
-
-        #
-        # Compute the joint miscoding matrix
-        #         
-               
-        red_matrix = np.ones([self.X_.shape[1], self.X_.shape[1]])
-
-        ldm_y = optimal_code_length(x1=self.y_, numeric1=self.y_isnumeric)
-
-        for i in np.arange(self.X_.shape[1]-1):
-                        
-            for j in np.arange(i+1, self.X_.shape[1]):
-                
-                ldm_X1X2  = optimal_code_length(x1=self.X_[:,i], numeric1=self.X_isnumeric[i], x2=self.X_[:,j], numeric2=self.X_isnumeric[j])
-                ldm_X1X2Y = optimal_code_length(x1=self.X_[:,i], numeric1=self.X_isnumeric[i], x2=self.X_[:,j], numeric2=self.X_isnumeric[j], x3=self.y_, numeric3=self.y_isnumeric)
-                
-                tmp = ( ldm_X1X2Y - min(ldm_X1X2, ldm_y) ) / max(ldm_X1X2, ldm_y)
-                                
-                red_matrix[i, j] = tmp
-                red_matrix[j, i] = tmp
-        
-        #
-        # Compute the joint miscoding 
-        #
-
-        viu       = np.zeros(self.X_.shape[1], dtype=np.int8)
-        miscoding = np.zeros(self.X_.shape[1])
-
-        # Select the first two variables with smaller joint miscoding
-        
-        loc1, loc2 = np.unravel_index(np.argmin(red_matrix, axis=None), red_matrix.shape)
-        jmscd1 = jmscd2 = red_matrix[loc1, loc2]
-        
-        viu[loc1] = 1
-        viu[loc2] = 1
-
-        # Scale down one of them
-                
-        tmp1 = mscd[loc1]
-        tmp2 = mscd[loc2]
-        
-        if tmp1 < tmp2:
-            jmscd1 = jmscd1 * tmp1 / tmp2
-        elif tmp1 > tmp2:
-            jmscd2 = jmscd2 * tmp2 / tmp1
-        
-        miscoding[loc1] = jmscd1
-        miscoding[loc2] = jmscd2
- 
-        # Iterate over the number of features
-        
-        tmp = np.ones(self.X_.shape[1]) * np.inf
-        
-        for i in np.arange(2, self.X_.shape[1]):
-
-            for j in np.arange(self.X_.shape[1]):
-            
-                if viu[j] == 1:
-                    continue
-
-                tmp[j] = (1 / np.sum(viu)) * np.sum(red_matrix[np.where(viu == 1), j])
-
-            viu[np.argmin(tmp)] = 1
-            miscoding[np.argmin(tmp)] = np.min(tmp)
-
-            tmp = np.ones(self.X_.shape[1]) * np.inf
-        
-        return miscoding
+    metric = Miscoding(**kwargs).fit(X, y)
+    return metric.feature_redundancy()
 
 
+def miscoding_subset(
+    X,
+    y,
+    subset,
+    *,
+    mode: SubsetMode = "miscoding",
+    **kwargs,
+) -> float:
     """
-    Compute the attributes in use for a multinomial naive Bayes classifier
-    
-    Return array with the attributes in use
+    Return a subset-level miscoding quantity using a functional interface.
     """
-    def _MultinomialNB(self, estimator):
+    metric = Miscoding(**kwargs).fit(X, y)
+    return metric.miscoding_subset(subset, mode=mode)
 
-        # All the attributes are in use
-        attr_in_use = np.ones(self.X_.shape[1], dtype=int)
-            
-        return attr_in_use
-    
 
+def select_features(
+    X,
+    y,
+    *,
+    max_features: int | None = None,
+    min_improvement: float | None = None,
+    return_details: bool = False,
+    **kwargs,
+):
     """
-    Compute the attributes in use for a decision tree
-    
-    Return array with the attributes in use
+    Select features using a functional interface.
     """
-    def _DecisionTreeClassifier(self, estimator):
-
-        attr_in_use = np.zeros(self.X_.shape[1], dtype=int)
-        features = set(estimator.tree_.feature[estimator.tree_.feature >= 0])
-        for i in features:
-            attr_in_use[i] = 1
-            
-        return attr_in_use
-
-
-    """
-    Compute the attributes in use for a linear support vector classifier
-    
-    Return array with the attributes in use
-    """
-    def _LinearSVC(self, estimator):
-
-        # All the attributes are in use
-        attr_in_use = np.ones(self.X_.shape[1], dtype=int)
-            
-        return attr_in_use
-
-
-    """
-    Compute the attributes in use for a support vector classifier with a polynomial kernel
-    
-    Return array with the attributes in use
-    """
-    def _SVC(self, estimator):
-
-        # All the attributes are in use
-        attr_in_use = np.ones(self.X_.shape[1], dtype=int)
-            
-        return attr_in_use
-
-
-    """
-    Compute the attributes in use for a multilayer perceptron classifier
-    
-    Return array with the attributes in use
-    """
-    def _MLPClassifier(self, estimator):
-
-        attr_in_use = np.ones(self.X_.shape[1], dtype=int)
-            
-        return attr_in_use
-
-
-    """
-    Compute the attributes in use for a linear regression
-    
-    Return array with the attributes in use
-    """
-    def _LinearRegression(self, estimator):
-        
-        attr_in_use = np.ones(self.X_.shape[1], dtype=int)
-            
-        return attr_in_use
-
-
-    """
-    Compute the attributes in use for a decision tree regressor
-    
-    Return array with the attributes in use
-    """
-    def _DecisionTreeRegressor(self, estimator):
-        
-        attr_in_use = np.zeros(self.X_.shape[1], dtype=int)
-        features = set(estimator.tree_.feature[estimator.tree_.feature >= 0])
-        for i in features:
-            attr_in_use[i] = 1
-            
-        return attr_in_use
-
-
-    """
-    Compute the attributes in use for a linear support vector regressor
-    
-    Return array with the attributes in use
-    """
-    def _LinearSVR(self, estimator):
-
-        attr_in_use = np.ones(self.X_.shape[1], dtype=int)
-            
-        return attr_in_use
-
-
-    """
-    Compute the attributes in use for a multilayer perceptron regressor
-    
-    Return array with the attributes in use
-    """
-    def _MLPRegressor(self, estimator):
-
-        attr_in_use = np.ones(self.X_.shape[1], dtype=int)
-            
-        return attr_in_use
+    metric = Miscoding(**kwargs).fit(X, y)
+    return metric.select_features(
+        max_features=max_features,
+        min_improvement=min_improvement,
+        return_details=return_details,
+    )
