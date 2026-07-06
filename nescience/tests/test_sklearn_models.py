@@ -10,9 +10,10 @@ from sklearn.dummy import DummyRegressor
 from sklearn.exceptions import NotFittedError
 from sklearn.linear_model import ElasticNet, Lasso, LinearRegression, LogisticRegression, Ridge
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
+from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier, ExtraTreesRegressor, ExtraTreesClassifier, GradientBoostingRegressor, GradientBoostingClassifier, HistGradientBoostingRegressor, HistGradientBoostingClassifier
 
-from nescience.nescience import Nescience
-from nescience.models import (
+from mnplib.nescience import Nescience
+from mnplib.models import (
     ModelArtifacts,
     SerializationConfig,
     components_model,
@@ -21,9 +22,9 @@ from nescience.models import (
     score_model,
     sklearn_model_artifacts,
 )
-from nescience.models.sklearn import registry
-from nescience.models.serializers.tree import DecisionTreeSerializer
-from nescience.models.serializers.linear import LinearModelSerializer, LogisticRegressionSerializer
+from mnplib.models.sklearn import registry
+from mnplib.models.serializers.tree import DecisionTreeSerializer
+from mnplib.models.serializers.linear import LinearModelSerializer, LogisticRegressionSerializer
 
 
 def test_supported_regression_models_produce_artifacts_and_nescience():
@@ -144,11 +145,20 @@ def test_serializer_registry_supports_expected_model_types():
         Lasso,
         ElasticNet,
         LogisticRegression,
+        RandomForestRegressor,
+        RandomForestClassifier,
+        ExtraTreesRegressor,
+        ExtraTreesClassifier,
+        GradientBoostingRegressor,
+        GradientBoostingClassifier,
+        HistGradientBoostingRegressor,
+        HistGradientBoostingClassifier,
     ]:
         assert expected in supported
 
     assert set(registry.serializer_names()) == {
         "decision_tree",
+        "tree_ensemble",
         "linear_model",
         "logistic_regression",
     }

@@ -11,6 +11,7 @@ from .artifacts import ModelArtifacts, SerializationConfig
 from .registry import SklearnModelRegistry
 from .serializers.linear import LinearModelSerializer, LogisticRegressionSerializer
 from .serializers.tree import DecisionTreeSerializer
+from .serializers.ensemble import TreeEnsembleSerializer
 
 
 def create_default_registry() -> SklearnModelRegistry:
@@ -20,6 +21,7 @@ def create_default_registry() -> SklearnModelRegistry:
     return SklearnModelRegistry(
         serializers=[
             DecisionTreeSerializer(),
+            TreeEnsembleSerializer(),
             LinearModelSerializer(),
             LogisticRegressionSerializer(),
         ]

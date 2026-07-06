@@ -12,3 +12,4 @@ __all__ = [
     "LinearModelSerializer",
     "LogisticRegressionSerializer",
 ]
+from .ensemble import TreeEnsembleSerializer
