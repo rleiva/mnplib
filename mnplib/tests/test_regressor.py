@@ -24,8 +24,8 @@ from sklearn.exceptions import NotFittedError
 from sklearn.linear_model import ElasticNet, Lasso, LinearRegression, Ridge
 from sklearn.tree import DecisionTreeRegressor
 
-from nescience.models import SerializationConfig
-from nescience.regressor import CandidateResult, NescienceRegressor, Regressor
+from mnplib.models import SerializationConfig
+from mnplib.regressor import CandidateResult, NescienceRegressor, Regressor
 
 
 @pytest.fixture()

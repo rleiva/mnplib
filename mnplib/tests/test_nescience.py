@@ -25,7 +25,7 @@ import pytest
 
 from sklearn.exceptions import NotFittedError
 
-from nescience.nescience import Nescience, nescience_score, nescience_components
+from mnplib.nescience import Nescience, nescience_score, nescience_components
 
 
 def make_simple_data():

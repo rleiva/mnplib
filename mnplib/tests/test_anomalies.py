@@ -22,8 +22,8 @@ from sklearn.exceptions import NotFittedError
 from sklearn.linear_model import LogisticRegression
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 
-import nescience.anomalies as anomalies_module
-from nescience.anomalies import AnomalyDetector, anomaly_table
+import mnplib.anomalies as anomalies_module
+from mnplib.anomalies import AnomalyDetector, anomaly_table
 
 
 class DummyAutoRegressor(BaseEstimator, RegressorMixin):

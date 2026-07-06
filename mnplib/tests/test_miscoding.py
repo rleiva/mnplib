@@ -25,7 +25,7 @@ import pytest
 
 from sklearn.exceptions import NotFittedError
 
-from nescience.miscoding import (
+from mnplib.miscoding import (
     Miscoding,
     feature_analysis,
     feature_redundancy,

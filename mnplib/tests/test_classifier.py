@@ -25,8 +25,8 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score
 from sklearn.tree import DecisionTreeClassifier
 
-from nescience.classifier import CandidateResult, Classifier, NescienceClassifier
-from nescience.models import SerializationConfig
+from mnplib.classifier import CandidateResult, Classifier, NescienceClassifier
+from mnplib.models import SerializationConfig
 
 @pytest.fixture()
 def binary_classification_data():

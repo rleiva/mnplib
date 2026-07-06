@@ -17,7 +17,7 @@ import pytest
 
 from sklearn.exceptions import NotFittedError
 
-from nescience.surfeit import Surfeit, surfeit_score
+from mnplib.surfeit import Surfeit, surfeit_score
 
 
 def test_constructor_defaults():

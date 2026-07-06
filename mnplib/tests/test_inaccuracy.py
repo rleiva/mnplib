@@ -20,7 +20,7 @@ from sklearn.tree       import DecisionTreeClassifier, DecisionTreeRegressor
 from sklearn.exceptions import NotFittedError
 from sklearn.datasets   import load_breast_cancer
 
-from nescience.inaccuracy import Inaccuracy, inaccuracy_score
+from mnplib.inaccuracy import Inaccuracy, inaccuracy_score
 
 
 def test_constructor_defaults():
