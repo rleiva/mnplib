@@ -190,8 +190,6 @@ class Nescience(BaseEstimator):
             X_type=self.X_type,
             y_type=self.y_type,
             n_bins=self.n_bins,
-            threshold_fraction=self.threshold_fraction,
-            surplus_penalty=self.surplus_penalty,
         )
         self.miscoding_.fit(X, y_checked)
 
