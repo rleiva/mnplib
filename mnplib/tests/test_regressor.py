@@ -20,6 +20,12 @@ import pytest
 from sklearn.base import clone
 from sklearn.datasets import make_regression
 from sklearn.dummy import DummyRegressor
+from sklearn.ensemble import (
+    ExtraTreesRegressor,
+    GradientBoostingRegressor,
+    HistGradientBoostingRegressor,
+    RandomForestRegressor,
+)
 from sklearn.exceptions import NotFittedError
 from sklearn.linear_model import ElasticNet, Lasso, LinearRegression, Ridge
 from sklearn.tree import DecisionTreeRegressor
@@ -238,6 +244,41 @@ def test_none_candidates_use_default_candidates(regression_data):
     assert len(reg.results_) > 1
 
 
+def test_default_candidates_exclude_ensembles_by_default():
+    reg = NescienceRegressor(candidates="default", random_state=42)
+
+    resolved = reg._resolve_candidates()
+
+    assert not any(
+        isinstance(
+            estimator,
+            (
+                RandomForestRegressor,
+                ExtraTreesRegressor,
+                GradientBoostingRegressor,
+                HistGradientBoostingRegressor,
+            ),
+        )
+        for _, estimator in resolved
+    )
+
+
+def test_default_candidates_include_ensembles_when_requested():
+    reg = NescienceRegressor(
+        candidates="default",
+        include_ensembles=True,
+        random_state=42,
+    )
+
+    resolved = dict(reg._resolve_candidates())
+
+    assert isinstance(resolved["random_forest_depth_3"], RandomForestRegressor)
+    assert isinstance(resolved["extra_trees_depth_3"], ExtraTreesRegressor)
+    assert isinstance(resolved["gradient_boosting_depth_2"], GradientBoostingRegressor)
+    assert isinstance(resolved["hist_gradient_boosting"], HistGradientBoostingRegressor)
+    assert resolved["random_forest_depth_3"].random_state == 42
+
+
 def test_candidates_can_be_mapping(regression_data):
     X, y = regression_data
 
@@ -337,6 +378,7 @@ def test_backward_compatible_regressor_alias(regression_data):
 def test_sklearn_clone_supports_estimator_parameters(small_candidates):
     reg = NescienceRegressor(
         candidates=small_candidates,
+        include_ensembles=True,
         n_bins=3,
         random_state=42,
         verbose=0,
@@ -345,6 +387,7 @@ def test_sklearn_clone_supports_estimator_parameters(small_candidates):
     cloned = clone(reg)
 
     assert isinstance(cloned, NescienceRegressor)
+    assert cloned.include_ensembles is True
     assert cloned.n_bins == 3
     assert cloned.random_state == 42
     assert cloned.verbose == 0

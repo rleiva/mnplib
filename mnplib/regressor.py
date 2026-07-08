@@ -45,6 +45,12 @@ import numpy as np
 import pandas as pd
 
 from sklearn.base import BaseEstimator, RegressorMixin, clone
+from sklearn.ensemble import (
+    ExtraTreesRegressor,
+    GradientBoostingRegressor,
+    HistGradientBoostingRegressor,
+    RandomForestRegressor,
+)
 from sklearn.linear_model import ElasticNet, Lasso, LinearRegression, Ridge
 from sklearn.tree import DecisionTreeRegressor
 from sklearn.utils import check_X_y, check_array
@@ -124,6 +130,11 @@ class NescienceRegressor(BaseEstimator, RegressorMixin):
         used. A mapping should map names to estimators. A sequence may contain
         estimators or ``(name, estimator)`` pairs.
 
+    include_ensembles : bool, default=False
+        Whether the built-in default search should include supported ensemble
+        regressors such as random forests, extra-trees, and gradient boosting.
+        This option is ignored when explicit ``candidates`` are supplied.
+
     X_type : {"auto", "numeric", "categorical"}, default="numeric"
         Type of the feature matrix used by ``Nescience``.
 
@@ -167,6 +178,7 @@ class NescienceRegressor(BaseEstimator, RegressorMixin):
     def __init__(
         self,
         candidates="default",
+        include_ensembles: bool = False,
         X_type: XType = "numeric",
         aggregation: Aggregation = "euclidean",
         weights: Mapping[str, float] | Sequence[float] | None = None,
@@ -180,6 +192,7 @@ class NescienceRegressor(BaseEstimator, RegressorMixin):
         verbose: int = 0,
     ):
         self.candidates = candidates
+        self.include_ensembles = include_ensembles
         self.X_type = X_type
         self.aggregation = aggregation
         self.weights = weights
@@ -462,7 +475,49 @@ class NescienceRegressor(BaseEstimator, RegressorMixin):
             ),
         ]
 
+        if self.include_ensembles:
+            candidates.extend(self._default_ensemble_candidates())
+
         return candidates
+
+    def _default_ensemble_candidates(self) -> list[tuple[str, object]]:
+        """
+        Return supported ensemble regressors for opt-in default searches.
+        """
+        return [
+            (
+                "random_forest_depth_3",
+                RandomForestRegressor(
+                    n_estimators=25,
+                    max_depth=3,
+                    random_state=self.random_state,
+                ),
+            ),
+            (
+                "extra_trees_depth_3",
+                ExtraTreesRegressor(
+                    n_estimators=25,
+                    max_depth=3,
+                    random_state=self.random_state,
+                ),
+            ),
+            (
+                "gradient_boosting_depth_2",
+                GradientBoostingRegressor(
+                    n_estimators=25,
+                    max_depth=2,
+                    random_state=self.random_state,
+                ),
+            ),
+            (
+                "hist_gradient_boosting",
+                HistGradientBoostingRegressor(
+                    max_iter=25,
+                    max_leaf_nodes=15,
+                    random_state=self.random_state,
+                ),
+            ),
+        ]
 
     def _resolve_serialization_config(self) -> SerializationConfig:
         """
