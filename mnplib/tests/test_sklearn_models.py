@@ -9,6 +9,9 @@ from sklearn.datasets import make_classification, make_regression
 from sklearn.dummy import DummyRegressor
 from sklearn.exceptions import NotFittedError
 from sklearn.linear_model import ElasticNet, Lasso, LinearRegression, LogisticRegression, Ridge
+from sklearn.naive_bayes import BernoulliNB, CategoricalNB, GaussianNB, MultinomialNB
+from sklearn.neural_network import MLPClassifier, MLPRegressor
+from sklearn.svm import LinearSVC, LinearSVR
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier, ExtraTreesRegressor, ExtraTreesClassifier, GradientBoostingRegressor, GradientBoostingClassifier, HistGradientBoostingRegressor, HistGradientBoostingClassifier
 
@@ -145,6 +148,14 @@ def test_serializer_registry_supports_expected_model_types():
         Lasso,
         ElasticNet,
         LogisticRegression,
+        LinearSVC,
+        LinearSVR,
+        GaussianNB,
+        MultinomialNB,
+        BernoulliNB,
+        CategoricalNB,
+        MLPClassifier,
+        MLPRegressor,
         RandomForestRegressor,
         RandomForestClassifier,
         ExtraTreesRegressor,
@@ -161,6 +172,9 @@ def test_serializer_registry_supports_expected_model_types():
         "tree_ensemble",
         "linear_model",
         "logistic_regression",
+        "linear_svm",
+        "naive_bayes",
+        "mlp_neural_network",
     }
 
 

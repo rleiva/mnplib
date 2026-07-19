@@ -12,6 +12,9 @@ from .registry import SklearnModelRegistry
 from .serializers.linear import LinearModelSerializer, LogisticRegressionSerializer
 from .serializers.tree import DecisionTreeSerializer
 from .serializers.ensemble import TreeEnsembleSerializer
+from .serializers.naive_bayes import NaiveBayesSerializer
+from .serializers.neural_network import MLPSerializer
+from .serializers.svm import LinearSVMSerializer
 
 
 def create_default_registry() -> SklearnModelRegistry:
@@ -24,6 +27,9 @@ def create_default_registry() -> SklearnModelRegistry:
             TreeEnsembleSerializer(),
             LinearModelSerializer(),
             LogisticRegressionSerializer(),
+            LinearSVMSerializer(),
+            NaiveBayesSerializer(),
+            MLPSerializer(),
         ]
     )
 
