@@ -13,9 +13,7 @@ from sklearn.utils.validation import check_is_fitted
 
 from ..artifacts import ModelArtifacts, SerializationConfig, SupportLevel
 
-
 Task = Literal["classification", "regression"]
-
 
 class SklearnSerializer(ABC):
     """
@@ -25,9 +23,9 @@ class SklearnSerializer(ABC):
     generating a canonical model string for one estimator family.
     """
 
-    name: str = "base"
-    support_level: SupportLevel = "experimental"
-    supported_types: tuple[type, ...] = ()
+    name            : str = "base"
+    support_level   : SupportLevel = "experimental"
+    supported_types : tuple[type, ...] = ()
 
     def supports(self, model) -> bool:
         """

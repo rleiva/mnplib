@@ -12,7 +12,6 @@ from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 
 from .base import ModelFamilySearcher, SearchContext, search_report
 
-
 class DecisionTreePruningSearcher(ModelFamilySearcher):
     """
     Search a decision-tree family by evaluating pruning-path trees.
@@ -22,9 +21,7 @@ class DecisionTreePruningSearcher(ModelFamilySearcher):
         self,
         estimator_cls,
         *,
-        min_samples_leaf: int = 1,
         alpha_tol: float = 1e-12,
-        n_jobs: int | None = None,
         random_state: Any = None,
     ):
         if estimator_cls not in (DecisionTreeClassifier, DecisionTreeRegressor):
@@ -34,34 +31,29 @@ class DecisionTreePruningSearcher(ModelFamilySearcher):
             )
 
         self.estimator_cls = estimator_cls
-        self.min_samples_leaf = int(min_samples_leaf)
-        self.alpha_tol = float(alpha_tol)
-        self.n_jobs = n_jobs
-        self.random_state = random_state
-        self.family = (
+        self.alpha_tol     = float(alpha_tol)
+        self.random_state  = random_state
+        self.family        = (
             "decision_tree_classifier"
             if estimator_cls is DecisionTreeClassifier
             else "decision_tree_regressor"
         )
 
     def search(self, context: SearchContext):
-        initial = self.estimator_cls(
-            min_samples_leaf=self.min_samples_leaf,
-            random_state=self.random_state,
-        )
+
+        initial = self.estimator_cls(random_state=self.random_state)
         initial.fit(context.X, context.y)
         pruning_path = initial.cost_complexity_pruning_path(context.X, context.y)
         alphas = self._unique_alphas(pruning_path.ccp_alphas)
 
-        results = []
-        diagnostics = []
+        results         = []
+        diagnostics     = []
         seen_structures = set()
 
         for index, alpha in enumerate(alphas):
             model = self.estimator_cls(
-                min_samples_leaf=self.min_samples_leaf,
-                ccp_alpha=float(alpha),
-                random_state=self.random_state,
+                ccp_alpha    = float(alpha),
+                random_state = self.random_state,
             )
             model.fit(context.X, context.y)
 
@@ -69,36 +61,36 @@ class DecisionTreePruningSearcher(ModelFamilySearcher):
             if signature in seen_structures:
                 diagnostics.append(
                     {
-                        "family": self.family,
-                        "candidate": self._candidate_name(index, alpha),
-                        "reason": "duplicate_tree_structure",
-                        "ccp_alpha": float(alpha),
+                        "family"    : self.family,
+                        "candidate" : self._candidate_name(index, alpha),
+                        "reason"    : "duplicate_tree_structure",
+                        "ccp_alpha" : float(alpha),
                     }
                 )
                 continue
 
             seen_structures.add(signature)
             metadata = {
-                "ccp_alpha": float(alpha),
-                "min_samples_leaf": self.min_samples_leaf,
-                "alpha_tol": self.alpha_tol,
-                "n_jobs": self.n_jobs,
-                "n_nodes": int(model.tree_.node_count),
-                "n_leaves": int(model.get_n_leaves()),
-                "max_depth": int(model.get_depth()),
+                "ccp_alpha" : float(alpha),
+                "alpha_tol" : self.alpha_tol,
+                "n_jobs"    : self.n_jobs,
+                "n_nodes"   : int(model.tree_.node_count),
+                "n_leaves"  : int(model.get_n_leaves()),
+                "max_depth" : int(model.get_depth()),
             }
             results.append(
                 context.evaluator.evaluate(
-                    name=self._candidate_name(index, alpha),
-                    family=self.family,
-                    model=model,
-                    metadata=metadata,
+                    name     = self._candidate_name(index, alpha),
+                    family   = self.family,
+                    model    = model,
+                    metadata = metadata,
                 )
             )
 
         return search_report(self.family, results, diagnostics)
 
     def _unique_alphas(self, alphas) -> list[float]:
+
         values = sorted(float(alpha) for alpha in np.asarray(alphas, dtype=float))
         unique: list[float] = []
 

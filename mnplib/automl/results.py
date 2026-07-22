@@ -14,13 +14,13 @@ class CandidateResult:
     Result from evaluating one fitted candidate through explicit artifacts.
     """
 
-    name: str
-    family: str
-    model: object
-    nescience: float
-    components: dict[str, float]
-    artifacts: object
-    metadata: dict[str, Any] = field(default_factory=dict)
+    name       : str
+    family     : str
+    model      : object
+    nescience  : float
+    components : dict[str, float]
+    artifacts  : object
+    metadata   : dict[str, Any] = field(default_factory=dict)
 
     @property
     def estimator(self):
@@ -43,6 +43,6 @@ class SearchReport:
     Results and diagnostics returned by one model-family searcher.
     """
 
-    family: str
-    results: list[CandidateResult]
-    diagnostics: list[dict[str, Any]] = field(default_factory=list)
+    family      : str
+    results     : list[CandidateResult]
+    diagnostics : list[dict[str, Any]] = field(default_factory=list)

@@ -1,18 +1,10 @@
 """
-Minimum-nescience classifier with model-family-specific AutoML search.
+Minimum-nescience classifier with selectable internal model families.
 
-This module provides :class:`NescienceClassifier`, a scikit-learn-compatible
-estimator that selects a fitted classifier by minimizing nescience. The class
-coordinates model-family searchers, evaluates each fitted candidate through the
-explicit-artifact workflow, and exposes the selected estimator through the usual
-``fit``/``predict``/``score`` interface.
-
-The implementation intentionally keeps model-search logic outside this class.
-Searchers generate meaningful candidates for each model family, while the shared
-candidate evaluator computes the nescience components for every fitted model.
-
-@author:    Rafael Garcia Leiva
-@mail:      rgarcialeiva@gmail.com
+``NescienceClassifier`` constructs classifiers through a fixed set of
+nescience-guided model-family searchers. Users may restrict which supported
+families are evaluated, but arbitrary external estimators are intentionally not
+accepted by this core estimator.
 """
 
 from __future__ import annotations
@@ -23,8 +15,7 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 
-from sklearn.base import BaseEstimator, ClassifierMixin, clone
-from sklearn.linear_model import LogisticRegression
+from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.utils import check_X_y, check_array
 from sklearn.utils.validation import check_is_fitted
@@ -41,9 +32,6 @@ from .automl.searchers import (
 from .models import SerializationConfig
 from .nescience import Nescience
 
-
-# Public type aliases used by the estimator constructor. Keeping them explicit
-# improves readability without requiring users to inspect lower-level classes.
 XType = Literal["auto", "numeric", "categorical"]
 BinSpec = int | Literal["auto"]
 Aggregation = Literal[
@@ -55,190 +43,134 @@ Aggregation = Literal[
     "addition",
     "product",
 ]
-CandidateProfile = Literal["default", "compact", "standard", "extended"]
 
+# Human readable names for supported models
+SUPPORTED_MODELS = (
+    "Decision tree",
+    "Logistic regression",
+    "Linear SVC",
+    "Naive Bayes",
+    "MLP",
+)
 
 class NescienceClassifier(BaseEstimator, ClassifierMixin):
     """
-    Select a classifier by minimizing nescience within model families.
-
-    The estimator searches one or more classifier families, evaluates each
-    fitted candidate with the same nescience criterion, and keeps the candidate
-    with the smallest aggregated nescience value.
+    Construct and select classifiers by the minimum-nescience principle.
 
     Parameters
     ----------
-    candidates : {"default", "compact", "standard", "extended"}, mapping, \
-            sequence, or None, default="standard"
-        Candidate profile or explicit candidate collection.
-
-        When a profile is used, the classifier delegates model generation to
-        family-specific searchers:
-
-        * ``"compact"`` evaluates low-surfeit classifier families.
-        * ``"standard"`` adds moderate-surfeit families such as linear SVM and
-          compatible Naive Bayes variants.
-        * ``"extended"`` may include high-capacity families such as MLPs.
-        * ``"default"`` and ``None`` map to ``"standard"``.
-
-        A mapping or sequence of estimators is evaluated directly. This mode is
-        useful for users who want full control over the candidate estimators.
+    models : sequence of str or None, default=None
+        Supported internal model families to evaluate. If ``None``, all
+        families supported are used. If provided, the order is
+        preserved after removing duplicate names. Valid names are
+        ``"Decision tree"``, ``"Logistic regression"``, ``"Linear SVC"``,
+        ``"Naive Bayes"``, and ``"MLP"``.
     X_type : {"auto", "numeric", "categorical"}, default="numeric"
-        Representation type passed to the nescience metric.
-    aggregation : str, default="euclidean"
-        Aggregation rule used to combine nescience components.
-    weights : mapping, sequence, or None, default=None
-        Optional component weights used by the nescience aggregation rule.
+        Type policy used when fitting the nescience components on the input
+        representation.
+    aggregation : {"euclidean", "arithmetic", "geometric", "harmonic", \
+            "maximum", "addition", "product"}, default="euclidean"
+        Aggregation rule used by the underlying ``Nescience`` object.
     n_bins : int or "auto", default="auto"
-        Number of bins used when numeric quantities need discretization.
+        Discretization rule for numerical variables where required by the
+        nescience components.
     threshold_fraction : float, default=0.01
-        Threshold parameter forwarded to the nescience implementation.
+        Threshold parameter forwarded to the underlying nescience machinery.
     surplus_penalty : float, default=1.0
-        Surplus penalty forwarded to the nescience implementation.
-    zlib_level : int, default=9
-        Compression level used by the surfeit approximation.
-    zlib_overhead : int, default=6
-        Estimated zlib overhead removed from compressed descriptions.
+        Surplus penalty parameter forwarded to the underlying nescience
+        machinery.
     serialization_config : SerializationConfig or None, default=None
-        Configuration for estimator serialization. If ``None``, a default
-        ``SerializationConfig`` is created during fitting.
-    random_state : int, RandomState, or None, default=None
-        Random state forwarded to candidate searchers and compatible sklearn
-        estimators.
-    min_samples_leaf : int, default=1
-        Minimum number of samples per leaf for decision-tree pruning search.
+        Configuration for converting fitted models into canonical descriptions.
+    random_state : int, RandomState instance, or None, default=None
+        Random state forwarded to stochastic searchers and estimators.
     alpha_tol : float, default=1e-12
-        Tolerance used to merge nearly identical cost-complexity pruning alphas.
-    n_jobs : int or None, default=None
-        Optional parallelism parameter for searchers that support it.
-    include_neural_networks : bool, default=False
-        If ``True``, include the MLP architecture searcher even when the profile
-        is not ``"extended"``.
+        Tolerance used to collapse nearly duplicate cost-complexity pruning
+        alphas.
     logistic_max_iter : int, default=1000
-        Maximum number of iterations for logistic-regression candidates.
-    logistic_fallback_C_values : sequence of float, default=(1.0, 10.0, 100.0)
-        Small L2-stabilized fallback path used when unregularized logistic
-        regression fails or does not converge.
+        Maximum iterations for logistic-regression candidates.
+    logistic_fallback_C_values : sequence, default=(1.0, 10.0, 100.0)
+        Small set of L2 fallback strengths used only when unregularized
+        logistic regression is numerically problematic.
     feature_patience : int or None, default=None
-        Optional early-stopping patience for prefix-based feature searches.
+        Optional patience for prefix-based feature searches.
     mlp_search_options : mapping or None, default=None
-        Extra keyword arguments forwarded to ``MLPClassifierSearch``.
+        Additional options forwarded to the MLP architecture-growth searcher.
     verbose : int, default=0
-        Verbosity level. When nonzero, evaluated candidates are printed as they
-        are produced.
-
-    Attributes
-    ----------
-    model_ : estimator
-        Selected fitted classifier.
-    best_result_ : CandidateResult
-        Structured result for the selected candidate.
-    best_nescience_ : float
-        Aggregated nescience of the selected candidate.
-    best_components_ : dict
-        Nescience components of the selected candidate.
-    best_artifacts_ : ModelArtifacts-like object
-        Explicit artifacts used to evaluate the selected candidate.
-    results_ : list of CandidateResult
-        Results for all successfully evaluated candidates.
-    diagnostics_ : list
-        Diagnostics emitted by searchers, such as skipped incompatible models.
+        If nonzero, print evaluated candidate summaries during fitting.
     """
 
     def __init__(
         self,
-        candidates: CandidateProfile | Mapping | Sequence | None = "standard",
-        X_type: XType = "numeric",
-        aggregation: Aggregation = "euclidean",
-        weights: Mapping[str, float] | Sequence[float] | None = None,
-        n_bins: BinSpec = "auto",
-        threshold_fraction: float = 0.01,
-        surplus_penalty: float = 1.0,
-        zlib_level: int = 9,
-        zlib_overhead: int = 6,
-        serialization_config: SerializationConfig | None = None,
-        random_state=None,
-        min_samples_leaf: int = 1,
-        alpha_tol: float = 1e-12,
-        n_jobs: int | None = None,
-        include_neural_networks: bool = False,
-        logistic_max_iter: int = 1000,
+        models               : Sequence[str] | None = None,
+        X_type               : XType = "numeric",
+        aggregation          : Aggregation = "euclidean",
+        n_bins               : BinSpec = "auto",
+        threshold_fraction   : float = 0.01,
+        surplus_penalty      : float = 1.0,
+        serialization_config : SerializationConfig | None = None,
+        random_state         = None,
+        alpha_tol            : float = 1e-12,
+        logistic_max_iter    : int = 1000,
         logistic_fallback_C_values=(1.0, 10.0, 100.0),
-        feature_patience: int | None = None,
-        mlp_search_options: Mapping[str, object] | None = None,
-        verbose: int = 0,
+        feature_patience     : int | None = None,
+        mlp_search_options   : Mapping[str, object] | None = None,
+        verbose              : int = 0,
     ):
-        # Store constructor arguments verbatim to preserve sklearn estimator
-        # compatibility with get_params, set_params, cloning, and pipelines.
-        self.candidates = candidates
-        self.X_type = X_type
-        self.aggregation = aggregation
-        self.weights = weights
-        self.n_bins = n_bins
-        self.threshold_fraction = threshold_fraction
-        self.surplus_penalty = surplus_penalty
-        self.zlib_level = zlib_level
-        self.zlib_overhead = zlib_overhead
-        self.serialization_config = serialization_config
-        self.random_state = random_state
-        self.min_samples_leaf = min_samples_leaf
-        self.alpha_tol = alpha_tol
-        self.n_jobs = n_jobs
-        self.include_neural_networks = include_neural_networks
-        self.logistic_max_iter = logistic_max_iter
+        self.models                     = models
+        self.X_type                     = X_type
+        self.aggregation                = aggregation
+        self.n_bins                     = n_bins
+        self.threshold_fraction         = threshold_fraction
+        self.surplus_penalty            = surplus_penalty
+        self.serialization_config       = serialization_config
+        self.random_state               = random_state
+        self.alpha_tol                  = alpha_tol
+        self.logistic_max_iter          = logistic_max_iter
         self.logistic_fallback_C_values = logistic_fallback_C_values
-        self.feature_patience = feature_patience
-        self.mlp_search_options = mlp_search_options
-        self.verbose = verbose
+        self.feature_patience           = feature_patience
+        self.mlp_search_options         = mlp_search_options
+        self.verbose                    = verbose
 
     def fit(self, X, y):
         """
-        Search supported classifier families and select the minimum-nescience model.
+        Fit selected internal searchers and choose minimum nescience.
 
         Parameters
         ----------
-        X : array-like of shape (n_samples, n_features)
-            Input representation.
+        X : array-like or pandas.DataFrame of shape (n_samples, n_features)
+            Feature matrix. pandas DataFrames preserve column names and allow
+            automatic per-column type inference.
+
         y : array-like of shape (n_samples,)
-            Categorical target values.
+            Target vector.
 
         Returns
         -------
         self : NescienceClassifier
-            Fitted estimator.
+            Fitted estimator.        
         """
-        # Preserve user-facing feature names before sklearn validation converts
-        # pandas inputs into NumPy arrays.
+        model_names = self._resolve_model_names()
         feature_names = self._resolve_input_feature_names(X)
         X_checked, y_checked = check_X_y(X, y, dtype=None, ensure_2d=True)
 
-        # Store validated training data and sklearn-compatible fitted metadata.
         self.X_ = X_checked
         self.y_ = y_checked
         self.n_samples_in_, self.n_features_in_ = X_checked.shape
+        self.model_names_ = tuple(model_names)
         self.feature_names_in_ = np.asarray(feature_names, dtype=object)
         self.classes_ = np.unique(y_checked)
         self.serialization_config_ = self._resolve_serialization_config()
 
-        # Fit the nescience object once on the training representation. Candidate
-        # evaluation reuses this fitted metric to ensure all models are compared
-        # under the same representation, target, and aggregation settings.
         self.nescience_ = Nescience(
             X_type             = self.X_type,
             y_type             = "categorical",
             aggregation        = self.aggregation,
-            weights            = self.weights,
             n_bins             = self.n_bins,
             threshold_fraction = self.threshold_fraction,
-            surplus_penalty    = self.surplus_penalty,
-            zlib_level         = self.zlib_level,
-            zlib_overhead      = self.zlib_overhead,
+            surplus_penalty    = self.surplus_penalty
         )
         self.nescience_.fit(self.X_, self.y_)
 
-        # CandidateEvaluator is the only component that computes nescience for a
-        # fitted model. Searchers generate fitted candidates; the evaluator turns
-        # them into explicit artifacts and comparable CandidateResult instances.
         self.evaluator_ = CandidateEvaluator(
             X                    = self.X_,
             y                    = self.y_,
@@ -246,23 +178,15 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
             feature_names        = list(self.feature_names_in_),
             serialization_config = self.serialization_config_,
         )
+
         self.results_     = []
         self.diagnostics_ = []
-
-        # Profile-based operation uses model-family searchers. Explicit mappings
-        # or estimator sequences are evaluated directly for user-controlled runs.
-        if self._uses_searchers():
-            self.searchers_ = self._resolve_searchers()
-            self._fit_searchers()
-        else:
-            self.candidates_ = self._resolve_candidates()
-            self._fit_explicit_candidates()
+        self.searchers_   = self._resolve_searchers(model_names)
+        self._fit_searchers()
 
         if not self.results_:
             raise RuntimeError("No candidate classifier was successfully evaluated.")
 
-        # Selection is deliberately simple: every evaluated candidate has already
-        # been converted to the same nescience scale by the shared evaluator.
         best_result               = min(self.results_, key=lambda result: result.nescience)
         self.best_result_         = best_result
         self.model_               = best_result.model
@@ -271,8 +195,6 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
         self.best_artifacts_      = best_result.artifacts
         self.best_candidate_name_ = best_result.name
 
-        # Keep sklearn's classification metadata aligned with the selected model
-        # when the estimator exposes its own class ordering.
         if hasattr(self.model_, "classes_"):
             self.classes_ = np.asarray(self.model_.classes_)
 
@@ -281,17 +203,7 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
 
     def predict(self, X):
         """
-        Predict classes with the selected classifier.
-
-        Parameters
-        ----------
-        X : array-like of shape (n_samples, n_features)
-            Input representation.
-
-        Returns
-        -------
-        ndarray of shape (n_samples,)
-            Predicted class labels.
+        Predict classes with the selected minimum-nescience classifier.
         """
         check_is_fitted(self)
         X_checked = check_array(X, dtype=None, ensure_2d=True)
@@ -299,22 +211,7 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
 
     def predict_proba(self, X):
         """
-        Predict class probabilities when the selected classifier supports them.
-
-        Parameters
-        ----------
-        X : array-like of shape (n_samples, n_features)
-            Input representation.
-
-        Returns
-        -------
-        ndarray of shape (n_samples, n_classes)
-            Class-probability estimates.
-
-        Raises
-        ------
-        AttributeError
-            If the selected classifier does not implement ``predict_proba``.
+        Predict class probabilities with the selected classifier.
         """
         check_is_fitted(self)
 
@@ -329,9 +226,6 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
     def score(self, X, y):
         """
         Return the native score of the selected classifier.
-
-        For sklearn classifiers this is usually mean accuracy, although custom
-        estimators may define their own scoring semantics.
         """
         check_is_fitted(self)
         X_checked, y_checked = check_X_y(X, y, dtype=None, ensure_2d=True)
@@ -339,24 +233,21 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
 
     def nescience_score(self) -> float:
         """
-        Return the aggregated nescience of the selected candidate.
+        Return the nescience value of the selected classifier.
         """
         check_is_fitted(self)
         return float(self.best_nescience_)
 
     def components(self) -> dict[str, float]:
         """
-        Return the nescience components of the selected candidate.
+        Return the nescience components of the selected classifier.
         """
         check_is_fitted(self)
         return dict(self.best_components_)
 
     def explain(self) -> dict[str, object]:
         """
-        Return a structured nescience explanation for the selected model.
-
-        The explanation is recomputed from the explicit artifacts used during
-        candidate evaluation and enriched with model-family metadata.
+        Return a structured nescience explanation for the selected classifier.
         """
         check_is_fitted(self)
 
@@ -364,15 +255,15 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
             **self.best_artifacts_.to_nescience_kwargs()
         )
         explanation["candidate_name"] = self.best_candidate_name_
-        explanation["model_type"] = self.best_artifacts_.model_type
-        explanation["model_family"] = self.best_result_.family
+        explanation["model_type"]     = self.best_artifacts_.model_type
+        explanation["model_family"]   = self.best_result_.family
         explanation["model_metadata"] = self.best_artifacts_.metadata
 
         return explanation
 
     def get_model(self):
         """
-        Return the selected fitted sklearn-compatible estimator.
+        Return the selected fitted estimator.
         """
         check_is_fitted(self)
         return self.model_
@@ -380,10 +271,6 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
     def results_dataframe(self) -> pd.DataFrame:
         """
         Return all evaluated candidates sorted by ascending nescience.
-
-        The returned DataFrame is intended for inspection and diagnostics. It
-        includes common columns for all model families plus any metadata emitted
-        by individual searchers.
         """
         check_is_fitted(self)
 
@@ -392,18 +279,105 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
 
     def model_string(self) -> str:
         """
-        Return the selected model's canonical description string.
+        Return the canonical description string of the selected classifier.
         """
         check_is_fitted(self)
         return str(self.best_artifacts_.model_string)
 
+    def _resolve_model_names(self) -> list[str]:
+        """
+        Validate and normalize selected internal model-family names.
+        """
+        if self.models is None:
+            return list(SUPPORTED_MODELS)
+
+        if isinstance(self.models, str):
+            raise ValueError(
+                "models must be a sequence of supported model-family names, "
+                "not a single string. Valid options are: "
+                f"{', '.join(SUPPORTED_MODELS)}."
+            )
+
+        try:
+            requested = list(self.models)
+        except TypeError as exc:
+            raise ValueError(
+                "models must be None or a sequence of supported model-family names."
+            ) from exc
+
+        if not requested:
+            raise ValueError(
+                "At least one NescienceClassifier model family must be selected. "
+                f"Valid options are: {', '.join(SUPPORTED_MODELS)}."
+            )
+
+        unknown = [name for name in requested if name not in SUPPORTED_MODELS]
+        if unknown:
+            invalid = ", ".join(repr(name) for name in unknown)
+            valid = ", ".join(repr(name) for name in SUPPORTED_MODELS)
+            raise ValueError(
+                f"Unsupported NescienceClassifier model family: {invalid}. "
+                f"Valid options are: {valid}."
+            )
+
+        selected: list[str] = []
+        seen: set[str] = set()
+        for name in requested:
+            if name in seen:
+                continue
+            selected.append(str(name))
+            seen.add(str(name))
+
+        return selected
+
+    def _resolve_searchers(self, model_names: Sequence[str] | None = None):
+        """
+        Build searchers in the selected model-family order.
+        """
+        names = self._resolve_model_names() if model_names is None else list(model_names)
+        return [self._make_searcher(name) for name in names]
+
+    def _make_searcher(self, name: str):
+        """
+        Instantiate the searcher for one supported model-family name.
+        """
+        if name == "Decision tree":
+            return DecisionTreePruningSearcher(
+                DecisionTreeClassifier,
+                alpha_tol    = self.alpha_tol,
+                random_state = self.random_state,
+            )
+
+        if name == "Logistic regression":
+            return LogisticRegressionPrefixSearcher(
+                max_iter          = self.logistic_max_iter,
+                fallback_C_values = self.logistic_fallback_C_values,
+                patience          = self.feature_patience,
+                random_state      = self.random_state,
+            )
+
+        if name == "Linear SVC":
+            return LinearSVCSearcher(
+                random_state=self.random_state
+            )
+
+        if name == "Naive bayes":
+            return NaiveBayesSearcher()
+
+        if name == "MLP":
+            options = (
+                {}
+                if self.mlp_search_options is None
+                else dict(self.mlp_search_options)
+            )
+            options.setdefault("random_state", self.random_state)
+            return MLPClassifierSearch(**options)
+
+        raise RuntimeError(f"Validated unsupported model family {name!r}.")
+
     def _fit_searchers(self) -> None:
         """
-        Run all resolved model-family searchers.
-
-        Searchers receive a shared context containing data, feature names, the
-        evaluator, task type, and reproducibility settings. Each searcher returns
-        a report with successful evaluations and optional diagnostics.
+        Execute selected internal searchers and collect their results.
         """
         context = SearchContext(
             X             = self.X_,
@@ -416,169 +390,16 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
         )
 
         for searcher in self.searchers_:
-            
             report = searcher.search(context)
             self.results_.extend(report.results)
             self.diagnostics_.extend(report.diagnostics)
-
             if self.verbose:
                 for result in report.results:
                     self._print_result(result)
 
-    def _fit_explicit_candidates(self) -> None:
-        """
-        Fit and evaluate user-supplied estimator candidates directly.
-
-        This path bypasses family-specific searchers but still uses the same
-        evaluator and explicit-artifact workflow as profile-based search.
-        """
-        for name, estimator in self.candidates_:
-            model = clone(estimator)
-            model.fit(self.X_, self.y_)
-            result = self.evaluator_.evaluate(
-                name=name,
-                family=type(model).__name__,
-                model=model,
-                metadata={"candidate_source": "explicit"},
-            )
-            self.results_.append(result)
-            if self.verbose:
-                self._print_result(result)
-
-    def _uses_searchers(self) -> bool:
-        """
-        Return whether ``candidates`` denotes a built-in search profile.
-        """
-        if self.candidates is None:
-            return True
-        return isinstance(self.candidates, str) and self.candidates in {
-            "default",
-            "compact",
-            "standard",
-            "extended",
-        }
-
-    def _resolve_searchers(self):
-        """
-        Build the searcher list for the selected candidate profile.
-
-        Compact search includes low-surfeit families. Standard search adds
-        moderate-surfeit families. Extended search adds high-capacity families
-        that are useful for comparison but should not be selected by default.
-        """
-        profile = self._candidate_profile()
-        searchers = [
-            LogisticRegressionPrefixSearcher(
-                max_iter          = self.logistic_max_iter,
-                fallback_C_values = self.logistic_fallback_C_values,
-                patience          = self.feature_patience,
-                random_state      = self.random_state,
-            ),
-            DecisionTreePruningSearcher(
-                DecisionTreeClassifier,
-                min_samples_leaf  = self.min_samples_leaf,
-                alpha_tol         = self.alpha_tol,
-                n_jobs            = self.n_jobs,
-                random_state      = self.random_state,
-            ),
-        ]
-
-        if profile in {"standard", "extended"}:
-            searchers.extend(
-                [
-                    LinearSVCSearcher(random_state=self.random_state),
-                    NaiveBayesSearcher(),
-                ]
-            )
-
-        if profile == "extended" or self.include_neural_networks:
-            options = (
-                {} if self.mlp_search_options is None else dict(self.mlp_search_options)
-            )
-            options.setdefault("random_state", self.random_state)
-            searchers.append(MLPClassifierSearch(**options))
-
-        return searchers
-
-    def _candidate_profile(self) -> str:
-        """
-        Normalize the candidate-profile name.
-
-        ``None`` and ``"default"`` intentionally map to ``"standard"`` so that
-        the default profile includes compact and moderate-surfeit families while
-        excluding extended high-surfeit models.
-        """
-        if self.candidates in (None, "default"):
-            return "standard"
-        if self.candidates in {"compact", "standard", "extended"}:
-            return str(self.candidates)
-        raise ValueError(
-            "candidates must be 'compact', 'standard', 'extended', 'default', "
-            "None, or an explicit mapping/sequence of estimators."
-        )
-
-    def _resolve_candidates(self) -> list[tuple[str, object]]:
-        """
-        Resolve explicit user-supplied candidates for direct evaluation.
-
-        A mapping preserves user-provided names. A sequence may contain either
-        ``(name, estimator)`` pairs or bare estimators, in which case stable
-        generated names are used.
-        """
-        if self.candidates is None or self.candidates == "default":
-            return self._default_candidates()
-
-        if isinstance(self.candidates, str):
-            if self.candidates in {"compact", "standard", "extended"}:
-                return self._default_candidates()
-            raise ValueError(f"Unknown candidate profile {self.candidates!r}.")
-
-        if isinstance(self.candidates, Mapping):
-            return [(str(name), estimator) for name, estimator in self.candidates.items()]
-
-        resolved = []
-        for index, item in enumerate(self.candidates):
-            if isinstance(item, tuple) and len(item) == 2:
-                name, estimator = item
-                resolved.append((str(name), estimator))
-            else:
-                resolved.append((f"{type(item).__name__}_{index}", item))
-
-        if not resolved:
-            raise ValueError("At least one candidate classifier must be provided.")
-
-        return resolved
-
-    def _default_candidates(self) -> list[tuple[str, object]]:
-        """
-        Return fallback direct-evaluation candidates.
-
-        This method is only used by the explicit-candidate path. Profile-based
-        operation should normally use searchers rather than these fixed models.
-        """
-        return [
-            (
-                "logistic_regression",
-                LogisticRegression(
-                    penalty=None,
-                    solver="lbfgs",
-                    max_iter=self.logistic_max_iter,
-                    random_state=self.random_state,
-                ),
-            ),
-            (
-                "decision_tree_pruned_family",
-                DecisionTreeClassifier(random_state=self.random_state),
-            ),
-        ]
-
     def _result_row(self, result: CandidateResult) -> dict[str, object]:
         """
-        Convert a candidate result into one row for ``results_dataframe``.
-
-        The method creates a stable set of common diagnostic columns and then
-        appends any additional searcher-specific metadata that is not already
-        represented.
+        Convert one candidate result into a diagnostics-table row.
         """
         metadata = dict(result.metadata)
         description_length = int(
@@ -596,6 +417,7 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
             "nescience": float(result.nescience),
             "native_estimator_score": result.estimator_score,
             "estimator_score": result.estimator_score,
+            "selected_features": list(result.artifacts.subset),
             "n_features_in_use": int(len(result.artifacts.subset)),
             "n_features_used": int(
                 metadata.get("n_features_used", len(result.artifacts.subset))
@@ -606,8 +428,6 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
         }
         row.update(result.components)
 
-        # Preserve family-specific diagnostics such as ccp_alpha, feature order,
-        # convergence flags, and compatibility-skip metadata.
         for key, value in metadata.items():
             if key not in row:
                 row[key] = value
@@ -617,11 +437,10 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
     @staticmethod
     def _searched_hyperparameters(metadata: Mapping[str, object]) -> dict[str, object]:
         """
-        Extract common hyperparameter diagnostics from searcher metadata.
+        Extract common hyperparameters from candidate metadata.
         """
         keys = {
             "ccp_alpha",
-            "min_samples_leaf",
             "C",
             "epsilon",
             "alpha",
@@ -633,7 +452,11 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
             "max_iter",
             "tol",
         }
-        return {key: metadata[key] for key in sorted(keys) if key in metadata}
+        return {
+            key: metadata[key]
+            for key in sorted(keys)
+            if key in metadata
+        }
 
     @staticmethod
     def _print_result(result: CandidateResult) -> None:
@@ -647,7 +470,7 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
 
     def _resolve_serialization_config(self) -> SerializationConfig:
         """
-        Validate or create the serialization configuration.
+        Return a valid serialization configuration for model descriptions.
         """
         if self.serialization_config is None:
             return SerializationConfig()
@@ -663,7 +486,7 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
     @staticmethod
     def _resolve_input_feature_names(X) -> list[str]:
         """
-        Return feature names for pandas inputs or generated names otherwise.
+        Return stable feature names for pandas and array-like inputs.
         """
         if hasattr(X, "columns"):
             return [str(name) for name in X.columns]
@@ -671,6 +494,4 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
         n_features = int(getattr(X, "shape")[1])
         return [f"x{i}" for i in range(n_features)]
 
-
-# Backward-compatible public alias.
 Classifier = NescienceClassifier

@@ -16,7 +16,6 @@ from .serializers.naive_bayes import NaiveBayesSerializer
 from .serializers.neural_network import MLPSerializer
 from .serializers.svm import LinearSVMSerializer
 
-
 def create_default_registry() -> SklearnModelRegistry:
     """
     Create a registry with all stable built-in scikit-learn serializers.

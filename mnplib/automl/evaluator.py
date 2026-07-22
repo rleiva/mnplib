@@ -13,7 +13,6 @@ from mnplib.models import ModelArtifacts, SerializationConfig, sklearn_model_art
 
 from .results import CandidateResult
 
-
 class CandidateEvaluator:
     """
     Evaluate fitted models through the explicit artifact workflow.
@@ -87,19 +86,20 @@ class CandidateEvaluator:
         merged_metadata = dict(artifacts.metadata)
         merged_metadata.update(metadata)
         merged_metadata.setdefault("family", family)
+        merged_metadata.setdefault("candidate_source", "internal")
         merged_metadata["native_score"] = self._native_score(public_model, X_for_adapter)
         merged_metadata["description_length"] = len(
             artifacts.model_string.encode("utf-8")
         )
 
         return CandidateResult(
-            name=str(name),
-            family=str(family),
-            model=public_model,
-            nescience=float(value),
-            components=dict(components),
-            artifacts=artifacts,
-            metadata=merged_metadata,
+            name       = str(name),
+            family     = str(family),
+            model      = public_model,
+            nescience  = float(value),
+            components = dict(components),
+            artifacts  = artifacts,
+            metadata   = merged_metadata,
         )
 
     def _remap_artifacts(

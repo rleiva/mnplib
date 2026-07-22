@@ -1,5 +1,5 @@
 """
-Minimum-nescience regressor with model-family-specific AutoML search.
+Minimum-nescience regressor with nescience-guided model construction.
 """
 
 from __future__ import annotations
@@ -11,13 +11,6 @@ import numpy as np
 import pandas as pd
 
 from sklearn.base import BaseEstimator, RegressorMixin, clone
-from sklearn.ensemble import (
-    ExtraTreesRegressor,
-    GradientBoostingRegressor,
-    HistGradientBoostingRegressor,
-    RandomForestRegressor,
-)
-from sklearn.linear_model import LinearRegression
 from sklearn.tree import DecisionTreeRegressor
 from sklearn.utils import check_X_y, check_array
 from sklearn.utils.validation import check_is_fitted
@@ -45,21 +38,18 @@ Aggregation = Literal[
     "addition",
     "product",
 ]
-CandidateProfile = Literal["default", "compact", "standard", "extended"]
 
 
 class NescienceRegressor(BaseEstimator, RegressorMixin):
     """
-    Select a regressor by minimizing nescience within model families.
+    Construct and select regressors by the minimum-nescience principle.
     """
 
     def __init__(
         self,
-        candidates: CandidateProfile | Mapping | Sequence | None = "standard",
-        include_ensembles: bool = False,
+        candidates: Mapping | Sequence | None = None,
         X_type: XType = "numeric",
         aggregation: Aggregation = "euclidean",
-        weights: Mapping[str, float] | Sequence[float] | None = None,
         n_bins: BinSpec = "auto",
         threshold_fraction: float = 0.01,
         surplus_penalty: float = 1.0,
@@ -70,16 +60,13 @@ class NescienceRegressor(BaseEstimator, RegressorMixin):
         min_samples_leaf: int = 1,
         alpha_tol: float = 1e-12,
         n_jobs: int | None = None,
-        include_neural_networks: bool = False,
         feature_patience: int | None = None,
         mlp_search_options: Mapping[str, object] | None = None,
         verbose: int = 0,
     ):
         self.candidates = candidates
-        self.include_ensembles = include_ensembles
         self.X_type = X_type
         self.aggregation = aggregation
-        self.weights = weights
         self.n_bins = n_bins
         self.threshold_fraction = threshold_fraction
         self.surplus_penalty = surplus_penalty
@@ -90,14 +77,13 @@ class NescienceRegressor(BaseEstimator, RegressorMixin):
         self.min_samples_leaf = min_samples_leaf
         self.alpha_tol = alpha_tol
         self.n_jobs = n_jobs
-        self.include_neural_networks = include_neural_networks
         self.feature_patience = feature_patience
         self.mlp_search_options = mlp_search_options
         self.verbose = verbose
 
     def fit(self, X, y):
         """
-        Search supported regressor families and select minimum nescience.
+        Fit internal searchers and optional explicit candidates.
         """
         feature_names = self._resolve_input_feature_names(X)
         X_checked, y_checked = check_X_y(X, y, dtype=None, ensure_2d=True)
@@ -112,7 +98,6 @@ class NescienceRegressor(BaseEstimator, RegressorMixin):
             X_type=self.X_type,
             y_type="numeric",
             aggregation=self.aggregation,
-            weights=self.weights,
             n_bins=self.n_bins,
             threshold_fraction=self.threshold_fraction,
             surplus_penalty=self.surplus_penalty,
@@ -130,12 +115,12 @@ class NescienceRegressor(BaseEstimator, RegressorMixin):
         )
         self.results_ = []
         self.diagnostics_ = []
+        self.candidates_ = self._resolve_candidates()
 
-        if self._uses_searchers():
-            self.searchers_ = self._resolve_searchers()
-            self._fit_searchers()
-        else:
-            self.candidates_ = self._resolve_candidates()
+        self.searchers_ = self._resolve_searchers()
+        self._fit_searchers()
+
+        if self.candidates_:
             self._fit_explicit_candidates()
 
         if not self.results_:
@@ -192,6 +177,9 @@ class NescienceRegressor(BaseEstimator, RegressorMixin):
             **self.best_artifacts_.to_nescience_kwargs()
         )
         explanation["candidate_name"] = self.best_candidate_name_
+        explanation["candidate_source"] = self.best_result_.metadata.get(
+            "candidate_source"
+        )
         explanation["model_type"] = self.best_artifacts_.model_type
         explanation["model_family"] = self.best_result_.family
         explanation["model_metadata"] = self.best_artifacts_.metadata
@@ -221,6 +209,26 @@ class NescienceRegressor(BaseEstimator, RegressorMixin):
         check_is_fitted(self)
         return str(self.best_artifacts_.model_string)
 
+    def _resolve_searchers(self):
+        """
+        Return the internal nescience-guided regressor searchers.
+        """
+        options = {} if self.mlp_search_options is None else dict(self.mlp_search_options)
+        options.setdefault("random_state", self.random_state)
+
+        return [
+            LinearRegressionPrefixSearcher(patience=self.feature_patience),
+            DecisionTreePruningSearcher(
+                DecisionTreeRegressor,
+                min_samples_leaf=self.min_samples_leaf,
+                alpha_tol=self.alpha_tol,
+                n_jobs=self.n_jobs,
+                random_state=self.random_state,
+            ),
+            LinearSVRSearcher(random_state=self.random_state),
+            MLPRegressorSearch(**options),
+        ]
+
     def _fit_searchers(self) -> None:
         context = SearchContext(
             X=self.X_,
@@ -240,6 +248,38 @@ class NescienceRegressor(BaseEstimator, RegressorMixin):
                 for result in report.results:
                     self._print_result(result)
 
+    def _resolve_candidates(self) -> list[tuple[str, object]]:
+        """
+        Resolve explicit user-supplied candidates for comparison.
+        """
+        if self.candidates is None:
+            return []
+
+        if isinstance(self.candidates, str):
+            raise ValueError(
+                "candidates must be an explicit mapping or sequence of "
+                "estimators; profile strings are not supported."
+            )
+
+        if isinstance(self.candidates, Mapping):
+            resolved = [
+                (str(name), estimator)
+                for name, estimator in self.candidates.items()
+            ]
+        else:
+            resolved = []
+            for index, item in enumerate(self.candidates):
+                if isinstance(item, tuple) and len(item) == 2:
+                    name, estimator = item
+                    resolved.append((str(name), estimator))
+                else:
+                    resolved.append((f"{type(item).__name__}_{index}", item))
+
+        if not resolved:
+            raise ValueError("At least one explicit candidate regressor is required.")
+
+        return resolved
+
     def _fit_explicit_candidates(self) -> None:
         for name, estimator in self.candidates_:
             model = clone(estimator)
@@ -254,134 +294,6 @@ class NescienceRegressor(BaseEstimator, RegressorMixin):
             if self.verbose:
                 self._print_result(result)
 
-    def _uses_searchers(self) -> bool:
-        if self.candidates is None:
-            return True
-        return isinstance(self.candidates, str) and self.candidates in {
-            "default",
-            "compact",
-            "standard",
-            "extended",
-        }
-
-    def _resolve_searchers(self):
-        profile = self._candidate_profile()
-        searchers = [
-            LinearRegressionPrefixSearcher(patience=self.feature_patience),
-            DecisionTreePruningSearcher(
-                DecisionTreeRegressor,
-                min_samples_leaf=self.min_samples_leaf,
-                alpha_tol=self.alpha_tol,
-                n_jobs=self.n_jobs,
-                random_state=self.random_state,
-            ),
-        ]
-
-        if profile in {"standard", "extended"}:
-            searchers.append(LinearSVRSearcher(random_state=self.random_state))
-
-        if profile == "extended" or self.include_neural_networks:
-            options = {} if self.mlp_search_options is None else dict(self.mlp_search_options)
-            options.setdefault("random_state", self.random_state)
-            searchers.append(MLPRegressorSearch(**options))
-
-        return searchers
-
-    def _candidate_profile(self) -> str:
-        if self.candidates in (None, "default"):
-            return "standard"
-        if self.candidates in {"compact", "standard", "extended"}:
-            return str(self.candidates)
-        raise ValueError(
-            "candidates must be 'compact', 'standard', 'extended', 'default', "
-            "None, or an explicit mapping/sequence of estimators."
-        )
-
-    def _resolve_candidates(self) -> list[tuple[str, object]]:
-        """
-        Resolve explicit user-supplied candidates for backward compatibility.
-        """
-        if self.candidates is None or self.candidates == "default":
-            return self._default_candidates()
-
-        if isinstance(self.candidates, str):
-            if self.candidates in {"compact", "standard", "extended"}:
-                return self._default_candidates()
-            raise ValueError(f"Unknown candidate profile {self.candidates!r}.")
-
-        if isinstance(self.candidates, Mapping):
-            return [
-                (str(name), estimator)
-                for name, estimator in self.candidates.items()
-            ]
-
-        resolved = []
-        for index, item in enumerate(self.candidates):
-            if isinstance(item, tuple) and len(item) == 2:
-                name, estimator = item
-                resolved.append((str(name), estimator))
-            else:
-                resolved.append((f"{type(item).__name__}_{index}", item))
-
-        if not resolved:
-            raise ValueError("At least one candidate regressor must be provided.")
-
-        return resolved
-
-    def _default_candidates(self) -> list[tuple[str, object]]:
-        """
-        Return a compact direct-evaluation preview of default families.
-        """
-        candidates = [
-            ("linear_regression", LinearRegression()),
-            (
-                "decision_tree_pruned_family",
-                DecisionTreeRegressor(random_state=self.random_state),
-            ),
-        ]
-        if self.include_ensembles:
-            candidates.extend(self._default_ensemble_candidates())
-        return candidates
-
-    def _default_ensemble_candidates(self) -> list[tuple[str, object]]:
-        """
-        Return opt-in ensemble candidates for legacy explicit evaluation.
-        """
-        return [
-            (
-                "random_forest_depth_3",
-                RandomForestRegressor(
-                    n_estimators=25,
-                    max_depth=3,
-                    random_state=self.random_state,
-                ),
-            ),
-            (
-                "extra_trees_depth_3",
-                ExtraTreesRegressor(
-                    n_estimators=25,
-                    max_depth=3,
-                    random_state=self.random_state,
-                ),
-            ),
-            (
-                "gradient_boosting_depth_2",
-                GradientBoostingRegressor(
-                    n_estimators=25,
-                    max_depth=2,
-                    random_state=self.random_state,
-                ),
-            ),
-            (
-                "hist_gradient_boosting",
-                HistGradientBoostingRegressor(
-                    max_iter=25,
-                    max_leaf_nodes=15,
-                    random_state=self.random_state,
-                ),
-            ),
-        ]
-
     def _result_row(self, result: CandidateResult) -> dict[str, object]:
         metadata = dict(result.metadata)
         description_length = int(
@@ -392,6 +304,7 @@ class NescienceRegressor(BaseEstimator, RegressorMixin):
         )
         row = {
             "candidate": result.name,
+            "candidate_source": metadata.get("candidate_source"),
             "family": result.family,
             "model_family": result.family,
             "model_type": result.artifacts.model_type,
@@ -399,6 +312,7 @@ class NescienceRegressor(BaseEstimator, RegressorMixin):
             "nescience": float(result.nescience),
             "native_estimator_score": result.estimator_score,
             "estimator_score": result.estimator_score,
+            "selected_features": list(result.artifacts.subset),
             "n_features_in_use": int(len(result.artifacts.subset)),
             "n_features_used": int(
                 metadata.get("n_features_used", len(result.artifacts.subset))

@@ -1,9 +1,9 @@
 """
 Shared artifacts and serialization configuration for model adapters.
 
-The simplified nescience metrics require explicit artifacts rather than fitted
-model objects. This module defines those artifacts and the configuration used
-by canonical model serializers.
+The nescience metrics require explicit artifacts rather than fitted model
+objects. This module defines those artifacts and the configuration used by
+canonical model serializers.
 """
 
 from __future__ import annotations
@@ -13,9 +13,7 @@ from typing import Any, Literal
 
 import numpy as np
 
-
 SupportLevel = Literal["stable", "beta", "experimental"]
-
 
 @dataclass(frozen=True)
 class SerializationConfig:
@@ -42,14 +40,15 @@ class SerializationConfig:
         Indentation used in nested canonical descriptions.
     """
 
-    precision: int = 6
-    zero_tolerance: float = 1e-12
+    precision:        int = 6
+    zero_tolerance:   float = 1e-12
     include_metadata: bool = True
-    schema_name: str = "canonical_nescience_model_v1"
-    indent: str = "    "
+    schema_name:      str = "canonical_nescience_model_v1"
+    indent:           str = "    "
 
     def __post_init__(self) -> None:
         """Validate the serialization configuration."""
+
         if self.precision < 0:
             raise ValueError("precision must be non-negative.")
 
@@ -87,18 +86,18 @@ class ModelArtifacts:
         on this field; it is provided for reporting and debugging.
     """
 
-    subset: list[int]
-    predictions: np.ndarray
-    model_string: str
-    model_type: str
-    metadata: dict[str, Any] = field(default_factory=dict)
+    subset       : list[int]
+    predictions  : np.ndarray
+    model_string : str
+    model_type   : str
+    metadata     : dict[str, Any] = field(default_factory=dict)
 
     def to_nescience_kwargs(self) -> dict[str, Any]:
         """
         Return the keyword arguments expected by the simplified ``Nescience`` API.
         """
         return {
-            "subset": self.subset,
-            "predictions": self.predictions,
-            "model_string": self.model_string,
+            "subset"       : self.subset,
+            "predictions"  : self.predictions,
+            "model_string" : self.model_string,
         }

@@ -18,7 +18,6 @@ from .base import (
     require_fitted,
 )
 
-
 class DecisionTreeSerializer(SklearnSerializer):
     """
     Canonical serializer for decision-tree classifiers and regressors.

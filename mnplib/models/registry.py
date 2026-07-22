@@ -9,7 +9,6 @@ from collections.abc import Iterable
 from .artifacts import ModelArtifacts, SerializationConfig
 from .serializers.base import SklearnSerializer
 
-
 class SklearnModelRegistry:
     """
     Registry of scikit-learn serializers.
