@@ -1,6 +1,8 @@
 """
-Tests for the modular scikit-learn adapter package.
+Tests for the static scikit-learn adapter package.
 """
+
+from __future__ import annotations
 
 import numpy as np
 import pytest
@@ -8,14 +10,14 @@ import pytest
 from sklearn.datasets import make_classification, make_regression
 from sklearn.dummy import DummyRegressor
 from sklearn.exceptions import NotFittedError
-from sklearn.linear_model import ElasticNet, Lasso, LinearRegression, LogisticRegression, Ridge
+from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.naive_bayes import BernoulliNB, CategoricalNB, GaussianNB, MultinomialNB
 from sklearn.neural_network import MLPClassifier, MLPRegressor
 from sklearn.svm import LinearSVC, LinearSVR
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
-from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier, ExtraTreesRegressor, ExtraTreesClassifier, GradientBoostingRegressor, GradientBoostingClassifier, HistGradientBoostingRegressor, HistGradientBoostingClassifier
 
-from mnplib.nescience import Nescience
+from mnplib.automl import CandidateEvaluator
+from mnplib.automl.results import CandidateResult
 from mnplib.models import (
     ModelArtifacts,
     SerializationConfig,
@@ -25,9 +27,13 @@ from mnplib.models import (
     score_model,
     sklearn_model_artifacts,
 )
-from mnplib.models.sklearn import registry
+from mnplib.models.serializers.linear import (
+    LinearModelSerializer,
+    LogisticRegressionSerializer,
+)
 from mnplib.models.serializers.tree import DecisionTreeSerializer
-from mnplib.models.serializers.linear import LinearModelSerializer, LogisticRegressionSerializer
+from mnplib.models.sklearn import _find_serializer
+from mnplib.nescience import Nescience
 
 
 def test_supported_regression_models_produce_artifacts_and_nescience():
@@ -44,9 +50,12 @@ def test_supported_regression_models_produce_artifacts_and_nescience():
     models = [
         DecisionTreeRegressor(max_depth=3, random_state=42),
         LinearRegression(),
-        Ridge(alpha=1.0),
-        Lasso(alpha=0.01, max_iter=10000),
-        ElasticNet(alpha=0.01, l1_ratio=0.5, max_iter=10000),
+        LinearSVR(max_iter=10000, random_state=42),
+        MLPRegressor(
+            hidden_layer_sizes=(2,),
+            max_iter=25,
+            random_state=42,
+        ),
     ]
 
     metric = Nescience(X_type="numeric", y_type="numeric", n_bins=3).fit(X, y)
@@ -106,76 +115,110 @@ def test_supported_regression_models_produce_artifacts_and_nescience():
         ) == pytest.approx(1.0 - value)
 
 
-def test_supported_classification_models_produce_artifacts_and_nescience():
-    X, y = make_classification(
+@pytest.mark.parametrize(
+    "model,X_transform",
+    [
+        (DecisionTreeClassifier(max_depth=3, random_state=42), lambda X: X),
+        (LogisticRegression(max_iter=1000), lambda X: X),
+        (LinearSVC(max_iter=10000, random_state=42), lambda X: X),
+        (GaussianNB(), lambda X: X),
+        (MultinomialNB(), np.abs),
+        (BernoulliNB(), lambda X: (X > 0).astype(int)),
+        (CategoricalNB(), lambda X: np.digitize(X, bins=[-1.0, 0.0, 1.0])),
+        (
+            MLPClassifier(
+                hidden_layer_sizes=(3,),
+                max_iter=25,
+                random_state=42,
+            ),
+            lambda X: X,
+        ),
+    ],
+)
+def test_supported_classification_models_produce_artifacts_and_nescience(
+    model,
+    X_transform,
+):
+    X_raw, y = make_classification(
         n_samples=100,
         n_features=5,
         n_informative=3,
         n_redundant=0,
         random_state=42,
     )
+    X = X_transform(X_raw)
     config = SerializationConfig(precision=4)
-
-    models = [
-        DecisionTreeClassifier(max_depth=3, random_state=42),
-        LogisticRegression(max_iter=1000),
-    ]
-
     metric = Nescience(X_type="numeric", y_type="categorical").fit(X, y)
 
-    for model in models:
+    model.fit(X, y)
+    artifacts = sklearn_model_artifacts(model, X, config=config)
+
+    assert isinstance(artifacts, ModelArtifacts)
+    assert "TASK classification" in artifacts.model_string
+    assert len(artifacts.predictions) == len(y)
+
+    value = nescience_model(metric, model, X, config=config)
+    assert isinstance(value, float)
+    assert value >= 0.0
+
+
+@pytest.mark.parametrize(
+    "model,expected_serializer",
+    [
+        (DecisionTreeClassifier(max_depth=2, random_state=42), "decision_tree"),
+        (LogisticRegression(max_iter=1000), "logistic_regression"),
+        (LinearSVC(max_iter=10000, random_state=42), "linear_svm"),
+        (GaussianNB(), "naive_bayes"),
+        (MLPClassifier(hidden_layer_sizes=(2,), max_iter=25, random_state=42), "mlp_neural_network"),
+    ],
+)
+def test_static_dispatch_selects_expected_classifier_serializers(
+    model,
+    expected_serializer,
+):
+    X, y = make_classification(
+        n_samples=60,
+        n_features=4,
+        n_informative=2,
+        n_redundant=0,
+        random_state=42,
+    )
+
+    model.fit(X, y)
+
+    assert _find_serializer(model).name == expected_serializer
+    assert sklearn_model_artifacts(model, X).metadata["serializer"] == expected_serializer
+
+
+def test_static_dispatch_selects_expected_regressor_serializers():
+    X, y = make_regression(n_samples=60, n_features=4, random_state=42)
+    expectations = [
+        (DecisionTreeRegressor(max_depth=2, random_state=42), "decision_tree"),
+        (LinearRegression(), "linear_model"),
+        (LinearSVR(max_iter=10000, random_state=42), "linear_svm"),
+        (
+            MLPRegressor(hidden_layer_sizes=(2,), max_iter=25, random_state=42),
+            "mlp_neural_network",
+        ),
+    ]
+
+    for model, expected_serializer in expectations:
         model.fit(X, y)
-
-        artifacts = sklearn_model_artifacts(model, X, config=config)
-
-        assert isinstance(artifacts, ModelArtifacts)
-        assert "TASK classification" in artifacts.model_string
-        assert len(artifacts.predictions) == len(y)
-
-        value = nescience_model(metric, model, X, config=config)
-        assert isinstance(value, float)
-        assert value >= 0.0
+        assert _find_serializer(model).name == expected_serializer
 
 
-def test_serializer_registry_supports_expected_model_types():
-    supported = registry.supported_model_types()
+def test_no_public_dynamic_registration_api_remains():
+    import mnplib.models as models
+    import mnplib.models.sklearn as sklearn_adapter
 
-    for expected in [
-        DecisionTreeClassifier,
-        DecisionTreeRegressor,
-        LinearRegression,
-        Ridge,
-        Lasso,
-        ElasticNet,
-        LogisticRegression,
-        LinearSVC,
-        LinearSVR,
-        GaussianNB,
-        MultinomialNB,
-        BernoulliNB,
-        CategoricalNB,
-        MLPClassifier,
-        MLPRegressor,
-        RandomForestRegressor,
-        RandomForestClassifier,
-        ExtraTreesRegressor,
-        ExtraTreesClassifier,
-        GradientBoostingRegressor,
-        GradientBoostingClassifier,
-        HistGradientBoostingRegressor,
-        HistGradientBoostingClassifier,
-    ]:
-        assert expected in supported
-
-    assert set(registry.serializer_names()) == {
-        "decision_tree",
-        "tree_ensemble",
-        "linear_model",
-        "logistic_regression",
-        "linear_svm",
-        "naive_bayes",
-        "mlp_neural_network",
-    }
+    for name in (
+        "SklearnModelRegistry",
+        "create_default_registry",
+        "register_sklearn_serializer",
+        "registry",
+    ):
+        assert not hasattr(models, name)
+        assert not hasattr(sklearn_adapter, name)
 
 
 def test_unfitted_model_raises_not_fitted_error():
@@ -183,12 +226,64 @@ def test_unfitted_model_raises_not_fitted_error():
         sklearn_model_artifacts(DecisionTreeRegressor(), [[0.0, 1.0]])
 
 
-def test_unsupported_model_raises_not_implemented_error():
+def test_unsupported_model_raises_clear_value_error():
     X, y = make_regression(n_samples=30, n_features=3, random_state=42)
     model = DummyRegressor().fit(X, y)
 
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(
+        ValueError,
+        match="Unsupported scikit-learn model type DummyRegressor",
+    ) as exc_info:
         sklearn_model_artifacts(model, X)
+
+    message = str(exc_info.value)
+    assert "DecisionTreeClassifier" in message
+    assert "LogisticRegression" in message
+    assert "No generic or repr-based model serialization is available" in message
+
+
+def test_no_repr_or_generic_fallback_for_unsupported_model():
+    class ReprOnlyDummy(DummyRegressor):
+        def __repr__(self):
+            return "GENERIC_MODEL_STRING_SHOULD_NOT_APPEAR"
+
+    X, y = make_regression(n_samples=30, n_features=3, random_state=42)
+    model = ReprOnlyDummy().fit(X, y)
+
+    with pytest.raises(ValueError) as exc_info:
+        sklearn_model_artifacts(model, X)
+
+    assert "GENERIC_MODEL_STRING_SHOULD_NOT_APPEAR" not in str(exc_info.value)
+
+
+def test_candidate_evaluator_uses_static_adapter():
+    X, y = make_classification(
+        n_samples=60,
+        n_features=4,
+        n_informative=2,
+        n_redundant=0,
+        random_state=42,
+    )
+    metric = Nescience(X_type="numeric", y_type="categorical", n_bins=3).fit(X, y)
+    evaluator = CandidateEvaluator(
+        X=X,
+        y=y,
+        nescience=metric,
+        feature_names=[f"x{i}" for i in range(X.shape[1])],
+        serialization_config=SerializationConfig(precision=4),
+    )
+    model = DecisionTreeClassifier(max_depth=2, random_state=42).fit(X, y)
+
+    result = evaluator.evaluate(
+        name="tree",
+        family="decision_tree_classifier",
+        model=model,
+    )
+
+    assert isinstance(result, CandidateResult)
+    assert isinstance(result.artifacts, ModelArtifacts)
+    assert result.artifacts.to_nescience_kwargs()["model_string"]
+    assert result.metadata["serializer"] == "decision_tree"
 
 
 def test_feature_name_length_validation():

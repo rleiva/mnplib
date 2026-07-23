@@ -44,13 +44,12 @@ Aggregation = Literal[
     "product",
 ]
 
-# Human readable names for supported models
 SUPPORTED_MODELS = (
-    "Decision tree",
-    "Logistic regression",
-    "Linear SVC",
-    "Naive Bayes",
-    "MLP",
+    "decision_tree",
+    "logistic_regression",
+    "linear_svc",
+    "naive_bayes",
+    "mlp",
 )
 
 class NescienceClassifier(BaseEstimator, ClassifierMixin):
@@ -63,8 +62,11 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
         Supported internal model families to evaluate. If ``None``, all
         families supported are used. If provided, the order is
         preserved after removing duplicate names. Valid names are
-        ``"Decision tree"``, ``"Logistic regression"``, ``"Linear SVC"``,
-        ``"Naive Bayes"``, and ``"MLP"``.
+        ``"decision_tree"``, ``"logistic_regression"``, ``"linear_svc"``,
+        ``"naive_bayes"``, and ``"mlp"``.
+    candidates : None, default=None
+        Reserved placeholder for old code paths. Arbitrary external
+        candidate estimators are not accepted by ``NescienceClassifier``.
     X_type : {"auto", "numeric", "categorical"}, default="numeric"
         Type policy used when fitting the nescience components on the input
         representation.
@@ -102,6 +104,7 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
     def __init__(
         self,
         models               : Sequence[str] | None = None,
+        candidates           : Mapping | Sequence | None = None,
         X_type               : XType = "numeric",
         aggregation          : Aggregation = "euclidean",
         n_bins               : BinSpec = "auto",
@@ -117,6 +120,7 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
         verbose              : int = 0,
     ):
         self.models                     = models
+        self.candidates                 = candidates
         self.X_type                     = X_type
         self.aggregation                = aggregation
         self.n_bins                     = n_bins
@@ -288,6 +292,13 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
         """
         Validate and normalize selected internal model-family names.
         """
+        if self.candidates is not None:
+            raise ValueError(
+                "NescienceClassifier does not accept arbitrary candidate "
+                "estimators. Use the models parameter to select from the "
+                "fixed supported internal model families."
+            )
+
         if self.models is None:
             return list(SUPPORTED_MODELS)
 
@@ -341,14 +352,14 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
         """
         Instantiate the searcher for one supported model-family name.
         """
-        if name == "Decision tree":
+        if name == "decision_tree":
             return DecisionTreePruningSearcher(
                 DecisionTreeClassifier,
                 alpha_tol    = self.alpha_tol,
                 random_state = self.random_state,
             )
 
-        if name == "Logistic regression":
+        if name == "logistic_regression":
             return LogisticRegressionPrefixSearcher(
                 max_iter          = self.logistic_max_iter,
                 fallback_C_values = self.logistic_fallback_C_values,
@@ -356,15 +367,15 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
                 random_state      = self.random_state,
             )
 
-        if name == "Linear SVC":
+        if name == "linear_svc":
             return LinearSVCSearcher(
                 random_state=self.random_state
             )
 
-        if name == "Naive bayes":
+        if name == "naive_bayes":
             return NaiveBayesSearcher()
 
-        if name == "MLP":
+        if name == "mlp":
             options = (
                 {}
                 if self.mlp_search_options is None

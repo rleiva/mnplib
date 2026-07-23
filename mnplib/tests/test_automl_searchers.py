@@ -342,7 +342,7 @@ def test_mlp_search_is_internal_bounded_and_records_candidates():
     assert "PREPROCESSOR StandardScaler" in mlp_results[0].artifacts.model_string
 
 
-def test_explicit_ensemble_candidate_can_be_evaluated_when_supported():
+def test_explicit_ensemble_candidate_is_rejected_by_static_adapter():
     X, y = make_regression(
         n_samples=60,
         n_features=4,
@@ -351,26 +351,22 @@ def test_explicit_ensemble_candidate_can_be_evaluated_when_supported():
         random_state=42,
     )
 
-    reg = NescienceRegressor(
-        candidates={
-            "explicit_forest": RandomForestRegressor(
-                n_estimators=3,
-                max_depth=2,
-                random_state=42,
-            )
-        },
-        n_bins=3,
-        random_state=42,
-        mlp_search_options=FAST_MLP,
-    ).fit(X, y)
-
-    df = reg.results_dataframe()
-
-    assert "explicit_forest" in set(df["candidate"])
-    assert df.loc[
-        df["candidate"] == "explicit_forest",
-        "candidate_source",
-    ].iloc[0] == "explicit"
+    with pytest.raises(
+        ValueError,
+        match="Unsupported scikit-learn model type RandomForestRegressor",
+    ):
+        NescienceRegressor(
+            candidates={
+                "explicit_forest": RandomForestRegressor(
+                    n_estimators=3,
+                    max_depth=2,
+                    random_state=42,
+                )
+            },
+            n_bins=3,
+            random_state=42,
+            mlp_search_options=FAST_MLP,
+        ).fit(X, y)
 
 
 def test_classifier_and_regressor_public_workflows_and_results_columns():

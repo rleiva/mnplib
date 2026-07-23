@@ -1,39 +1,51 @@
 """
-Public scikit-learn adapter API.
+scikit-learn adapter dispatch for supported mnplib model families.
 
-This module exposes convenience functions that convert supported scikit-learn
-estimators into explicit artifacts and apply the simplified ``Nescience`` API.
+The adapter layer converts fitted, library-supported scikit-learn estimators
+into the explicit artifacts consumed by nescience metrics.
+
+Unsupported estimators fail explicitly.
 """
 
 from __future__ import annotations
 
 from .artifacts import ModelArtifacts, SerializationConfig
-from .registry import SklearnModelRegistry
 from .serializers.linear import LinearModelSerializer, LogisticRegressionSerializer
-from .serializers.tree import DecisionTreeSerializer
-from .serializers.ensemble import TreeEnsembleSerializer
 from .serializers.naive_bayes import NaiveBayesSerializer
 from .serializers.neural_network import MLPSerializer
 from .serializers.svm import LinearSVMSerializer
+from .serializers.tree import DecisionTreeSerializer
 
-def create_default_registry() -> SklearnModelRegistry:
+_SUPPORTED_SERIALIZERS = (
+    DecisionTreeSerializer(),
+    LinearModelSerializer(),
+    LogisticRegressionSerializer(),
+    LinearSVMSerializer(),
+    NaiveBayesSerializer(),
+    MLPSerializer(),
+)
+
+def _supported_model_type_names() -> tuple[str, ...]:
+    names: list[str] = []
+    for serializer in _SUPPORTED_SERIALIZERS:
+        names.extend(model_type.__name__ for model_type in serializer.supported_types)
+    return tuple(names)
+
+
+def _find_serializer(model):
     """
-    Create a registry with all stable built-in scikit-learn serializers.
+    Return the static serializer for a supported fitted estimator.
     """
-    return SklearnModelRegistry(
-        serializers=[
-            DecisionTreeSerializer(),
-            TreeEnsembleSerializer(),
-            LinearModelSerializer(),
-            LogisticRegressionSerializer(),
-            LinearSVMSerializer(),
-            NaiveBayesSerializer(),
-            MLPSerializer(),
-        ]
+    for serializer in _SUPPORTED_SERIALIZERS:
+        if serializer.supports(model):
+            return serializer
+
+    supported = ", ".join(_supported_model_type_names())
+    raise ValueError(
+        "Unsupported scikit-learn model type {}. Supported model types are: {}. "
+        "No generic or repr-based model serialization is available."
+        .format(type(model).__name__, supported)
     )
-
-
-registry = create_default_registry()
 
 
 def sklearn_model_artifacts(
@@ -46,7 +58,9 @@ def sklearn_model_artifacts(
     """
     Extract explicit nescience artifacts from a supported scikit-learn model.
     """
-    return registry.artifacts(
+    config = SerializationConfig() if config is None else config
+    serializer = _find_serializer(model)
+    return serializer.artifacts(
         model,
         X,
         feature_names=feature_names,
@@ -135,10 +149,3 @@ def score_model(
         config=config,
     )
     return metric.score(**artifacts.to_nescience_kwargs())
-
-
-def register_sklearn_serializer(serializer) -> None:
-    """
-    Register a new serializer in the global default registry.
-    """
-    registry.register(serializer)

@@ -129,30 +129,27 @@ def test_explicit_candidates_are_accepted_as_comparison_candidates(regression_da
     assert {"internal", "explicit"}.issubset(set(df["candidate_source"]))
 
 
-def test_explicit_ensemble_candidate_is_allowed_when_adapter_supports_it(
+def test_explicit_ensemble_candidate_is_rejected_by_static_adapter(
     regression_data,
 ):
     X, y = regression_data
 
-    reg = NescienceRegressor(
-        candidates={
-            "explicit_forest": RandomForestRegressor(
-                n_estimators=3,
-                max_depth=2,
-                random_state=42,
-            )
-        },
-        n_bins=3,
-        random_state=42,
-        mlp_search_options=FAST_MLP,
-    ).fit(X, y)
-
-    df = reg.results_dataframe()
-    assert "explicit_forest" in set(df["candidate"])
-    assert df.loc[
-        df["candidate"] == "explicit_forest",
-        "candidate_source",
-    ].iloc[0] == "explicit"
+    with pytest.raises(
+        ValueError,
+        match="Unsupported scikit-learn model type RandomForestRegressor",
+    ):
+        NescienceRegressor(
+            candidates={
+                "explicit_forest": RandomForestRegressor(
+                    n_estimators=3,
+                    max_depth=2,
+                    random_state=42,
+                )
+            },
+            n_bins=3,
+            random_state=42,
+            mlp_search_options=FAST_MLP,
+        ).fit(X, y)
 
 
 def test_plain_estimator_sequence_gets_generated_names(regression_data):
@@ -194,12 +191,15 @@ def test_profile_string_candidates_raise_value_error(regression_data):
         ).fit(X, y)
 
 
-def test_unsupported_explicit_candidate_raises_not_implemented_error(
+def test_unsupported_explicit_candidate_raises_clear_value_error(
     regression_data,
 ):
     X, y = regression_data
 
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(
+        ValueError,
+        match="Unsupported scikit-learn model type DummyRegressor",
+    ):
         NescienceRegressor(
             candidates=[("dummy", DummyRegressor())],
             n_bins=3,

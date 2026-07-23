@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from sklearn.linear_model import ElasticNet, Lasso, LinearRegression, LogisticRegression, Ridge
+from sklearn.linear_model import LinearRegression, LogisticRegression
 
 from ..artifacts import SerializationConfig
 from .base import (
@@ -21,12 +21,12 @@ from .base import (
 
 class LinearModelSerializer(SklearnSerializer):
     """
-    Canonical serializer for linear regression-family estimators.
+    Canonical serializer for linear regression estimators.
     """
 
     name = "linear_model"
     support_level = "stable"
-    supported_types = (LinearRegression, Ridge, Lasso, ElasticNet)
+    supported_types = (LinearRegression,)
 
     def task(self, model) -> Task:
         """
