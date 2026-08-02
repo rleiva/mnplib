@@ -2,18 +2,109 @@ import numpy as np
 import pytest
 
 from utils import (
-    EmpiricalEncoder,
+    EmpiricalSummary,
     code_length_from_counts,
     discretize_vector,
-    empirical_code_length,
     empirical_distribution,
-    empirical_entropy,
     entropy_from_counts,
-    optimal_number_of_bins,
 )
 
 
-def test_constant_numeric_vector_has_zero_entropy():
+def _object_array(values):
+    """Build a one-dimensional object array without NumPy expanding lists."""
+    array = np.empty(len(values), dtype=object)
+    for index, value in enumerate(values):
+        array[index] = value
+    return array
+
+
+# ---------------------------------------------------------------------------
+# Numeric discretization
+# ---------------------------------------------------------------------------
+
+
+def test_discretize_constant_numeric_vector_returns_zero_labels():
+    x = np.array([5.0, 5.0, 5.0, 5.0])
+
+    labels = discretize_vector(x, n_bins="auto")
+
+    assert labels.dtype.kind in {"i", "u"}
+    assert np.array_equal(labels, np.zeros(x.size, dtype=int))
+
+
+def test_discretize_vector_uses_uniform_bins():
+    x = np.linspace(0.0, 1.0, 10)
+
+    labels = discretize_vector(x, n_bins=2)
+
+    assert labels.shape == x.shape
+    assert set(np.unique(labels)).issubset({0, 1})
+    assert np.array_equal(labels[:5], np.zeros(5, dtype=int))
+    assert np.array_equal(labels[5:], np.ones(5, dtype=int))
+
+
+def test_discretize_vector_auto_uses_rice_rule():
+    x = np.arange(8, dtype=float)
+
+    labels = discretize_vector(x, n_bins="auto")
+
+    # Rice's rule gives ceil(2 * 8**(1/3)) = 4 bins.
+    assert labels.shape == x.shape
+    assert set(np.unique(labels)) == {0, 1, 2, 3}
+
+
+def test_discretize_vector_one_bin_returns_zero_labels():
+    x = np.array([1.0, 2.0, 3.0])
+
+    labels = discretize_vector(x, n_bins=1)
+
+    assert np.array_equal(labels, np.zeros(x.size, dtype=int))
+
+
+def test_discretize_vector_rejects_empty_input():
+    with pytest.raises(ValueError):
+        discretize_vector([], n_bins="auto")
+
+
+def test_discretize_vector_rejects_non_numeric_input():
+    with pytest.raises(ValueError):
+        discretize_vector(["a", "b", "c"], n_bins=2)
+
+
+def test_discretize_vector_rejects_missing_numeric_values():
+    with pytest.raises(ValueError):
+        discretize_vector([1.0, np.nan, 2.0], n_bins=2)
+
+
+def test_discretize_vector_rejects_infinite_numeric_values():
+    with pytest.raises(ValueError):
+        discretize_vector([1.0, np.inf, 2.0], n_bins=2)
+
+
+def test_discretize_vector_rejects_invalid_bin_count():
+    with pytest.raises(ValueError):
+        discretize_vector([1.0, 2.0, 3.0], n_bins=0)
+
+
+# ---------------------------------------------------------------------------
+# Empirical distributions
+# ---------------------------------------------------------------------------
+
+
+def test_empirical_distribution_returns_summary_dataclass():
+    x = np.array([0, 0, 1, 1])
+
+    summary = empirical_distribution([x], [False])
+
+    assert isinstance(summary, EmpiricalSummary)
+    assert summary.n_samples == 4
+    assert summary.n_states == 2
+    assert summary.states.shape == (2, 1)
+    assert summary.counts.shape == (2,)
+    assert summary.probabilities.shape == (2,)
+
+
+def test_constant_numeric_vector_has_zero_entropy_and_code_length():
     x = np.array([5.0, 5.0, 5.0, 5.0])
 
     summary = empirical_distribution([x], [True])
@@ -23,229 +114,188 @@ def test_constant_numeric_vector_has_zero_entropy():
     assert summary.code_length == pytest.approx(0.0)
 
 
-def test_empirical_distribution_counts_probabilities_and_states():
+def test_categorical_distribution_counts_probabilities_and_states():
     x = np.array(["a", "a", "b", "c"])
 
     summary = empirical_distribution([x], [False])
 
     assert summary.n_samples == 4
     assert summary.n_states == 3
-    assert np.sum(summary.counts) == pytest.approx(4)
+    assert np.array_equal(summary.states, np.array([[0], [1], [2]]))
+    assert np.array_equal(summary.counts, np.array([2.0, 1.0, 1.0]))
     assert np.sum(summary.probabilities) == pytest.approx(1.0)
+    assert summary.entropy == pytest.approx(1.5)
+    assert summary.code_length == pytest.approx(6.0)
 
 
-def test_entropy_for_fair_binary_variable_is_one_bit():
+def test_fair_binary_variable_has_one_bit_entropy():
     x = np.array([0, 0, 1, 1])
 
-    h = empirical_entropy([x], [False], base=2)
+    summary = empirical_distribution([x], [False])
 
-    assert h == pytest.approx(1.0)
-
-
-def test_code_length_is_n_times_entropy():
-    x = np.array([0, 0, 1, 1])
-
-    h = empirical_entropy([x], [False], base=2)
-    l = empirical_code_length([x], [False], base=2)
-
-    assert l == pytest.approx(len(x) * h)
+    assert summary.entropy == pytest.approx(1.0)
+    assert summary.code_length == pytest.approx(4.0)
 
 
-def test_per_sample_code_length_equals_entropy():
-    x = np.array([0, 0, 1, 1])
-
-    h = empirical_entropy([x], [False], base=2)
-    l = empirical_code_length([x], [False], base=2, per_sample=True)
-
-    assert l == pytest.approx(h)
-
-
-def test_normalized_entropy_is_between_zero_and_one():
-    x = np.array([0, 0, 1, 1, 2, 2])
-
-    h = empirical_entropy([x], [False], normalized=True)
-
-    assert 0.0 <= h <= 1.0
-
-
-def test_joint_entropy_is_at_least_marginal_entropy():
+def test_joint_entropy_is_at_least_each_marginal_entropy():
     x = np.array([0, 0, 1, 1])
     y = np.array([0, 1, 0, 1])
 
-    hx = empirical_entropy([x], [False])
-    hy = empirical_entropy([y], [False])
-    hxy = empirical_entropy([x, y], [False, False])
+    hx = empirical_distribution([x], [False]).entropy
+    hy = empirical_distribution([y], [False]).entropy
+    hxy = empirical_distribution([x, y], [False, False]).entropy
 
     assert hxy + 1e-12 >= hx
     assert hxy + 1e-12 >= hy
+    assert hxy == pytest.approx(2.0)
 
 
 def test_joint_entropy_of_identical_variables_equals_marginal_entropy():
     x = np.array([0, 0, 1, 1])
 
-    hx = empirical_entropy([x], [False])
-    hxx = empirical_entropy([x, x], [False, False])
+    hx = empirical_distribution([x], [False]).entropy
+    hxx = empirical_distribution([x, x], [False, False]).entropy
 
     assert hxx == pytest.approx(hx)
 
 
-def test_uniform_discretization_without_sklearn_dependency():
-    x = np.linspace(0.0, 1.0, 10)
+def test_mixed_numeric_and_categorical_distribution():
+    x_num = np.array([0.0, 0.1, 0.9, 1.0])
+    x_cat = np.array(["a", "a", "b", "b"])
 
-    z = discretize_vector(x, n_bins=2, strategy="uniform")
+    summary = empirical_distribution([x_num, x_cat], [True, False], n_bins=2)
 
-    assert z.shape == x.shape
-    assert set(np.unique(z)).issubset({0, 1})
-
-
-def test_quantile_discretization():
-    x = np.arange(100)
-
-    z = discretize_vector(x, n_bins=4, strategy="quantile")
-
-    assert z.shape == x.shape
-    assert len(np.unique(z)) == 4
-
-
-def test_encoder_reuses_numeric_bin_edges():
-    y_train = np.array([0.0, 1.0, 2.0, 3.0])
-    y_pred = np.array([0.2, 1.2, 2.2, 3.2])
-
-    encoder = EmpiricalEncoder([True], n_bins=2, strategy="uniform")
-    encoder.fit([y_train])
-
-    encoded_y = encoder.transform([y_train])[:, 0]
-    encoded_pred = encoder.transform([y_pred])[:, 0]
-
-    assert encoded_y.shape == y_train.shape
-    assert encoded_pred.shape == y_pred.shape
-    assert np.array_equal(encoded_y, np.array([0, 0, 1, 1]))
-    assert np.array_equal(encoded_pred, np.array([0, 0, 1, 1]))
-
-
-def test_unseen_category_raises_by_default():
-    train = np.array(["a", "b", "a"])
-    test = np.array(["a", "c"])
-
-    encoder = EmpiricalEncoder([False])
-    encoder.fit([train])
-
-    with pytest.raises(ValueError):
-        encoder.transform([test])
-
-
-def test_unseen_category_can_use_encoded_value():
-    train = np.array(["a", "b", "a"])
-    test = np.array(["a", "c"])
-
-    encoder = EmpiricalEncoder(
-        [False],
-        handle_unknown="use_encoded_value",
-        unknown_value=-1,
-    )
-    encoder.fit([train])
-
-    encoded = encoder.transform([test])[:, 0]
-
-    assert encoded[1] == -1
-
-
-def test_missing_numeric_values_raise():
-    x = np.array([1.0, np.nan, 2.0])
-
-    with pytest.raises(ValueError):
-        empirical_entropy([x], [True])
-
-
-def test_missing_categorical_values_raise():
-    x = np.array(["a", None, "b"], dtype=object)
-
-    with pytest.raises(ValueError):
-        empirical_entropy([x], [False])
-
-
-def test_miller_madow_entropy_is_not_smaller_than_plugin():
-    counts = np.array([10, 10, 10])
-
-    h_plugin = entropy_from_counts(counts, correction="none")
-    h_mm = entropy_from_counts(counts, correction="miller_madow")
-
-    assert h_mm >= h_plugin
-
-
-def test_dirichlet_entropy_runs_and_is_non_negative():
-    counts = np.array([10, 0, 5])
-
-    h = entropy_from_counts(
-        counts,
-        correction="dirichlet",
-        alpha=0.5,
-        alphabet_size=3,
-    )
-
-    assert h >= 0.0
-
-
-def test_code_length_from_counts_matches_entropy_times_n():
-    counts = np.array([2, 2])
-
-    h = entropy_from_counts(counts)
-    l = code_length_from_counts(counts)
-
-    assert l == pytest.approx(np.sum(counts) * h)
-
-
-def test_base_parameter_changes_units():
-    counts = np.array([1, 1])
-
-    h_bits = entropy_from_counts(counts, base=2)
-    h_nats = entropy_from_counts(counts, base=np.e)
-
-    assert h_bits == pytest.approx(1.0)
-    assert h_nats == pytest.approx(np.log(2))
-
-
-def test_invalid_base_raises():
-    counts = np.array([1, 1])
-
-    with pytest.raises(ValueError):
-        entropy_from_counts(counts, base=1)
-
-
-def test_occupancy_based_bins_are_positive():
-    bins = optimal_number_of_bins(
-        n_samples=100,
-        n_numeric=2,
-        n_categorical_states=1,
-        min_samples_per_cell=5,
-    )
-
-    assert bins >= 1
-
-
-def test_empirical_summary_contains_expected_fields():
-    x = np.array([0, 0, 1, 1])
-
-    summary = empirical_distribution([x], [False])
-
-    assert summary.states.shape[0] == summary.n_states
-    assert summary.counts.shape[0] == summary.n_states
-    assert summary.probabilities.shape[0] == summary.n_states
+    assert summary.n_samples == 4
+    assert summary.n_states == 2
+    assert np.array_equal(summary.counts, np.array([2.0, 2.0]))
     assert summary.entropy == pytest.approx(1.0)
     assert summary.code_length == pytest.approx(4.0)
 
 
-def test_encoder_with_mixed_numeric_and_categorical_variables():
-    x_num = np.array([0.0, 0.1, 0.9, 1.0])
-    x_cat = np.array(["a", "a", "b", "b"])
+def test_numeric_auto_bins_are_bounded_by_number_of_samples():
+    x = np.arange(2, dtype=float)
 
-    summary = empirical_distribution(
-        [x_num, x_cat],
-        [True, False],
-        n_bins=2,
-        strategy="uniform",
-    )
+    summary = empirical_distribution([x], [True], n_bins="auto")
 
-    assert summary.n_samples == 4
-    assert summary.n_states >= 2
-    assert summary.entropy >= 0.0
+    assert summary.n_samples == 2
+    assert summary.n_states <= 2
+    assert summary.entropy == pytest.approx(1.0)
+
+
+# ---------------------------------------------------------------------------
+# Empirical-distribution validation
+# ---------------------------------------------------------------------------
+
+
+def test_empirical_distribution_rejects_empty_column_sequence():
+    with pytest.raises(ValueError):
+        empirical_distribution([], [])
+
+
+def test_empirical_distribution_rejects_numeric_flag_mismatch():
+    with pytest.raises(ValueError):
+        empirical_distribution([[1, 2, 3]], [True, False])
+
+
+def test_empirical_distribution_rejects_inconsistent_lengths():
+    with pytest.raises(ValueError):
+        empirical_distribution([[1, 2, 3], [1, 2]], [True, True])
+
+
+def test_empirical_distribution_rejects_empty_variable():
+    with pytest.raises(ValueError):
+        empirical_distribution([[]], [True])
+
+
+def test_empirical_distribution_rejects_non_numeric_values_marked_numeric():
+    with pytest.raises(ValueError):
+        empirical_distribution([["a", "b", "c"]], [True])
+
+
+def test_empirical_distribution_rejects_missing_numeric_values():
+    x = np.array([1.0, np.nan, 2.0])
+
+    with pytest.raises(ValueError):
+        empirical_distribution([x], [True])
+
+
+def test_empirical_distribution_rejects_missing_categorical_values():
+    x = np.array(["a", None, "b"], dtype=object)
+
+    with pytest.raises(ValueError):
+        empirical_distribution([x], [False])
+
+
+def test_empirical_distribution_rejects_unhashable_categorical_values():
+    x = _object_array([["a"], ["b"], ["a"]])
+
+    with pytest.raises(TypeError, match="unhashable"):
+        empirical_distribution([x], [False])
+
+
+# ---------------------------------------------------------------------------
+# Counts, entropy, and code length
+# ---------------------------------------------------------------------------
+
+
+def test_entropy_from_counts_for_fair_binary_counts():
+    counts = np.array([2, 2])
+
+    entropy = entropy_from_counts(counts)
+
+    assert entropy == pytest.approx(1.0)
+
+
+def test_entropy_from_counts_ignores_zero_counts():
+    counts = np.array([2, 0, 2])
+
+    entropy = entropy_from_counts(counts)
+
+    assert entropy == pytest.approx(1.0)
+
+
+def test_code_length_from_counts_matches_entropy_times_sample_count():
+    counts = np.array([2, 2])
+
+    entropy = entropy_from_counts(counts)
+    code_length = code_length_from_counts(counts)
+
+    assert code_length == pytest.approx(np.sum(counts) * entropy)
+
+
+def test_code_length_from_counts_ignores_zero_counts():
+    counts = np.array([2, 0, 2])
+
+    code_length = code_length_from_counts(counts)
+
+    assert code_length == pytest.approx(4.0)
+
+
+@pytest.mark.parametrize(
+    "counts",
+    [
+        [],
+        [-1, 2],
+        [0, 0],
+        [1, np.nan],
+        [[1, 2], [3, 4]],
+    ],
+)
+def test_entropy_from_counts_rejects_invalid_counts(counts):
+    with pytest.raises(ValueError):
+        entropy_from_counts(counts)
+
+
+@pytest.mark.parametrize(
+    "counts",
+    [
+        [],
+        [-1, 2],
+        [0, 0],
+        [1, np.nan],
+        [[1, 2], [3, 4]],
+    ],
+)
+def test_code_length_from_counts_rejects_invalid_counts(counts):
+    with pytest.raises(ValueError):
+        code_length_from_counts(counts)

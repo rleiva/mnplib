@@ -8,12 +8,10 @@ import numpy as np
 
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 
-from ..artifacts import SerializationConfig
 from .base import (
     SklearnSerializer,
     Task,
-    canonical_header,
-    format_label,
+    class_token,
     format_number,
     require_fitted,
 )
@@ -24,7 +22,6 @@ class DecisionTreeSerializer(SklearnSerializer):
     """
 
     name = "decision_tree"
-    support_level = "stable"
     supported_types = (DecisionTreeClassifier, DecisionTreeRegressor)
 
     def task(self, model) -> Task:
@@ -41,7 +38,7 @@ class DecisionTreeSerializer(SklearnSerializer):
             f"Got {type(model).__name__} instead."
         )
 
-    def subset(self, model, *, config: SerializationConfig) -> list[int]:
+    def subset(self, model) -> list[int]:
         """
         Return the feature indices used by internal split nodes.
         """
@@ -52,96 +49,63 @@ class DecisionTreeSerializer(SklearnSerializer):
 
         return sorted(int(j) for j in np.unique(used))
 
-    def serialize(
-        self,
-        model,
-        *,
-        feature_names: list[str],
-        config: SerializationConfig,
-    ) -> str:
+    def serialize(self, model, *, feature_names: list[str]) -> str:
         """
         Return a canonical string description of the decision tree.
         """
         require_fitted(model)
 
         task = self.task(model)
-        subset = self.subset(model, config=config)
 
-        lines = canonical_header(
-            model_type=type(model).__name__,
-            task=task,
-            feature_names=[feature_names[j] for j in subset],
-            config=config,
-        )
-
-        if config.include_metadata:
-            lines.extend(
-                [
-                    "PARAMETERS",
-                    f"{config.indent}n_nodes = {int(model.tree_.node_count)}",
-                    f"{config.indent}n_leaves = {int(model.get_n_leaves())}",
-                    f"{config.indent}max_depth = {int(model.get_depth())}",
-                ]
-            )
-
-        lines.append("RULE")
-        lines.extend(
-            self._tree_rule_lines(
-                model,
-                node_id=0,
-                depth=1,
-                feature_names=feature_names,
-                task=task,
-                config=config,
-            )
+        lines = self._tree_rule_lines(
+            model,
+            node_id       = 0,
+            depth         = 0,
+            feature_names = feature_names,
+            task          = task,
         )
 
         return "\n".join(lines) + "\n"
 
-    def metadata(
-        self,
-        model,
-        *,
-        feature_names: list[str],
-        subset: list[int],
-        config: SerializationConfig,
-    ) -> dict:
+    def metadata(self, model, *, feature_names: list[str], subset: list[int]) -> dict:
         """
         Return structural tree metadata.
         """
         return {
-            "n_nodes": int(model.tree_.node_count),
-            "n_leaves": int(model.get_n_leaves()),
-            "max_depth": int(model.get_depth()),
+            "n_nodes"   : int(model.tree_.node_count),
+            "n_leaves"  : int(model.get_n_leaves()),
+            "max_depth" : int(model.get_depth()),
         }
 
-    def _tree_rule_lines(
-        self,
-        model,
-        *,
-        node_id: int,
-        depth: int,
-        feature_names: list[str],
-        task: Task,
-        config: SerializationConfig,
-    ) -> list[str]:
+    def _tree_rule_lines(self, model, *, node_id: int, depth: int,
+                         feature_names: list[str], task: Task) -> list[str]:
         """
-        Recursively serialize one decision-tree node.
+        Recursively serialize one decision-tree node using indentation.
+
+        Internal nodes are represented as nested if/else blocks.
+        Leaf nodes are represented as return statements.
         """
-        tree = model.tree_
-        indent = config.indent * depth
+        tree   = model.tree_
+        indent = " "
+        prefix = indent * depth
+        left   = int(tree.children_left[node_id])
+        right  = int(tree.children_right[node_id])
 
-        left = int(tree.children_left[node_id])
-        right = int(tree.children_right[node_id])
-
+        # For a leaf node, scikit-learn stores both child references as the same
+        # sentinel value, normally -1.
         if left == right:
-            return [f"{indent}return {self._leaf_value(model, node_id, task, config)}"]
+            return [
+                f"{prefix}return {self._leaf_value(model, node_id, task)}"
+            ]
 
         feature_index = int(tree.feature[node_id])
-        threshold = format_number(float(tree.threshold[node_id]), config)
-        feature_name = feature_names[feature_index]
+        threshold     = format_number(float(tree.threshold[node_id]))
+        feature_name  = feature_names[feature_index]
 
-        lines = [f"{indent}if {feature_name} <= {threshold}:"]
+        lines = [
+            f"{prefix}if {feature_name}<={threshold}:"
+        ]
+
         lines.extend(
             self._tree_rule_lines(
                 model,
@@ -149,10 +113,11 @@ class DecisionTreeSerializer(SklearnSerializer):
                 depth=depth + 1,
                 feature_names=feature_names,
                 task=task,
-                config=config,
             )
         )
-        lines.append(f"{indent}else:")
+
+        lines.append(f"{prefix}else:")
+
         lines.extend(
             self._tree_rule_lines(
                 model,
@@ -160,19 +125,12 @@ class DecisionTreeSerializer(SklearnSerializer):
                 depth=depth + 1,
                 feature_names=feature_names,
                 task=task,
-                config=config,
             )
         )
 
         return lines
 
-    def _leaf_value(
-        self,
-        model,
-        node_id: int,
-        task: Task,
-        config: SerializationConfig,
-    ) -> str:
+    def _leaf_value(self, model, node_id: int, task: Task) -> str:
         """
         Return the canonical prediction at a decision-tree leaf.
         """
@@ -181,18 +139,18 @@ class DecisionTreeSerializer(SklearnSerializer):
         if task == "classification":
             if int(model.n_outputs_) == 1:
                 class_index = int(np.argmax(value[0]))
-                return format_label(model.classes_[class_index])
+                return class_token(class_index)
 
             labels = []
             for output_index in range(int(model.n_outputs_)):
                 class_index = int(np.argmax(value[output_index]))
-                labels.append(format_label(model.classes_[output_index][class_index]))
+                labels.append(class_token(class_index))
 
             return "[" + ", ".join(labels) + "]"
 
         values = value.reshape(-1)
 
         if values.size == 1:
-            return format_number(float(values[0]), config)
+            return format_number(float(values[0]))
 
-        return "[" + ", ".join(format_number(float(v), config) for v in values) + "]"
+        return "[" + " ".join(format_number(float(v)) for v in values) + "]"

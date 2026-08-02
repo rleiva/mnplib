@@ -11,6 +11,8 @@ The minimum nescience principle allow us to automate the common tasks performed 
 * It use a greedy search for hyperparameters
 * It is not based on ensembles of models
 
+Warning: This is an alpha release of mnplib 2.0. The API and documentation are still under active revision.
+
 ## The Library
 
 The `mnplib` library is composed of the following classes:
@@ -52,7 +54,6 @@ model = Classifier()
 model.fit(X, y)
 model.score(X, y)
 ```
-
 
 ## User Guide
 

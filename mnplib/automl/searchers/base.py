@@ -10,7 +10,7 @@ from typing import Any, Literal
 import numpy as np
 
 from mnplib.automl.evaluator import CandidateEvaluator
-from mnplib.automl.results import SearchReport
+from mnplib.automl.results   import SearchReport
 
 Task = Literal["classification", "regression"]
 

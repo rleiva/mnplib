@@ -11,9 +11,16 @@ import numpy as np
 
 from sklearn.utils.validation import check_is_fitted
 
-from ..artifacts import ModelArtifacts, SerializationConfig, SupportLevel
+from ..artifacts import ModelArtifacts
 
 Task = Literal["classification", "regression"]
+
+# Fixed canonical model-string policy used by all sklearn serializers.
+indent                 : str   = " "
+feature_token_template : str   = "X{index}"
+class_token_template   : str   = "C{index}"
+numeric_token_prefix   : str   = ""
+zero_tolerance         : float = 0
 
 class SklearnSerializer(ABC):
     """
@@ -24,7 +31,6 @@ class SklearnSerializer(ABC):
     """
 
     name            : str = "base"
-    support_level   : SupportLevel = "experimental"
     supported_types : tuple[type, ...] = ()
 
     def supports(self, model) -> bool:
@@ -33,54 +39,35 @@ class SklearnSerializer(ABC):
         """
         return isinstance(model, self.supported_types)
 
-    def artifacts(
-        self,
-        model,
-        X,
-        *,
-        feature_names=None,
-        config: SerializationConfig | None = None,
-    ) -> ModelArtifacts:
+    def artifacts(self, model, X, *, feature_names=None, feature_indices=None) -> ModelArtifacts:
         """
         Extract explicit nescience artifacts from a fitted estimator.
         """
         require_fitted(model)
-        config = SerializationConfig() if config is None else config
 
-        names = resolve_feature_names(
-            X,
-            feature_names=feature_names,
-            n_features=int(model.n_features_in_),
-        )
+        names   = resolve_feature_names(X, feature_names=feature_names, n_features=int(model.n_features_in_))
+        indices = resolve_feature_indices(feature_indices, n_features=int(model.n_features_in_))
+        tokens  = [feature_token(index) for index in indices]
 
-        subset = self.subset(model, config=config)
-        predictions = np.asarray(model.predict(X))
-        model_string = self.serialize(
-            model,
-            feature_names=names,
-            config=config,
-        )
+        subset       = self.subset(model)
+        predictions  = np.asarray(model.predict(X))
+        model_string = self.serialize(model, feature_names=tokens)
 
-        metadata = self.metadata(
-            model,
-            feature_names=names,
-            subset=subset,
-            config=config,
-        )
+        metadata = self.metadata(model, feature_names=names, subset=subset)
         metadata.setdefault("task", self.task(model))
-        metadata.setdefault("schema", config.schema_name)
-        metadata.setdefault("support_level", self.support_level)
         metadata.setdefault("serializer", self.name)
         metadata.setdefault("n_features_in", int(model.n_features_in_))
         metadata.setdefault("n_features_in_use", int(len(subset)))
+        metadata.setdefault("feature_names", list(names))
+        metadata.setdefault("feature_reference_map", {tokens[j]: names[j] for j in range(len(tokens))})
         metadata.setdefault("selected_feature_names", [names[j] for j in subset])
 
         return ModelArtifacts(
-            subset=subset,
-            predictions=predictions,
-            model_string=model_string,
-            model_type=type(model).__name__,
-            metadata=metadata,
+            subset       = subset,
+            predictions  = predictions,
+            model_string = model_string,
+            model_type   = type(model).__name__,
+            metadata     = metadata
         )
 
     @abstractmethod
@@ -90,72 +77,65 @@ class SklearnSerializer(ABC):
         """
 
     @abstractmethod
-    def subset(self, model, *, config: SerializationConfig) -> list[int]:
+    def subset(self, model) -> list[int]:
         """
         Return feature indices used by the fitted estimator.
         """
 
     @abstractmethod
-    def serialize(
-        self,
-        model,
-        *,
-        feature_names: list[str],
-        config: SerializationConfig,
-    ) -> str:
+    def serialize(self, model, *, feature_names: list[str]) -> str:
         """
         Return a canonical string description of the fitted estimator.
         """
 
-    def metadata(
-        self,
-        model,
-        *,
-        feature_names: list[str],
-        subset: list[int],
-        config: SerializationConfig,
-    ) -> dict:
+    def metadata(self, model, *, feature_names: list[str], subset: list[int]) -> dict:
         """
         Return optional model-specific metadata.
         """
         return {}
 
 
-def canonical_header(
-    *,
-    model_type: str,
-    task: Task,
-    feature_names: list[str],
-    config: SerializationConfig,
-) -> list[str]:
+def format_number(value: float) -> str:
     """
-    Return the shared canonical header used by every serializer.
+    Return a compact discretized representation of a floating-point value.
     """
-    inputs = ", ".join(feature_names) if feature_names else "<none>"
 
-    return [
-        f"SCHEMA {config.schema_name}",
-        f"MODEL {model_type}",
-        f"TASK {task}",
-        f"INPUTS {inputs}",
-    ]
-
-
-def format_number(value: float, config: SerializationConfig) -> str:
-    """
-    Return a stable canonical representation of a floating-point value.
-    """
     value = float(value)
 
-    if abs(value) <= config.zero_tolerance:
-        value = 0.0
+    if not np.isfinite(value):
+        if np.isnan(value):
+            return f"{numeric_token_prefix}nan"
+        sign = "+" if value > 0 else "-"
+        return f"{numeric_token_prefix}{sign}inf"
 
-    text = f"{value:.{config.precision}f}"
+    if abs(value) <= zero_tolerance:
+        return f"{numeric_token_prefix}0"
 
-    if text == "-0." + ("0" * config.precision):
-        text = "0." + ("0" * config.precision)
+    # Sort of discretization of real values
+    scientific = '{:.2e}'.format(value)
 
-    return text
+    return f"{numeric_token_prefix}{scientific}"
+
+
+def nonzero_mask(values) -> np.ndarray:
+    """
+    Return a fixed-policy non-zero mask for fitted numeric parameters.
+    """
+    return np.abs(np.asarray(values, dtype=float)) > zero_tolerance
+
+
+def feature_token(index: int) -> str:
+    """
+    Return the compact feature reference for an original feature index.
+    """
+    return feature_token_template.format(index=int(index))
+
+
+def class_token(index: int) -> str:
+    """
+    Return the compact class reference for a class index.
+    """
+    return class_token_template.format(index=int(index))
 
 
 def format_label(value) -> str:
@@ -168,12 +148,7 @@ def format_label(value) -> str:
     return repr(value)
 
 
-def resolve_feature_names(
-    X,
-    *,
-    feature_names=None,
-    n_features: int | None = None,
-) -> list[str]:
+def resolve_feature_names(X, *, feature_names=None, n_features: int | None = None) -> list[str]:
     """
     Resolve feature names from explicit names, a DataFrame, or generated names.
     """
@@ -195,6 +170,30 @@ def resolve_feature_names(
         )
 
     return names
+
+
+def resolve_feature_indices(feature_indices=None, *, n_features: int) -> list[int]:
+    """
+    Resolve local adapter columns to canonical feature-token indices.
+    """
+    if feature_indices is None:
+        indices = list(range(int(n_features)))
+    else:
+        indices = [int(index) for index in feature_indices]
+
+    if len(indices) != int(n_features):
+        raise ValueError(
+            "feature_indices must have length {}. Got {} indices instead."
+            .format(n_features, len(indices))
+        )
+
+    if len(indices) != len(set(indices)):
+        raise ValueError("feature_indices must not contain duplicates.")
+
+    if any(index < 0 for index in indices):
+        raise ValueError("feature_indices must be non-negative.")
+
+    return indices
 
 
 def require_fitted(model) -> None:

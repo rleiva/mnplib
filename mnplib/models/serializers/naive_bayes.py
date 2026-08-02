@@ -1,313 +1,245 @@
 """
-Canonical serializers for scikit-learn Naive Bayes classifiers.
+Canonical serializer for scikit-learn Gaussian Naive Bayes classifiers.
 
-Naive Bayes models are generally compact descriptions: they consist of class
-priors and feature-conditional likelihood parameters. The serializers below
-expose those fitted quantities explicitly so that surfeit reflects the actual size of
-the probabilistic description.
+Gaussian Naive Bayes provides a compact probabilistic description of a
+classification rule. The fitted model consists of class priors, class-conditional
+means, and class-conditional variances. The serializer below exposes those
+quantities as an executable simplified-Python prediction function.
 """
 
 from __future__ import annotations
 
 import numpy as np
 
-from sklearn.naive_bayes import BernoulliNB, CategoricalNB, GaussianNB, MultinomialNB
+from sklearn.naive_bayes import GaussianNB
 
-from ..artifacts import SerializationConfig
 from .base import (
     SklearnSerializer,
     Task,
-    canonical_header,
     format_label,
     format_number,
-    require_fitted,
+    require_fitted
 )
-
 
 class NaiveBayesSerializer(SklearnSerializer):
     """
-    Canonical serializer for scikit-learn Naive Bayes classifiers.
+    Canonical serializer for Gaussian Naive Bayes classifiers.
+
+    The serializer supports only ``GaussianNB``. This keeps the Auto
+    Classification module focused on a single Naive Bayes representation:
+    continuous numerical attributes modeled with class-conditional Gaussian
+    likelihoods.
+
+    The serialized description is an executable predictor of the form:
+
+        def predict(x):
+            ...
+            return class_index
+
+    The returned class index is a compact internal token. The mapping from this
+    token to the original class label is stored in metadata.
     """
 
-    name = "naive_bayes"
-    support_level = "stable"
-    supported_types = (GaussianNB, MultinomialNB, BernoulliNB, CategoricalNB)
+    name            = "naive_bayes"
+    supported_types = (GaussianNB,)
 
     def task(self, model) -> Task:
         """
-        Return the task type of Naive Bayes classifiers.
+        Return the task type of the supported Naive Bayes estimator.
         """
+        if not isinstance(model, GaussianNB):
+            raise TypeError(
+                "Expected GaussianNB. "
+                f"Got {type(model).__name__} instead."
+            )
+
         return "classification"
 
-    def subset(self, model, *, config: SerializationConfig) -> list[int]:
+    def subset(self, model) -> list[int]:
         """
-        Return features whose likelihood parameters differ across classes.
-        """
-        require_fitted(model)
+        Return features with class-dependent Gaussian parameters.
 
-        if isinstance(model, GaussianNB):
-            theta = np.asarray(model.theta_, dtype=float)
-            var = np.asarray(model.var_, dtype=float)
-            used = (
-                np.ptp(theta, axis=0) > config.zero_tolerance
-            ) | (
-                np.ptp(var, axis=0) > config.zero_tolerance
-            )
-            return [int(j) for j in np.flatnonzero(used)]
-
-        if isinstance(model, (MultinomialNB, BernoulliNB)):
-            log_prob = np.asarray(model.feature_log_prob_, dtype=float)
-            used = np.ptp(log_prob, axis=0) > config.zero_tolerance
-            return [int(j) for j in np.flatnonzero(used)]
-
-        if isinstance(model, CategoricalNB):
-            used = []
-            for feature_index, log_prob in enumerate(model.feature_log_prob_):
-                if np.max(np.ptp(np.asarray(log_prob, dtype=float), axis=0)) > config.zero_tolerance:
-                    used.append(int(feature_index))
-            return used
-
-        raise TypeError(f"Unsupported Naive Bayes type {type(model).__name__}.")
-
-    def serialize(
-        self,
-        model,
-        *,
-        feature_names: list[str],
-        config: SerializationConfig,
-    ) -> str:
-        """
-        Return a canonical string description of the fitted Naive Bayes model.
+        A feature is considered part of the effective representation when its
+        fitted mean or variance differs across classes. If both the mean and
+        variance are identical for all classes, the feature contributes the same
+        likelihood term to every class score and can be omitted from the
+        executable decision rule.
         """
         require_fitted(model)
+        self.task(model)
 
-        subset = self.subset(model, config=config)
+        theta = np.asarray(model.theta_, dtype=float)
+        var   = np.asarray(model.var_, dtype=float)
 
-        lines = canonical_header(
-            model_type=type(model).__name__,
-            task="classification",
-            feature_names=[feature_names[j] for j in subset],
-            config=config,
-        )
+        mean_differs = np.ptp(theta, axis=0) != 0.0
+        var_differs  = np.ptp(var, axis=0) != 0.0
+        used         = mean_differs | var_differs
 
-        if config.include_metadata:
-            lines.extend(
-                [
-                    "PARAMETERS",
-                    f"{config.indent}classes = {[format_label(label) for label in model.classes_]}",
-                    f"{config.indent}n_features_in_use = {len(subset)}",
-                ]
-            )
-            if hasattr(model, "alpha"):
-                lines.append(
-                    f"{config.indent}alpha = {format_number(float(model.alpha), config)}"
-                )
-            if hasattr(model, "var_smoothing"):
-                lines.append(
-                    f"{config.indent}var_smoothing = {format_number(float(model.var_smoothing), config)}"
-                )
+        return [int(index) for index in np.flatnonzero(used)]
 
-        lines.append("RULE")
+    def serialize(self, model, *, feature_names: list[str]) -> str:
+        """
+        Return an executable simplified-Python description of the classifier.
 
-        if isinstance(model, GaussianNB):
-            lines.extend(self._gaussian_rule_lines(model, feature_names, subset, config))
-        elif isinstance(model, MultinomialNB):
-            lines.extend(self._multinomial_rule_lines(model, feature_names, subset, config))
-        elif isinstance(model, BernoulliNB):
-            lines.extend(self._bernoulli_rule_lines(model, feature_names, subset, config))
-        elif isinstance(model, CategoricalNB):
-            lines.extend(self._categorical_rule_lines(model, feature_names, subset, config))
-        else:
-            raise TypeError(f"Unsupported Naive Bayes type {type(model).__name__}.")
+        The generated program computes one Gaussian log-joint score per class
+        and returns the class with the largest score. The exponential function is
+        not needed because classification depends only on score comparisons.
+        """
+        require_fitted(model)
+        self.task(model)
 
-        lines.append(f"{config.indent}return argmax(score)")
+        # Feature names are accepted to satisfy the common serializer interface.
+        # The executable model string uses compact positional references x[i].
+        del feature_names
+
+        subset = self.subset(model)
+        lines  = self._prediction_function_lines(model, subset)
 
         return "\n".join(lines) + "\n"
 
-    def metadata(
-        self,
-        model,
-        *,
-        feature_names: list[str],
-        subset: list[int],
-        config: SerializationConfig,
-    ) -> dict:
+    def metadata(self, model, *, feature_names: list[str], subset: list[int]) -> dict:
         """
-        Return Naive Bayes metadata.
+        Return diagnostic metadata for the fitted GaussianNB model.
+
+        Metadata is intentionally kept outside the serialized model string. It
+        supports interpretation and diagnostics without inflating the model
+        description used to compute surfeit.
         """
-        metadata = {
-            "n_classes": int(len(model.classes_)),
-            "classes": [format_label(label) for label in model.classes_],
-            "n_features_in_use": int(len(subset)),
+        require_fitted(model)
+        self.task(model)
+
+        return {
+            "likelihood"             : "gaussian",
+            "n_classes"              : int(len(model.classes_)),
+            "classes"                : [format_label(label) for label in model.classes_],
+            "n_features_in_use"      : int(len(subset)),
+            "selected_feature_names" : [
+                feature_names[index]
+                for index in subset
+            ],
+            "var_smoothing"          : float(getattr(model, "var_smoothing", 0.0)),
+            "epsilon"                : float(getattr(model, "epsilon_", 0.0))
         }
 
-        if isinstance(model, GaussianNB):
-            metadata["likelihood"] = "gaussian"
-            metadata["epsilon"] = float(getattr(model, "epsilon_", 0.0))
-        elif isinstance(model, MultinomialNB):
-            metadata["likelihood"] = "multinomial"
-        elif isinstance(model, BernoulliNB):
-            metadata["likelihood"] = "bernoulli"
-        elif isinstance(model, CategoricalNB):
-            metadata["likelihood"] = "categorical"
-            metadata["n_categories_per_feature"] = [
-                int(np.asarray(log_prob).shape[1])
-                for log_prob in model.feature_log_prob_
-            ]
-
-        if hasattr(model, "alpha"):
-            metadata["alpha"] = float(model.alpha)
-        if hasattr(model, "var_smoothing"):
-            metadata["var_smoothing"] = float(model.var_smoothing)
-
-        return metadata
-
-    @staticmethod
-    def _class_log_prior(model) -> np.ndarray:
+    def _prediction_function_lines(self, model, subset: list[int]) -> list[str]:
         """
-        Return class log-priors for all supported Naive Bayes variants.
+        Build the executable prediction function.
+
+        GaussianNB predicts the class with the largest log-joint score:
+
+            log P(C_k) + sum_j log p(x_j | C_k)
+
+        For each selected feature, the Gaussian log-likelihood contribution is
+
+            -0.5 * log(2*pi*var) - ((x_j - mean)^2) / (2*var)
+
+        The logarithmic constant is precomputed during serialization, so the
+        generated function only uses arithmetic operations and comparisons.
         """
-        if hasattr(model, "class_log_prior_"):
-            return np.asarray(model.class_log_prior_, dtype=float)
+        indent = " "
 
-        if hasattr(model, "class_prior_"):
-            priors = np.asarray(model.class_prior_, dtype=float)
-            return np.log(np.maximum(priors, np.finfo(float).tiny))
+        lines: list[str] = ["def predict(x):"]
 
-        raise AttributeError("Naive Bayes model does not expose class priors.")
+        lines.append(
+            f"{indent}s0={self._class_score_expression(model, 0, subset)}"
+        )
+        lines.append(f"{indent}best=0")
+        lines.append(f"{indent}best_s=s0")
 
-    def _initial_score_lines(self, model, config: SerializationConfig) -> list[str]:
-        """
-        Serialize class-prior initialization.
-        """
-        class_log_prior = self._class_log_prior(model)
-        lines = []
-
-        for class_index, label in enumerate(model.classes_):
-            label_text = format_label(label)
-            lines.append(
-                f"{config.indent}score[{label_text}] = {format_number(class_log_prior[class_index], config)}"
+        for class_index in range(1, len(model.classes_)):
+            score_name = f"s{class_index}"
+            score_expression = self._class_score_expression(
+                model,
+                class_index,
+                subset,
             )
+
+            lines.append(f"{indent}{score_name}={score_expression}")
+            lines.append(f"{indent}if {score_name}>best_s:")
+            lines.append(f"{indent}{indent}best={class_index}")
+            lines.append(f"{indent}{indent}best_s={score_name}")
+
+        lines.append(f"{indent}return best")
 
         return lines
 
-    def _gaussian_rule_lines(
-        self,
-        model,
-        feature_names: list[str],
-        subset: list[int],
-        config: SerializationConfig,
-    ) -> list[str]:
+    def _class_score_expression(self, model, class_index: int, subset: list[int]) -> str:
         """
-        Serialize Gaussian class-conditional likelihoods.
+        Return the executable score expression for one class.
+
+        The score is written as a sum of precomputed constants and quadratic
+        terms. Coefficients and constants are formatted by ``format_number`` so
+        that the model description remains canonical and compact.
         """
         theta = np.asarray(model.theta_, dtype=float)
         var = np.asarray(model.var_, dtype=float)
 
-        lines = self._initial_score_lines(model, config)
+        terms: list[str] = []
 
-        for class_index, label in enumerate(model.classes_):
-            label_text = format_label(label)
-            for feature_index in subset:
-                lines.append(
-                    "{}score[{}] += gaussian_log_pdf({}, mean={}, variance={})".format(
-                        config.indent,
-                        label_text,
-                        feature_names[feature_index],
-                        format_number(theta[class_index, feature_index], config),
-                        format_number(var[class_index, feature_index], config),
-                    )
-                )
+        prior_term = self._class_log_prior(model)[class_index]
+        if prior_term != 0.0:
+            terms.append(format_number(float(prior_term)))
 
-        return lines
+        for feature_index in subset:
+            mean = float(theta[class_index, feature_index])
+            variance = self._positive_variance(
+                float(var[class_index, feature_index])
+            )
 
-    def _multinomial_rule_lines(
-        self,
-        model,
-        feature_names: list[str],
-        subset: list[int],
-        config: SerializationConfig,
-    ) -> list[str]:
+            constant = -0.5 * np.log(2.0 * np.pi * variance)
+            quadratic_denominator = 2.0 * variance
+
+            if constant != 0.0:
+                terms.append(format_number(float(constant)))
+
+            mean_text = format_number(mean)
+            denominator_text = format_number(quadratic_denominator)
+
+            terms.append(
+                f"-((x[{feature_index}]-{mean_text})**2)/{denominator_text}"
+            )
+
+        if not terms:
+            return format_number(0.0)
+
+        return self._join_terms(terms)
+
+    @staticmethod
+    def _class_log_prior(model) -> np.ndarray:
         """
-        Serialize MultinomialNB likelihood contributions.
+        Return log-priors for the fitted classes.
+
+        ``GaussianNB`` exposes class priors as probabilities. The serializer
+        converts them to log-priors because prediction is performed by comparing
+        Gaussian log-joint scores.
         """
-        feature_log_prob = np.asarray(model.feature_log_prob_, dtype=float)
-        lines = self._initial_score_lines(model, config)
+        priors = np.asarray(model.class_prior_, dtype=float)
+        priors = np.maximum(priors, np.finfo(float).tiny)
 
-        for class_index, label in enumerate(model.classes_):
-            label_text = format_label(label)
-            for feature_index in subset:
-                lines.append(
-                    "{}score[{}] += {} * {}".format(
-                        config.indent,
-                        label_text,
-                        feature_names[feature_index],
-                        format_number(feature_log_prob[class_index, feature_index], config),
-                    )
-                )
+        return np.log(priors)
 
-        return lines
-
-    def _bernoulli_rule_lines(
-        self,
-        model,
-        feature_names: list[str],
-        subset: list[int],
-        config: SerializationConfig,
-    ) -> list[str]:
+    @staticmethod
+    def _positive_variance(value: float) -> float:
         """
-        Serialize BernoulliNB likelihood contributions.
+        Return a strictly positive variance for executable score generation.
+
+        A fitted ``GaussianNB`` normally stores positive variances. The guard
+        below prevents invalid generated expressions if an externally modified
+        estimator contains a degenerate value.
         """
-        feature_log_prob = np.asarray(model.feature_log_prob_, dtype=float)
-        feature_prob = np.exp(feature_log_prob)
-        complement_log_prob = np.log(
-            np.maximum(1.0 - feature_prob, np.finfo(float).tiny)
-        )
+        return max(float(value), np.finfo(float).tiny)
 
-        lines = self._initial_score_lines(model, config)
-
-        for class_index, label in enumerate(model.classes_):
-            label_text = format_label(label)
-            for feature_index in subset:
-                lines.append(
-                    "{}score[{}] += {} * {} + (1 - {}) * {}".format(
-                        config.indent,
-                        label_text,
-                        feature_names[feature_index],
-                        format_number(feature_log_prob[class_index, feature_index], config),
-                        feature_names[feature_index],
-                        format_number(complement_log_prob[class_index, feature_index], config),
-                    )
-                )
-
-        return lines
-
-    def _categorical_rule_lines(
-        self,
-        model,
-        feature_names: list[str],
-        subset: list[int],
-        config: SerializationConfig,
-    ) -> list[str]:
+    @staticmethod
+    def _join_terms(terms: list[str]) -> str:
         """
-        Serialize CategoricalNB likelihood tables.
+        Join signed arithmetic terms into one valid Python expression.
         """
-        lines = self._initial_score_lines(model, config)
+        expression = terms[0]
 
-        for class_index, label in enumerate(model.classes_):
-            label_text = format_label(label)
-            for feature_index in subset:
-                log_prob = np.asarray(model.feature_log_prob_[feature_index], dtype=float)
-                n_categories = int(log_prob.shape[1])
-                for category in range(n_categories):
-                    lines.append(
-                        "{}if {} == {}: score[{}] += {}".format(
-                            config.indent,
-                            feature_names[feature_index],
-                            category,
-                            label_text,
-                            format_number(log_prob[class_index, category], config),
-                        )
-                    )
+        for term in terms[1:]:
+            if term.startswith("-"):
+                expression += term
+            else:
+                expression += "+" + term
 
-        return lines
+        return expression

@@ -1,130 +1,121 @@
 """
-Canonical serializers for compact linear support-vector models.
+Canonical serializer for compact linear support-vector models.
 
-Only the explicitly linear estimators ``LinearSVC`` and ``LinearSVR`` are
-supported here. Kernel SVMs are intentionally excluded from this serializer,
-even when configured with a linear kernel, because their fitted libsvm
-representation is naturally support-vector based and can become strongly
-training-set dependent.
+The serializer supports explicitly linear support-vector estimators only:
+LinearSVC for classification and LinearSVR for regression. The generated model
+description is an executable simplified-Python procedure of the form:
 
-The canonical descriptions expose the fitted primal coefficients and intercepts,
-which makes these estimators comparable to other compact parametric models in
-the nescience model-adapter layer.
+    def predict(x):
+        ...
+        return y
+
+The function is intentionally compact and uses positional input references
+x[i]. Human-readable feature names and class labels are stored in metadata, not
+in the model string used to compute surfeit.
 """
 
 from __future__ import annotations
+
+from collections.abc import Sequence
 
 import numpy as np
 
 from sklearn.svm import LinearSVC, LinearSVR
 
-from ..artifacts import SerializationConfig
 from .base import (
     SklearnSerializer,
     Task,
-    canonical_header,
     format_label,
     format_number,
+    nonzero_mask,
     require_fitted,
 )
-from .linear import single_output_linear_rule
 
 
 class LinearSVMSerializer(SklearnSerializer):
     """
-    Canonical serializer for ``LinearSVC`` and ``LinearSVR``.
+    Canonical serializer for LinearSVC and LinearSVR.
+
+    The fitted primal coefficients and intercepts are serialized directly as an
+    executable predictor. For classification, the procedure computes linear
+    decision scores and returns the winning class token. For regression, it
+    returns the fitted linear response.
     """
 
     name = "linear_svm"
-    support_level = "stable"
     supported_types = (LinearSVC, LinearSVR)
 
     def task(self, model) -> Task:
         """
-        Return the task type of the fitted estimator.
+        Return the task type of the fitted linear SVM estimator.
         """
         if isinstance(model, LinearSVC):
             return "classification"
+
         if isinstance(model, LinearSVR):
             return "regression"
 
-        raise TypeError(f"Unsupported linear SVM type {type(model).__name__}.")
+        raise TypeError(
+            "Expected LinearSVC or LinearSVR. "
+            f"Got {type(model).__name__} instead."
+        )
 
-    def subset(self, model, *, config: SerializationConfig) -> list[int]:
+    def subset(self, model) -> list[int]:
         """
-        Return feature indices with non-zero fitted coefficients.
+        Return local feature indices with non-zero fitted coefficients.
+
+        The returned indices are expressed in the coordinate system used by the
+        fitted estimator. If the estimator was trained on a selected feature
+        matrix, the adapter layer may later map these local indices back to the
+        original representation.
         """
         require_fitted(model)
 
-        coef = np.asarray(model.coef_, dtype=float)
-        if coef.ndim == 1:
-            used = np.abs(coef) > config.zero_tolerance
-        else:
-            used = np.any(np.abs(coef) > config.zero_tolerance, axis=0)
+        coefficients = np.asarray(model.coef_, dtype=float)
 
-        return [int(j) for j in np.flatnonzero(used)]
+        if coefficients.ndim == 1:
+            used = nonzero_mask(coefficients)
+        else:
+            used = np.any(nonzero_mask(coefficients), axis=0)
+
+        return [int(index) for index in np.flatnonzero(used)]
 
     def serialize(
         self,
         model,
         *,
         feature_names: list[str],
-        config: SerializationConfig,
+        feature_indices: Sequence[int] | None = None,
     ) -> str:
         """
-        Return a canonical string description of the fitted linear SVM.
+        Return an executable simplified-Python description of the fitted model.
+
+        Feature names are intentionally not used in the model string. The model
+        description uses compact references of the form x[i]. If feature_indices
+        is provided, local estimator coordinates are mapped back to the original
+        input representation.
         """
         require_fitted(model)
 
-        task = self.task(model)
-        subset = self.subset(model, config=config)
+        # The common serializer interface supplies feature names for metadata
+        # and diagnostics. They are not part of the executable description used
+        # to compute surfeit.
+        del feature_names
 
-        lines = canonical_header(
-            model_type=type(model).__name__,
-            task=task,
-            feature_names=[feature_names[j] for j in subset],
-            config=config,
+        original_indices = self._original_feature_indices(
+            model,
+            feature_indices=feature_indices,
         )
 
-        if config.include_metadata:
-            lines.extend(
-                [
-                    "PARAMETERS",
-                    f"{config.indent}n_nonzero_coefficients = {len(subset)}",
-                    f"{config.indent}C = {format_number(float(model.C), config)}",
-                ]
-            )
-            if hasattr(model, "epsilon"):
-                lines.append(
-                    f"{config.indent}epsilon = {format_number(float(model.epsilon), config)}"
-                )
-            if hasattr(model, "loss"):
-                lines.append(f"{config.indent}loss = {repr(model.loss)}")
-            if hasattr(model, "penalty"):
-                lines.append(f"{config.indent}penalty = {repr(model.penalty)}")
-            if hasattr(model, "dual"):
-                lines.append(f"{config.indent}dual = {repr(model.dual)}")
-            if task == "classification":
-                lines.append(
-                    f"{config.indent}classes = {[format_label(label) for label in model.classes_]}"
-                )
-
-        lines.append("RULE")
-        if task == "classification":
-            lines.extend(
-                self._classification_rule_lines(
-                    model,
-                    feature_names=feature_names,
-                    config=config,
-                )
+        if self.task(model) == "classification":
+            lines = self._classification_rule_lines(
+                model,
+                original_indices=original_indices,
             )
         else:
-            lines.extend(
-                self._regression_rule_lines(
-                    model,
-                    feature_names=feature_names,
-                    config=config,
-                )
+            lines = self._regression_rule_lines(
+                model,
+                original_indices=original_indices,
             )
 
         return "\n".join(lines) + "\n"
@@ -135,97 +126,228 @@ class LinearSVMSerializer(SklearnSerializer):
         *,
         feature_names: list[str],
         subset: list[int],
-        config: SerializationConfig,
+        feature_indices: Sequence[int] | None = None,
     ) -> dict:
         """
-        Return compact linear-SVM metadata.
+        Return diagnostic metadata for the fitted linear SVM.
+
+        Metadata supports interpretation and debugging. It is deliberately kept
+        outside the serialized model string so that surfeit is computed from the
+        executable predictor only.
         """
+        require_fitted(model)
+
+        original_indices = self._original_feature_indices(
+            model,
+            feature_indices=feature_indices,
+        )
+
+        original_subset = [
+            int(original_indices[index])
+            for index in subset
+        ]
+
         metadata = {
             "n_nonzero_coefficients": int(len(subset)),
+            "selected_feature_indices": original_subset,
+            "selected_feature_names": [
+                feature_names[index]
+                for index in original_subset
+            ],
             "C": float(model.C),
         }
 
         if isinstance(model, LinearSVC):
-            metadata["n_classes"] = int(len(model.classes_))
-            metadata["classes"] = [format_label(label) for label in model.classes_]
-            metadata["loss"] = model.loss
-            metadata["penalty"] = model.penalty
-            metadata["dual"] = model.dual
+            metadata.update(
+                {
+                    "n_classes": int(len(model.classes_)),
+                    "classes": [
+                        format_label(label)
+                        for label in model.classes_
+                    ],
+                    "loss": model.loss,
+                    "penalty": model.penalty,
+                    "dual": model.dual,
+                }
+            )
 
         if isinstance(model, LinearSVR):
-            metadata["epsilon"] = float(model.epsilon)
-            metadata["loss"] = model.loss
-            metadata["dual"] = model.dual
+            metadata.update(
+                {
+                    "epsilon": float(model.epsilon),
+                    "loss": model.loss,
+                    "dual": model.dual,
+                }
+            )
 
         return metadata
 
-    @staticmethod
-    def _regression_rule_lines(
-        model,
-        *,
-        feature_names: list[str],
-        config: SerializationConfig,
-    ) -> list[str]:
-        """
-        Serialize ``LinearSVR`` as a single linear prediction rule.
-        """
-        coef = np.asarray(model.coef_, dtype=float).reshape(-1)
-        intercept = float(np.asarray(model.intercept_, dtype=float).reshape(-1)[0])
-
-        return (
-            single_output_linear_rule(
-                output_name="y",
-                intercept=intercept,
-                coefficients=coef,
-                feature_names=feature_names,
-                config=config,
-            )
-            + [f"{config.indent}return y"]
-        )
-
-    @staticmethod
     def _classification_rule_lines(
+        self,
         model,
         *,
-        feature_names: list[str],
-        config: SerializationConfig,
+        original_indices: tuple[int, ...],
     ) -> list[str]:
         """
-        Serialize ``LinearSVC`` as linear class scores and an argmax rule.
+        Serialize LinearSVC as an executable classification procedure.
+
+        For binary LinearSVC, scikit-learn stores one separating hyperplane.
+        Positive scores correspond to class token 1; non-positive scores
+        correspond to class token 0.
+
+        For multiclass LinearSVC, scikit-learn stores one linear score per
+        class. Prediction is the class with the largest decision score.
         """
-        coef = np.asarray(model.coef_, dtype=float)
+        coefficients = np.asarray(model.coef_, dtype=float)
         intercept = np.asarray(model.intercept_, dtype=float).reshape(-1)
-        classes = list(model.classes_)
+        n_classes = int(len(model.classes_))
+        indent = " "
 
-        lines: list[str] = []
+        lines: list[str] = ["def predict(x):"]
 
-        if len(classes) == 2 and coef.shape[0] == 1:
-            class0 = format_label(classes[0])
-            class1 = format_label(classes[1])
-            lines.append(f"{config.indent}score[{class0}] = {format_number(0.0, config)}")
-            lines.extend(
-                single_output_linear_rule(
-                    output_name=f"score[{class1}]",
-                    intercept=float(intercept[0]),
-                    coefficients=coef[0],
-                    feature_names=feature_names,
-                    config=config,
-                )
+        if n_classes == 2 and coefficients.shape[0] == 1:
+            score = self._linear_expression(
+                intercept=float(intercept[0]),
+                coefficients=coefficients[0],
+                original_indices=original_indices,
             )
-            lines.append(f"{config.indent}return argmax(score)")
+
+            lines.append(f"{indent}z={score}")
+            lines.append(f"{indent}if z>0:")
+            lines.append(f"{indent}{indent}return 1")
+            lines.append(f"{indent}return 0")
+
             return lines
 
-        for class_index, label in enumerate(classes):
-            label_text = format_label(label)
-            lines.extend(
-                single_output_linear_rule(
-                    output_name=f"score[{label_text}]",
-                    intercept=float(intercept[class_index]),
-                    coefficients=coef[class_index],
-                    feature_names=feature_names,
-                    config=config,
-                )
+        first_score = self._linear_expression(
+            intercept=float(intercept[0]),
+            coefficients=coefficients[0],
+            original_indices=original_indices,
+        )
+
+        lines.append(f"{indent}s0={first_score}")
+        lines.append(f"{indent}best=0")
+        lines.append(f"{indent}best_s=s0")
+
+        for class_index in range(1, n_classes):
+            score_name = f"s{class_index}"
+            score = self._linear_expression(
+                intercept=float(intercept[class_index]),
+                coefficients=coefficients[class_index],
+                original_indices=original_indices,
             )
 
-        lines.append(f"{config.indent}return argmax(score)")
+            lines.append(f"{indent}{score_name}={score}")
+            lines.append(f"{indent}if {score_name}>best_s:")
+            lines.append(f"{indent}{indent}best={class_index}")
+            lines.append(f"{indent}{indent}best_s={score_name}")
+
+        lines.append(f"{indent}return best")
+
         return lines
+
+    def _regression_rule_lines(
+        self,
+        model,
+        *,
+        original_indices: tuple[int, ...],
+    ) -> list[str]:
+        """
+        Serialize LinearSVR as an executable regression procedure.
+        """
+        coefficients = np.asarray(model.coef_, dtype=float).reshape(-1)
+        intercept = float(np.asarray(model.intercept_, dtype=float).reshape(-1)[0])
+        indent = " "
+
+        expression = self._linear_expression(
+            intercept=intercept,
+            coefficients=coefficients,
+            original_indices=original_indices,
+        )
+
+        return [
+            "def predict(x):",
+            f"{indent}y={expression}",
+            f"{indent}return y",
+        ]
+
+    @staticmethod
+    def _linear_expression(
+        *,
+        intercept: float,
+        coefficients: np.ndarray,
+        original_indices: tuple[int, ...],
+    ) -> str:
+        """
+        Return a compact executable expression for a linear score.
+
+        The expression has the form:
+
+            b+w0*x[i0]+w1*x[i1]+...
+
+        Zero coefficients are omitted before formatting. Coefficients equal to
+        one or minus one are not special-cased; the serializer uses one uniform
+        representation for all non-zero coefficients.
+        """
+        terms: list[str] = []
+
+        if nonzero_mask(np.asarray([intercept], dtype=float))[0]:
+            terms.append(format_number(float(intercept)))
+
+        for local_index, coefficient in enumerate(coefficients):
+            if not nonzero_mask(np.asarray([coefficient], dtype=float))[0]:
+                continue
+
+            original_index = int(original_indices[local_index])
+            coefficient_text = format_number(float(coefficient))
+
+            terms.append(f"{coefficient_text}*x[{original_index}]")
+
+        if not terms:
+            return format_number(0.0)
+
+        return LinearSVMSerializer._join_terms(terms)
+
+    @staticmethod
+    def _join_terms(terms: list[str]) -> str:
+        """
+        Join signed arithmetic terms into one valid Python expression.
+        """
+        expression = terms[0]
+
+        for term in terms[1:]:
+            if term.startswith("-"):
+                expression += term
+            else:
+                expression += "+" + term
+
+        return expression
+
+    @staticmethod
+    def _original_feature_indices(
+        model,
+        *,
+        feature_indices: Sequence[int] | None,
+    ) -> tuple[int, ...]:
+        """
+        Return the feature indices used by the executable predictor.
+
+        If the estimator was fitted on a selected feature matrix, feature_indices
+        maps local estimator columns back to the original representation. If no
+        mapping is provided, the local estimator coordinates are already assumed
+        to be original coordinates.
+        """
+        n_features = int(model.n_features_in_)
+
+        if feature_indices is None:
+            return tuple(range(n_features))
+
+        original_indices = tuple(int(index) for index in feature_indices)
+
+        if len(original_indices) != n_features:
+            raise ValueError(
+                "feature_indices must contain one original feature index for "
+                "each column used by the fitted Linear SVM estimator."
+            )
+
+        return original_indices

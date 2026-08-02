@@ -23,13 +23,12 @@ from sklearn.utils.validation import check_is_fitted
 from .automl import CandidateEvaluator, CandidateResult
 from .automl.searchers import (
     DecisionTreePruningSearcher,
-    LinearSVCSearcher,
     LogisticRegressionPrefixSearcher,
-    MLPClassifierSearch,
     NaiveBayesSearcher,
+    LinearSVCSearcher,
+    MLPClassifierSearch,
     SearchContext,
 )
-from .models import SerializationConfig
 from .nescience import Nescience
 
 XType = Literal["auto", "numeric", "categorical"]
@@ -81,8 +80,9 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
     surplus_penalty : float, default=1.0
         Surplus penalty parameter forwarded to the underlying nescience
         machinery.
-    serialization_config : SerializationConfig or None, default=None
-        Configuration for converting fitted models into canonical descriptions.
+    The canonical model string is fixed by the library because it contributes
+    directly to surfeit and therefore to nescience.
+
     random_state : int, RandomState instance, or None, default=None
         Random state forwarded to stochastic searchers and estimators.
     alpha_tol : float, default=1e-12
@@ -90,11 +90,6 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
         alphas.
     logistic_max_iter : int, default=1000
         Maximum iterations for logistic-regression candidates.
-    logistic_fallback_C_values : sequence, default=(1.0, 10.0, 100.0)
-        Small set of L2 fallback strengths used only when unregularized
-        logistic regression is numerically problematic.
-    feature_patience : int or None, default=None
-        Optional patience for prefix-based feature searches.
     mlp_search_options : mapping or None, default=None
         Additional options forwarded to the MLP architecture-growth searcher.
     verbose : int, default=0
@@ -110,12 +105,9 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
         n_bins               : BinSpec = "auto",
         threshold_fraction   : float = 0.01,
         surplus_penalty      : float = 1.0,
-        serialization_config : SerializationConfig | None = None,
         random_state         = None,
         alpha_tol            : float = 1e-12,
         logistic_max_iter    : int = 1000,
-        logistic_fallback_C_values=(1.0, 10.0, 100.0),
-        feature_patience     : int | None = None,
         mlp_search_options   : Mapping[str, object] | None = None,
         verbose              : int = 0,
     ):
@@ -126,12 +118,9 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
         self.n_bins                     = n_bins
         self.threshold_fraction         = threshold_fraction
         self.surplus_penalty            = surplus_penalty
-        self.serialization_config       = serialization_config
         self.random_state               = random_state
         self.alpha_tol                  = alpha_tol
         self.logistic_max_iter          = logistic_max_iter
-        self.logistic_fallback_C_values = logistic_fallback_C_values
-        self.feature_patience           = feature_patience
         self.mlp_search_options         = mlp_search_options
         self.verbose                    = verbose
 
@@ -163,7 +152,6 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
         self.model_names_ = tuple(model_names)
         self.feature_names_in_ = np.asarray(feature_names, dtype=object)
         self.classes_ = np.unique(y_checked)
-        self.serialization_config_ = self._resolve_serialization_config()
 
         self.nescience_ = Nescience(
             X_type             = self.X_type,
@@ -180,7 +168,6 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
             y                    = self.y_,
             nescience            = self.nescience_,
             feature_names        = list(self.feature_names_in_),
-            serialization_config = self.serialization_config_,
         )
 
         self.results_     = []
@@ -362,8 +349,6 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
         if name == "logistic_regression":
             return LogisticRegressionPrefixSearcher(
                 max_iter          = self.logistic_max_iter,
-                fallback_C_values = self.logistic_fallback_C_values,
-                patience          = self.feature_patience,
                 random_state      = self.random_state,
             )
 
@@ -478,21 +463,6 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
             f"{result.name}: nescience={result.nescience:.6f}, "
             f"estimator_score={result.estimator_score:.6f}"
         )
-
-    def _resolve_serialization_config(self) -> SerializationConfig:
-        """
-        Return a valid serialization configuration for model descriptions.
-        """
-        if self.serialization_config is None:
-            return SerializationConfig()
-
-        if not isinstance(self.serialization_config, SerializationConfig):
-            raise TypeError(
-                "serialization_config must be an instance of SerializationConfig "
-                "or None."
-            )
-
-        return self.serialization_config
 
     @staticmethod
     def _resolve_input_feature_names(X) -> list[str]:

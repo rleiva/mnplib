@@ -9,7 +9,7 @@ from typing import Any
 
 import numpy as np
 
-from mnplib.models import ModelArtifacts, SerializationConfig, sklearn_model_artifacts
+from mnplib.models import ModelArtifacts, sklearn_model_artifacts
 
 from .results import CandidateResult
 
@@ -25,13 +25,11 @@ class CandidateEvaluator:
         y,
         nescience,
         feature_names: Sequence[str],
-        serialization_config: SerializationConfig,
     ):
         self.X = X
         self.y = y
         self.nescience = nescience
         self.feature_names = [str(name) for name in feature_names]
-        self.serialization_config = serialization_config
 
     def evaluate(
         self,
@@ -71,7 +69,7 @@ class CandidateEvaluator:
             model,
             X_for_adapter,
             feature_names=adapter_feature_names,
-            config=self.serialization_config,
+            feature_indices=subset_mapping,
         )
         artifacts = self._remap_artifacts(
             artifacts,

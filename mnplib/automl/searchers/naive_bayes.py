@@ -1,211 +1,141 @@
 """
-Model-appropriate Naive Bayes searches.
+Nescience-based feature-prefix search for Gaussian Naive Bayes.
 """
 
 from __future__ import annotations
 
-import numpy as np
+from sklearn.naive_bayes import GaussianNB
 
-from sklearn.naive_bayes import BernoulliNB, CategoricalNB, GaussianNB, MultinomialNB
+from mnplib.automl.wrappers import SelectedFeaturesEstimator
 
+from ._feature_order import feature_mask, miscoding_feature_order
 from .base import ModelFamilySearcher, SearchContext, search_report
 
 
 class NaiveBayesSearcher(ModelFamilySearcher):
     """
-    Search compatible Naive Bayes variants with family-specific parameters.
+    Evaluate Gaussian Naive Bayes over miscoding-ranked feature prefixes.
+
+    The Naive Bayes family is represented by GaussianNB only. The search is not
+    performed over Naive Bayes variants or smoothing grids. Instead, the search
+    dimension is the representation itself: increasingly large prefixes of the
+    feature order induced by miscoding.
+
+    For a feature order (f_1, ..., f_p), the evaluated candidates are:
+
+        (f_1),
+        (f_1, f_2),
+        ...
+        (f_1, ..., f_p).
+
+    Each candidate is fitted once and then evaluated by nescience through the
+    standard artifact workflow.
     """
 
     family = "naive_bayes"
 
-    def __init__(
-        self,
-        *,
-        gaussian_var_smoothing=(1e-12, 1e-9, 1e-6, 1e-3),
-        alpha_values=(0.1, 1.0, 10.0),
-    ):
-        self.gaussian_var_smoothing = tuple(
-            float(value)
-            for value in gaussian_var_smoothing
-        )
-        self.alpha_values = tuple(float(value) for value in alpha_values)
+    def __init__(self, *, var_smoothing: float = 1e-9):
+        """
+        Initialize the Gaussian Naive Bayes prefix searcher.
+
+        Parameters
+        ----------
+        var_smoothing:
+            Numerical smoothing parameter passed to GaussianNB. This is treated
+            as a fixed estimator-stability setting, not as a model-selection
+            dimension.
+        """
+        if float(var_smoothing) < 0.0:
+            raise ValueError("var_smoothing must be non-negative.")
+
+        self.var_smoothing = float(var_smoothing)
 
     def search(self, context: SearchContext):
+        """
+        Fit and evaluate one GaussianNB candidate for each feature prefix.
+
+        The feature order is obtained from the fitted miscoding component. Each
+        candidate is trained on the selected feature matrix, while the public
+        result model is wrapped so that it can receive the original full input
+        representation.
+        """
+        order, details = miscoding_feature_order(
+            context.evaluator.nescience.miscoding_,
+            context.X.shape[1],
+        )
+
+        order = tuple(int(index) for index in order)
+        path = details.get("path", ())
+
         results = []
         diagnostics = []
 
-        results.extend(self._search_gaussian(context, diagnostics))
-        results.extend(self._search_multinomial(context, diagnostics))
-        results.extend(self._search_bernoulli(context, diagnostics))
-        results.extend(self._search_categorical(context, diagnostics))
+        if not order:
+            diagnostics.append(
+                {
+                    "family": self.family,
+                    "reason": "empty_feature_order",
+                }
+            )
+            return search_report(self.family, results, diagnostics)
+
+        for n_features_used in range(1, len(order) + 1):
+            selected = tuple(order[:n_features_used])
+            X_selected = context.X[:, selected]
+
+            model = GaussianNB(var_smoothing=self.var_smoothing)
+
+            try:
+                model.fit(X_selected, context.y)
+            except Exception as exc:
+                diagnostics.append(
+                    {
+                        "family": self.family,
+                        "reason": "fit_failed",
+                        "n_features_used": int(n_features_used),
+                        "selected_feature_indices": list(selected),
+                        "error_type": type(exc).__name__,
+                        "error_message": str(exc),
+                    }
+                )
+                continue
+
+            public_model = SelectedFeaturesEstimator(
+                model,
+                selected,
+                n_features_in=context.X.shape[1],
+                feature_names=context.feature_names,
+            )
+
+            metadata = {
+                "variant": "GaussianNB",
+                "var_smoothing": self.var_smoothing,
+                "feature_order": list(order),
+                "n_features_used": int(n_features_used),
+                "selected_features": feature_mask(selected, context.X.shape[1]),
+                "selected_feature_indices": list(selected),
+                "feature_names": [
+                    context.feature_names[index]
+                    for index in selected
+                ],
+                "selection_path_length": int(len(path)),
+            }
+
+            result = context.evaluator.evaluate(
+                name=self._candidate_name(n_features_used),
+                family=self.family,
+                model=model,
+                feature_indices=selected,
+                result_model=public_model,
+                metadata=metadata,
+            )
+
+            results.append(result)
 
         return search_report(self.family, results, diagnostics)
 
-    def _search_gaussian(self, context: SearchContext, diagnostics):
-        results = []
-        for var_smoothing in self._dedupe(self.gaussian_var_smoothing):
-            model = GaussianNB(var_smoothing=float(var_smoothing))
-            try:
-                model.fit(context.X, context.y)
-            except Exception as exc:
-                diagnostics.append(
-                    self._diagnostic(
-                        "gaussian_nb",
-                        "fit_failed",
-                        var_smoothing=float(var_smoothing),
-                        error=str(exc),
-                    )
-                )
-                continue
-
-            results.append(
-                context.evaluator.evaluate(
-                    name=f"gaussian_nb_var_smoothing_{var_smoothing:.6g}",
-                    family="gaussian_nb",
-                    model=model,
-                    metadata={
-                        "variant": "GaussianNB",
-                        "var_smoothing": float(var_smoothing),
-                    },
-                )
-            )
-        return results
-
-    def _search_multinomial(self, context: SearchContext, diagnostics):
-        if not self._is_non_negative(context.X):
-            diagnostics.append(
-                self._diagnostic(
-                    "multinomial_nb",
-                    "incompatible_negative_features",
-                )
-            )
-            return []
-
-        return self._search_alpha_variant(
-            context,
-            diagnostics,
-            family="multinomial_nb",
-            estimator_cls=MultinomialNB,
-        )
-
-    def _search_bernoulli(self, context: SearchContext, diagnostics):
-        if not self._is_binary(context.X):
-            diagnostics.append(
-                self._diagnostic(
-                    "bernoulli_nb",
-                    "incompatible_non_binary_features",
-                )
-            )
-            return []
-
-        return self._search_alpha_variant(
-            context,
-            diagnostics,
-            family="bernoulli_nb",
-            estimator_cls=BernoulliNB,
-        )
-
-    def _search_categorical(self, context: SearchContext, diagnostics):
-        if not self._is_categorical_integer_encoded(context.X):
-            diagnostics.append(
-                self._diagnostic(
-                    "categorical_nb",
-                    "incompatible_non_integer_or_negative_features",
-                )
-            )
-            return []
-
-        return self._search_alpha_variant(
-            context,
-            diagnostics,
-            family="categorical_nb",
-            estimator_cls=CategoricalNB,
-        )
-
-    def _search_alpha_variant(
-        self,
-        context: SearchContext,
-        diagnostics,
-        *,
-        family: str,
-        estimator_cls,
-    ):
-        results = []
-        for alpha in self._dedupe(self.alpha_values):
-            model = estimator_cls(alpha=float(alpha))
-            try:
-                model.fit(context.X, context.y)
-            except Exception as exc:
-                diagnostics.append(
-                    self._diagnostic(
-                        family,
-                        "fit_failed",
-                        alpha=float(alpha),
-                        error=str(exc),
-                    )
-                )
-                continue
-
-            results.append(
-                context.evaluator.evaluate(
-                    name=f"{family}_alpha_{alpha:.6g}",
-                    family=family,
-                    model=model,
-                    metadata={
-                        "variant": type(model).__name__,
-                        "alpha": float(alpha),
-                    },
-                )
-            )
-
-        return results
-
-    @staticmethod
-    def _is_non_negative(X) -> bool:
-        try:
-            values = np.asarray(X, dtype=float)
-        except Exception:
-            return False
-        return bool(np.all(np.isfinite(values)) and np.min(values) >= 0.0)
-
-    @staticmethod
-    def _is_binary(X) -> bool:
-        try:
-            values = np.asarray(X, dtype=float)
-        except Exception:
-            return False
-        finite = np.isfinite(values)
-        return bool(np.all(finite) and np.all(np.isin(values, [0.0, 1.0])))
-
-    @staticmethod
-    def _is_categorical_integer_encoded(X) -> bool:
-        try:
-            values = np.asarray(X, dtype=float)
-        except Exception:
-            return False
-        return bool(
-            np.all(np.isfinite(values))
-            and np.min(values) >= 0.0
-            and np.all(np.isclose(values, np.round(values)))
-        )
-
-    @staticmethod
-    def _dedupe(values):
-        seen = set()
-        result = []
-        for value in values:
-            value = float(value)
-            if value in seen:
-                continue
-            seen.add(value)
-            result.append(value)
-        return result
-
-    def _diagnostic(self, family: str, reason: str, **extra):
-        diagnostic = {
-            "family": family,
-            "searcher_family": self.family,
-            "reason": reason,
-        }
-        diagnostic.update(extra)
-        return diagnostic
+    def _candidate_name(self, n_features_used: int) -> str:
+        """
+        Return a stable name for a GaussianNB feature-prefix candidate.
+        """
+        return f"gaussian_nb_prefix_{int(n_features_used)}"

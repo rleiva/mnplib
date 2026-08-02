@@ -25,14 +25,14 @@ class CandidateResult:
     @property
     def estimator(self):
         """
-        Backward-compatible alias for older public tests and user code.
+        Convenience alias.
         """
         return self.model
 
     @property
     def estimator_score(self) -> float:
         """
-        Backward-compatible alias for the native estimator score.
+        Alias for the native estimator score.
         """
         return float(self.metadata.get("native_score", float("nan")))
 

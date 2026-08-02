@@ -9,12 +9,12 @@ Unsupported estimators fail explicitly.
 
 from __future__ import annotations
 
-from .artifacts import ModelArtifacts, SerializationConfig
-from .serializers.linear import LinearModelSerializer, LogisticRegressionSerializer
-from .serializers.naive_bayes import NaiveBayesSerializer
+from .artifacts                  import ModelArtifacts
+from .serializers.linear         import LinearModelSerializer, LogisticRegressionSerializer
+from .serializers.naive_bayes    import NaiveBayesSerializer
 from .serializers.neural_network import MLPSerializer
-from .serializers.svm import LinearSVMSerializer
-from .serializers.tree import DecisionTreeSerializer
+from .serializers.svm            import LinearSVMSerializer
+from .serializers.tree           import DecisionTreeSerializer
 
 _SUPPORTED_SERIALIZERS = (
     DecisionTreeSerializer(),
@@ -48,34 +48,20 @@ def _find_serializer(model):
     )
 
 
-def sklearn_model_artifacts(
-    model,
-    X,
-    *,
-    feature_names=None,
-    config: SerializationConfig | None = None,
-) -> ModelArtifacts:
+def sklearn_model_artifacts(model, X, *, feature_names=None, feature_indices=None) -> ModelArtifacts:
     """
     Extract explicit nescience artifacts from a supported scikit-learn model.
     """
-    config = SerializationConfig() if config is None else config
     serializer = _find_serializer(model)
     return serializer.artifacts(
         model,
         X,
         feature_names=feature_names,
-        config=config,
+        feature_indices=feature_indices,
     )
 
 
-def nescience_model(
-    metric,
-    model,
-    X,
-    *,
-    feature_names=None,
-    config: SerializationConfig | None = None,
-) -> float:
+def nescience_model(metric, model, X, *, feature_names=None) -> float:
     """
     Compute nescience for a supported scikit-learn model.
     """
@@ -83,19 +69,11 @@ def nescience_model(
         model,
         X,
         feature_names=feature_names,
-        config=config,
     )
     return metric.nescience(**artifacts.to_nescience_kwargs())
 
 
-def components_model(
-    metric,
-    model,
-    X,
-    *,
-    feature_names=None,
-    config: SerializationConfig | None = None,
-) -> dict[str, float]:
+def components_model(metric, model, X, *, feature_names=None) -> dict[str, float]:
     """
     Compute the four nescience components for a supported scikit-learn model.
     """
@@ -103,19 +81,11 @@ def components_model(
         model,
         X,
         feature_names=feature_names,
-        config=config,
     )
     return metric.components(**artifacts.to_nescience_kwargs())
 
 
-def explain_model(
-    metric,
-    model,
-    X,
-    *,
-    feature_names=None,
-    config: SerializationConfig | None = None,
-) -> dict[str, object]:
+def explain_model(metric, model, X, *, feature_names=None) -> dict[str, object]:
     """
     Explain nescience for a supported scikit-learn model.
     """
@@ -123,7 +93,6 @@ def explain_model(
         model,
         X,
         feature_names=feature_names,
-        config=config,
     )
     explanation = metric.explain(**artifacts.to_nescience_kwargs())
     explanation["model_type"] = artifacts.model_type
@@ -131,14 +100,7 @@ def explain_model(
     return explanation
 
 
-def score_model(
-    metric,
-    model,
-    X,
-    *,
-    feature_names=None,
-    config: SerializationConfig | None = None,
-) -> float:
+def score_model(metric, model, X, *, feature_names=None) -> float:
     """
     Return ``1 - nescience`` for a supported scikit-learn model.
     """
@@ -146,6 +108,5 @@ def score_model(
         model,
         X,
         feature_names=feature_names,
-        config=config,
     )
     return metric.score(**artifacts.to_nescience_kwargs())

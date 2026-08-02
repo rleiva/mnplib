@@ -23,7 +23,6 @@ from .automl.searchers import (
     MLPRegressorSearch,
     SearchContext,
 )
-from .models import SerializationConfig
 from .nescience import Nescience
 
 
@@ -55,9 +54,7 @@ class NescienceRegressor(BaseEstimator, RegressorMixin):
         surplus_penalty: float = 1.0,
         zlib_level: int = 9,
         zlib_overhead: int = 6,
-        serialization_config: SerializationConfig | None = None,
         random_state=None,
-        min_samples_leaf: int = 1,
         alpha_tol: float = 1e-12,
         n_jobs: int | None = None,
         feature_patience: int | None = None,
@@ -72,9 +69,7 @@ class NescienceRegressor(BaseEstimator, RegressorMixin):
         self.surplus_penalty = surplus_penalty
         self.zlib_level = zlib_level
         self.zlib_overhead = zlib_overhead
-        self.serialization_config = serialization_config
         self.random_state = random_state
-        self.min_samples_leaf = min_samples_leaf
         self.alpha_tol = alpha_tol
         self.n_jobs = n_jobs
         self.feature_patience = feature_patience
@@ -92,7 +87,6 @@ class NescienceRegressor(BaseEstimator, RegressorMixin):
         self.y_ = y_checked
         self.n_samples_in_, self.n_features_in_ = X_checked.shape
         self.feature_names_in_ = np.asarray(feature_names, dtype=object)
-        self.serialization_config_ = self._resolve_serialization_config()
 
         self.nescience_ = Nescience(
             X_type=self.X_type,
@@ -111,7 +105,6 @@ class NescienceRegressor(BaseEstimator, RegressorMixin):
             y=self.y_,
             nescience=self.nescience_,
             feature_names=list(self.feature_names_in_),
-            serialization_config=self.serialization_config_,
         )
         self.results_ = []
         self.diagnostics_ = []
@@ -220,7 +213,6 @@ class NescienceRegressor(BaseEstimator, RegressorMixin):
             LinearRegressionPrefixSearcher(patience=self.feature_patience),
             DecisionTreePruningSearcher(
                 DecisionTreeRegressor,
-                min_samples_leaf=self.min_samples_leaf,
                 alpha_tol=self.alpha_tol,
                 n_jobs=self.n_jobs,
                 random_state=self.random_state,
@@ -333,7 +325,6 @@ class NescienceRegressor(BaseEstimator, RegressorMixin):
     def _searched_hyperparameters(metadata: Mapping[str, object]) -> dict[str, object]:
         keys = {
             "ccp_alpha",
-            "min_samples_leaf",
             "C",
             "epsilon",
             "alpha",
@@ -355,18 +346,6 @@ class NescienceRegressor(BaseEstimator, RegressorMixin):
             f"estimator_score={result.estimator_score:.6f}"
         )
 
-    def _resolve_serialization_config(self) -> SerializationConfig:
-        if self.serialization_config is None:
-            return SerializationConfig()
-
-        if not isinstance(self.serialization_config, SerializationConfig):
-            raise TypeError(
-                "serialization_config must be an instance of SerializationConfig "
-                "or None."
-            )
-
-        return self.serialization_config
-
     @staticmethod
     def _resolve_input_feature_names(X) -> list[str]:
         if hasattr(X, "columns"):
@@ -374,6 +353,5 @@ class NescienceRegressor(BaseEstimator, RegressorMixin):
 
         n_features = int(getattr(X, "shape")[1])
         return [f"x{i}" for i in range(n_features)]
-
 
 Regressor = NescienceRegressor

@@ -14,6 +14,7 @@ from sklearn.neural_network import MLPClassifier, MLPRegressor
 from sklearn.preprocessing import StandardScaler
 
 from mnplib.automl.wrappers import SelectedFeaturesEstimator
+from mnplib.models.serializers.base import feature_token, format_number
 
 from ._feature_order import feature_mask, miscoding_feature_order
 from .base import ModelFamilySearcher, SearchContext, search_report
@@ -301,18 +302,24 @@ class _BaseMLPSearch(ModelFamilySearcher):
 
     @staticmethod
     def _scaler_model_string(scaler, selected, feature_names) -> str:
+
+        indent = " "
+
         lines = [
-            "PREPROCESSOR StandardScaler",
-            "PARAMETERS",
-            "    with_mean = True",
-            "    with_std = True",
+            "P StandardScaler",
         ]
         for local_index, feature_index in enumerate(selected):
-            name = feature_names[feature_index]
+            token = feature_token(feature_index)
             mean = float(scaler.mean_[local_index])
             scale = float(scaler.scale_[local_index])
             lines.append(
-                f"    {name}: mean = {mean:.6g}, scale = {scale:.6g}"
+                "{}{} = ({}-{})/{}".format(
+                    indent,
+                    token,
+                    token,
+                    format_number(mean),
+                    format_number(scale),
+                )
             )
         return "\n".join(lines) + "\n"
 

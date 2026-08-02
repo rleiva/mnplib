@@ -17,15 +17,9 @@ class DecisionTreePruningSearcher(ModelFamilySearcher):
     Search a decision-tree family by evaluating pruning-path trees.
     """
 
-    def __init__(
-        self,
-        estimator_cls,
-        *,
-        min_samples_leaf: int = 1,
-        alpha_tol: float = 1e-12,
-        n_jobs: int | None = None,
-        random_state: Any = None,
-    ):
+    def __init__(self, estimator_cls, *, alpha_tol: float = 1e-12,
+                 n_jobs: int | None = None, random_state: Any = None,):
+        
         if estimator_cls not in (DecisionTreeClassifier, DecisionTreeRegressor):
             raise TypeError(
                 "estimator_cls must be DecisionTreeClassifier or "
@@ -33,7 +27,6 @@ class DecisionTreePruningSearcher(ModelFamilySearcher):
             )
 
         self.estimator_cls = estimator_cls
-        self.min_samples_leaf = int(min_samples_leaf)
         self.alpha_tol     = float(alpha_tol)
         self.n_jobs        = n_jobs
         self.random_state  = random_state
@@ -45,10 +38,7 @@ class DecisionTreePruningSearcher(ModelFamilySearcher):
 
     def search(self, context: SearchContext):
 
-        initial = self.estimator_cls(
-            min_samples_leaf=self.min_samples_leaf,
-            random_state=self.random_state,
-        )
+        initial = self.estimator_cls(random_state=self.random_state,)
         initial.fit(context.X, context.y)
         pruning_path = initial.cost_complexity_pruning_path(context.X, context.y)
         alphas = self._unique_alphas(pruning_path.ccp_alphas)
@@ -60,7 +50,6 @@ class DecisionTreePruningSearcher(ModelFamilySearcher):
         for index, alpha in enumerate(alphas):
             model = self.estimator_cls(
                 ccp_alpha        = float(alpha),
-                min_samples_leaf = self.min_samples_leaf,
                 random_state     = self.random_state,
             )
             model.fit(context.X, context.y)
@@ -81,7 +70,6 @@ class DecisionTreePruningSearcher(ModelFamilySearcher):
             metadata = {
                 "ccp_alpha" : float(alpha),
                 "alpha_tol" : self.alpha_tol,
-                "min_samples_leaf": self.min_samples_leaf,
                 "n_jobs"    : self.n_jobs,
                 "n_nodes"   : int(model.tree_.node_count),
                 "n_leaves"  : int(model.get_n_leaves()),

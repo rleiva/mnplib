@@ -5,6 +5,7 @@ Tests for the public NescienceRegressor API.
 from __future__ import annotations
 
 import inspect
+import re
 
 import numpy as np
 import pandas as pd
@@ -18,7 +19,6 @@ from sklearn.exceptions import NotFittedError
 from sklearn.linear_model import LinearRegression
 from sklearn.tree import DecisionTreeRegressor
 
-from mnplib.models import SerializationConfig
 from mnplib.regressor import CandidateResult, NescienceRegressor, Regressor
 
 
@@ -42,7 +42,6 @@ def test_fit_selects_minimum_nescience_candidate(regression_data):
     reg = NescienceRegressor(
         n_bins=3,
         random_state=42,
-        serialization_config=SerializationConfig(precision=4),
         mlp_search_options=FAST_MLP,
     ).fit(X, y)
 
@@ -63,7 +62,6 @@ def test_predict_score_components_explain_and_model_string(regression_data):
     reg = NescienceRegressor(
         n_bins=3,
         random_state=42,
-        serialization_config=SerializationConfig(precision=4),
         mlp_search_options=FAST_MLP,
     ).fit(X, y)
 
@@ -78,7 +76,15 @@ def test_predict_score_components_explain_and_model_string(regression_data):
     }
     assert reg.explain()["candidate_name"] == reg.best_candidate_name_
     assert reg.get_model() is reg.model_
-    assert "SCHEMA canonical_nescience_model_v1" in reg.model_string()
+    model_string = reg.model_string()
+
+    assert model_string.strip()
+    assert "SCHEMA" not in model_string
+    assert re.search(
+        r"def predict\(x\):|^if\s+|^\s*y\s*=|^P StandardScaler$",
+        model_string,
+        re.MULTILINE,
+    )
 
 
 def test_results_dataframe_has_expected_columns(regression_data):
@@ -213,16 +219,20 @@ def test_dataframe_feature_names_are_preserved(regression_data):
 
     reg = NescienceRegressor(
         n_bins=3,
-        serialization_config=SerializationConfig(precision=4),
         mlp_search_options=FAST_MLP,
     ).fit(X_df, y)
 
     assert list(reg.feature_names_in_) == list(X_df.columns)
-    assert "feature_" in reg.model_string()
+    assert "feature_" not in reg.model_string()
+    assert set(reg.best_artifacts_.metadata["feature_reference_map"].values()).issubset(
+        set(X_df.columns)
+    )
+    assert reg.best_artifacts_.metadata["feature_reference_map"]
 
 
 def test_no_weights_parameter_and_sklearn_clone_support():
     assert "weights" not in inspect.signature(NescienceRegressor).parameters
+    assert "serialization_config" not in inspect.signature(NescienceRegressor).parameters
 
     reg = NescienceRegressor(
         n_bins=3,
@@ -235,6 +245,15 @@ def test_no_weights_parameter_and_sklearn_clone_support():
     assert isinstance(cloned, NescienceRegressor)
     assert cloned.n_bins == 3
     assert cloned.random_state == 42
+
+
+def test_serialization_config_parameter_is_not_accepted(regression_data):
+    X, y = regression_data
+
+    with pytest.raises(TypeError, match="serialization_config"):
+        NescienceRegressor(
+            serialization_config=object(),
+        ).fit(X, y)
 
 
 @pytest.mark.parametrize(
