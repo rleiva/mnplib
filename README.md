@@ -62,6 +62,19 @@ Unlike conventional AutoML systems, the goal is not to perform a large hyperpara
 
 The automated searchers are still experimental and may change substantially before a stable release.
 
+## User Guide
+
+The user guide contains the following sections:
+
+* [Feature Selection](https://github.com/rleiva/fastautoml/wiki/Feature-Selection)
+* [Model Inaccuacy](https://github.com/rleiva/fastautoml/wiki/Model-Inaccuracy)
+* [Model Complexity](https://github.com/rleiva/fastautoml/wiki/Model-Complexity)
+* [Hyperparameters Selection](https://github.com/rleiva/fastautoml/wiki/Hyperparameters-Selection)
+* [Auto Classification](https://github.com/rleiva/fastautoml/wiki/Auto-Classification)
+* [Auto Regression](https://github.com/rleiva/fastautoml/wiki/Auto-Regression)
+* [Time Series](https://github.com/rleiva/fastautoml/wiki/Time-Series-Analysis)
+* [Anomalies Detection](https://github.com/rleiva/nescience/wiki/Anomalies-Detection)
+
 ## Quick Start: Classification
 
 ```python
