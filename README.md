@@ -1,69 +1,249 @@
-# Machine Learning
-## with the Minimum Nescience Principle
+# Machine Learning with the Minimum Nescience Principle
 
-`mnplib` is a highly efficient open source library for machine learning based on Python and built on top of [scikit-learn](https://scikit-learn.org/stable/). The library is based on the [_minimum nescience principle_](https://www.amazon.com/dp/B0GZH1FZ9J), a novel mathematical theory that measures how well we understand a problem given a representation and a description. In case of machine learning, representations are based on datasets, and descriptions are based on mathematical models.
+`mnplib` is an open-source Python library for machine learning based on the **Minimum Nescience Principle**. It is built on top of [scikit-learn](https://scikit-learn.org/stable/) and provides tools for evaluating datasets, models, and automated machine-learning candidates through the lens of nescience.
 
-The minimum nescience principle allow us to automate the common tasks performed by data scientists, from feature selection, model selection, or hyperparameters optimization.
+The library is based on the [*Minimum Nescience Principle*](https://www.amazon.com/dp/B0GZH1FZ9J), a mathematical framework for measuring how well a problem is understood given a **representation** and a **description**. In machine learning, the representation is usually a dataset, while the description is a fitted model.
 
-`mnplib` can dramatically increase the productivity of the data scientist, reducing the time to analyze and model a dataset. With `mnplib` we can have results in very short time, without decreasing the accuracy (in fact, we usually have a better accuracy). `mnplib` is fast because:
+`mnplib` is currently focused on three main goals:
 
-* It does not requires cross-validation
-* It use a greedy search for hyperparameters
-* It is not based on ensembles of models
+* measuring the quality of data representations;
+* measuring the quality and complexity of fitted models;
+* exploring nescience-guided alternatives to conventional AutoML.
 
-Warning: This is an alpha release of mnplib 2.0. The API and documentation are still under active revision.
-
-## The Library
-
-The `mnplib` library is composed of the following classes:
-
-* `Miscoding` measures the quality of the dataset we are using to represent our problem.
-* `Inaccuracy` measures the error made by the model we have trained.
-* `Surfeit` measures how (unnecessarily) complex is the model we have identified.
-
-All these metrics are combined into a single quantity, called `Nescience`, as a measure of how well we understand our problem given a dataset and a model. `Nescience` allow us to evaluate and compare models from different model families.
-
-The `mnplib` library also contains the following utilities:
-
-* `Anomalies` for the identification and classification of anomalies.
-* `Causal` for root-cause analysis.
-
-Besides to these classes, the `mnplib` library provide the following automated machine-learning tools:
-
-* `Regression` for automated regression problems.
-* `Classification` for automated classification problems.
-* `TimeSeries` for time series based analysis and forecasting.
+> **Development status**
+>
+> `mnplib 2.0.0a1` is an alpha release. The API, documentation, examples, and automated searchers are still under active development. The package is suitable for experimentation and testing, but it should not yet be considered production-ready.
 
 ## Installation
 
-The `mnplib` library can be installed using the standard `pip` installer:
+Install the current alpha release from PyPI:
 
-```python
-pip install mnplib
+```bash
+pip install mnplib==2.0.0a1
 ```
 
-The following code constains a simple example of how to use the auto-classifer module of the library:
+Because this is a pre-release, installing the explicit version is recommended.
+
+## Core Concepts
+
+The library is built around the notion of **nescience**, which combines several complementary quantities.
+
+### Miscoding
+
+`Miscoding` measures how well a dataset represents the target variable. It can be used to analyze feature relevance, feature redundancy, and the representational quality of the available data.
+
+### Inaccuracy
+
+`Inaccuracy` measures the error made by a fitted model. It compares the true target values with the model predictions using an complexity-theoretic perspective.
+
+### Surfeit
+
+`Surfeit` measures the unnecessary complexity of a model description. A model may be accurate but unnecessarily complex; surfeit is intended to capture this excess descriptive cost.
+
+### Nescience
+
+`Nescience` combines representation quality, model error, and model complexity into a single quantity. It can be used to compare models from different model families, provided that each model can be converted into an explicit representation containing:
+
+* the selected feature subset;
+* the prediction vector;
+* the serialized model description.
+
+## Automated Machine Learning
+
+`mnplib` includes experimental AutoML tools for classification and regression.
+
+Unlike conventional AutoML systems, the goal is not to perform a large hyperparameter grid search. Instead, the current design explores candidate models generated by nescience-guided principles, such as:
+
+* feature-prefix searches based on miscoding;
+* pruning paths;
+* compact model descriptions;
+* explicit model serialization;
+* bounded local searches for more complex models.
+
+The automated searchers are still experimental and may change substantially before a stable release.
+
+## Quick Start: Classification
 
 ```python
 from sklearn.datasets import load_breast_cancer
-from mnplib.classifier import Classifier
+
+from mnplib.classifier import NescienceClassifier
 
 X, y = load_breast_cancer(return_X_y=True)
 
-model = Classifier()
+model = NescienceClassifier(
+    n_bins=3,
+    random_state=42,
+)
+
 model.fit(X, y)
-model.score(X, y)
+
+print(model.predict(X[:5]))
+print(model.nescience_score())
+print(model.components())
 ```
 
-## User Guide
+## Quick Start: Regression
 
-This user guide contains the following sections:
+```python
+from sklearn.datasets import make_regression
 
-* [Feature Selection](https://github.com/rleiva/fastautoml/wiki/Feature-Selection)
-* [Model Inaccuacy](https://github.com/rleiva/fastautoml/wiki/Model-Inaccuracy)
-* [Model Complexity](https://github.com/rleiva/fastautoml/wiki/Model-Complexity)
-* [Hyperparameters Selection](https://github.com/rleiva/fastautoml/wiki/Hyperparameters-Selection)
-* [Auto Classification](https://github.com/rleiva/fastautoml/wiki/Auto-Classification)
-* [Auto Regression](https://github.com/rleiva/fastautoml/wiki/Auto-Regression)
-* [Time Series](https://github.com/rleiva/fastautoml/wiki/Time-Series-Analysis)
-* [Anomalies Detection](https://github.com/rleiva/nescience/wiki/Anomalies-Detection)
+from mnplib.regressor import NescienceRegressor
+
+X, y = make_regression(
+    n_samples=100,
+    n_features=5,
+    n_informative=3,
+    noise=0.1,
+    random_state=42,
+)
+
+model = NescienceRegressor(
+    n_bins=3,
+    random_state=42,
+)
+
+model.fit(X, y)
+
+print(model.predict(X[:5]))
+print(model.nescience_score())
+print(model.components())
+```
+
+## Inspecting AutoML Results
+
+After fitting an automated model, you can inspect the evaluated candidates:
+
+```python
+results = model.results_dataframe()
+print(results.head())
+```
+
+The results table contains information such as:
+
+* candidate name;
+* model family;
+* nescience score;
+* miscoding components;
+* inaccuracy;
+* surfeit;
+* selected features;
+* description length;
+* native estimator score.
+
+You can also retrieve the best fitted estimator:
+
+```python
+best_model = model.get_model()
+```
+
+and obtain a structured explanation:
+
+```python
+explanation = model.explain()
+print(explanation)
+```
+
+## Main Modules
+
+The main public modules are:
+
+* `mnplib.miscoding`
+* `mnplib.inaccuracy`
+* `mnplib.surfeit`
+* `mnplib.nescience`
+* `mnplib.classifier`
+* `mnplib.regressor`
+* `mnplib.timeseries`
+* `mnplib.utils`
+
+Some modules are still experimental and may change before the stable `2.0.0` release.
+
+## Current Scope
+
+The current alpha version includes support for several model families, including:
+
+* decision trees;
+* linear regression;
+* logistic regression;
+* Gaussian Naive Bayes;
+* linear support-vector models;
+* multilayer perceptrons.
+
+Support varies by task and by model family. Some serializers and searchers are experimental.
+
+The library intentionally avoids some common AutoML mechanisms in its default methodology, such as:
+
+* broad hyperparameter grid search;
+* cross-validation-based model selection;
+* ensemble search as a default strategy.
+
+This is a design choice: the purpose of `mnplib` is to explore machine learning through nescience-guided representations, descriptions, and model comparison.
+
+## Testing
+
+To run the test suite from the repository root:
+
+```bash
+python -m pip install -e .
+python -m pytest tests
+```
+
+Using `python -m pytest` is recommended because it ensures that tests run with the same Python interpreter in which `mnplib` is installed.
+
+## Contributing
+
+This is an alpha release, and feedback is welcome.
+
+Useful contributions include:
+
+* testing the package on real datasets;
+* reporting bugs;
+* improving documentation;
+* adding examples;
+* reviewing the mathematical consistency of the metrics;
+* improving or extending model serializers;
+* proposing better nescience-guided search strategies.
+
+Please open issues or pull requests through the GitHub repository:
+
+https://github.com/rleiva/mnplib
+
+## Reporting Issues
+
+When reporting a bug, please include:
+
+* the installed `mnplib` version;
+* the Python version;
+* the operating system;
+* a minimal code example;
+* the full error traceback;
+* the dataset shape and target type, when relevant.
+
+You can check the installed version with:
+
+```python
+import mnplib
+
+print(mnplib.__version__)
+```
+
+## Project Status
+
+`mnplib 2.0.0a1` is the first alpha release of the redesigned library. The package is being actively revised, and several parts of the API may still change.
+
+The current priority is to stabilize:
+
+* empirical code-length utilities;
+* miscoding, inaccuracy, surfeit, and nescience metrics;
+* explicit model serialization;
+* automated classification and regression workflows;
+* examples and documentation.
+
+## License
+
+See the repository license file for licensing details.
+
+## Citation
+
+If you use `mnplib` in academic or research work, please cite the associated theoretical work on the [*Minimum Nescience Principle*](https://www.amazon.com/dp/B0GZH1FZ9J). A formal citation entry will be added in a future release.
