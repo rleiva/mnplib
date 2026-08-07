@@ -3,8 +3,8 @@ Minimum-nescience classifier with selectable internal model families.
 
 ``NescienceClassifier`` constructs classifiers through a fixed set of
 nescience-guided model-family searchers. Users may restrict which supported
-families are evaluated, but arbitrary external estimators are intentionally not
-accepted by this core estimator.
+families are evaluated, but arbitrary external estimators are not accepted
+by this core estimator.
 """
 
 from __future__ import annotations
@@ -63,9 +63,6 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
         preserved after removing duplicate names. Valid names are
         ``"decision_tree"``, ``"logistic_regression"``, ``"linear_svc"``,
         ``"naive_bayes"``, and ``"mlp"``.
-    candidates : None, default=None
-        Reserved placeholder for old code paths. Arbitrary external
-        candidate estimators are not accepted by ``NescienceClassifier``.
     X_type : {"auto", "numeric", "categorical"}, default="numeric"
         Type policy used when fitting the nescience components on the input
         representation.
@@ -99,7 +96,6 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
     def __init__(
         self,
         models               : Sequence[str] | None = None,
-        candidates           : Mapping | Sequence | None = None,
         X_type               : XType = "numeric",
         aggregation          : Aggregation = "euclidean",
         n_bins               : BinSpec = "auto",
@@ -112,7 +108,6 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
         verbose              : int = 0,
     ):
         self.models                     = models
-        self.candidates                 = candidates
         self.X_type                     = X_type
         self.aggregation                = aggregation
         self.n_bins                     = n_bins
@@ -123,6 +118,33 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
         self.logistic_max_iter          = logistic_max_iter
         self.mlp_search_options         = mlp_search_options
         self.verbose                    = verbose
+
+        # Addtional private attributes
+        # self.X_
+        # self.y_ 
+        # self.n_samples_in_
+        # self.n_features_in_
+        # self.model_names_ 
+        # self.feature_names_in_ 
+        # self.classes_
+        # self.nescience_
+        # self.evaluator_    # CandidateEvaluator instance
+        # self.results_      # Searcher report.results
+        # self.diagnostics_  # Searcher report.diagnostics
+        # self.searchers_    # List of selected searchers
+        # self.best_result_
+        # self.model_
+        # self.best_nescience_
+        # self.best_components_
+        # self.best_artifacts_
+        # self.best_candidate_name_
+        # self.classes_
+        # self.is_fitted_
+
+        if hasattr(self.model_, "classes_"):
+            self.classes_ = np.asarray(self.model_.classes_)
+
+        self.is_fitted_ = True
 
     def fit(self, X, y):
         """
@@ -142,16 +164,17 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
         self : NescienceClassifier
             Fitted estimator.        
         """
-        model_names = self._resolve_model_names()
+        model_names   = self._resolve_model_names()
         feature_names = self._resolve_input_feature_names(X)
         X_checked, y_checked = check_X_y(X, y, dtype=None, ensure_2d=True)
 
-        self.X_ = X_checked
-        self.y_ = y_checked
-        self.n_samples_in_, self.n_features_in_ = X_checked.shape
-        self.model_names_ = tuple(model_names)
+        self.X_                = X_checked
+        self.y_                = y_checked
+        self.n_samples_in_     = X_checked.shape[0]
+        self.n_features_in_    = X_checked.shape[1]
+        self.model_names_      = tuple(model_names)
         self.feature_names_in_ = np.asarray(feature_names, dtype=object)
-        self.classes_ = np.unique(y_checked)
+        self.classes_          = np.unique(y_checked)
 
         self.nescience_ = Nescience(
             X_type             = self.X_type,
@@ -279,13 +302,6 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
         """
         Validate and normalize selected internal model-family names.
         """
-        if self.candidates is not None:
-            raise ValueError(
-                "NescienceClassifier does not accept arbitrary candidate "
-                "estimators. Use the models parameter to select from the "
-                "fixed supported internal model families."
-            )
-
         if self.models is None:
             return list(SUPPORTED_MODELS)
 
@@ -405,22 +421,20 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
             )
         )
         row = {
-            "candidate": result.name,
-            "family": result.family,
-            "model_family": result.family,
-            "model_type": result.artifacts.model_type,
-            "searched_hyperparameters": self._searched_hyperparameters(metadata),
-            "nescience": float(result.nescience),
-            "native_estimator_score": result.estimator_score,
-            "estimator_score": result.estimator_score,
-            "selected_features": list(result.artifacts.subset),
-            "n_features_in_use": int(len(result.artifacts.subset)),
-            "n_features_used": int(
+            "candidate"                : result.name,
+            "model_family"             : result.family,
+            "model_type"               : result.artifacts.model_type,
+            "searched_hyperparameters" : self._searched_hyperparameters(metadata),
+            "nescience"                : float(result.nescience),
+            "native_estimator_score"   : result.estimator_score,
+            "estimator_score"          : result.estimator_score,
+            "selected_features"        : list(result.artifacts.subset),
+            "n_features_in_use"        : int(len(result.artifacts.subset)),
+            "n_features_used"          : int(
                 metadata.get("n_features_used", len(result.artifacts.subset))
             ),
-            "description_length": description_length,
-            "model_description_length": description_length,
-            "support_level": metadata.get("support_level"),
+            "model_description_length" : description_length,
+            "support_level"            : metadata.get("support_level"),
         }
         row.update(result.components)
 
@@ -473,6 +487,4 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
             return [str(name) for name in X.columns]
 
         n_features = int(getattr(X, "shape")[1])
-        return [f"x{i}" for i in range(n_features)]
-
-Classifier = NescienceClassifier
+        return [f"X{i}" for i in range(n_features)]
