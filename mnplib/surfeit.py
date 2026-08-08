@@ -154,6 +154,27 @@ class Surfeit(BaseEstimator):
             compressed_length=compressed_length,
         )
 
+    def description_lengths(self, model_string: str) -> dict[str, int]:
+        """
+        Return byte-length diagnostics for a model description string.
+
+        Parameters
+        ----------
+        model_string : str
+            String representation of a model or description.
+
+        Returns
+        -------
+        dict
+            Raw UTF-8 byte length and zlib-compressed byte length.
+        """
+        model_bytes = self._validate_model_string(model_string)
+
+        return {
+            "model_length": len(model_bytes),
+            "model_compressed_length": len(self._compress_bytes(model_bytes)),
+        }
+
     def _fit_target(self, y) -> None:
         """Fit target-dependent attributes."""
         self.y_ = self._validate_1d_vector(y, name="y")

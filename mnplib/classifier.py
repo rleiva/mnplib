@@ -21,6 +21,7 @@ from sklearn.utils import check_X_y, check_array
 from sklearn.utils.validation import check_is_fitted
 
 from .automl import CandidateEvaluator, CandidateResult
+from .automl.descriptions import describe_candidate_model
 from .automl.searchers import (
     DecisionTreePruningSearcher,
     LogisticRegressionPrefixSearcher,
@@ -294,6 +295,21 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
         """
         check_is_fitted(self)
         return str(self.best_artifacts_.model_string)
+
+    def candidate_model_description(
+        self,
+        candidate: str | None = None,
+    ) -> dict[str, object]:
+        """
+        Return model-description diagnostics for an evaluated candidate.
+        """
+        check_is_fitted(self)
+        return describe_candidate_model(
+            self.results_,
+            candidate,
+            best_result=self.best_result_,
+            surfeit=self.nescience_.surfeit_,
+        )
 
     def _resolve_model_names(self) -> list[str]:
         """

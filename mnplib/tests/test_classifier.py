@@ -44,6 +44,16 @@ COMMON_RESULT_COLUMNS = {
     "surfeit",
 }
 
+EXPECTED_DESCRIPTION_KEYS = {
+    "candidate",
+    "family",
+    "model_type",
+    "model_string",
+    "model_length",
+    "model_compressed_length",
+    "surfeit",
+}
+
 
 @pytest.fixture()
 def binary_classification_data():
@@ -65,6 +75,7 @@ def _assert_common_result_frame(df):
     assert "n_input_features" not in df.columns
     assert "n_features_in_use" not in df.columns
     assert "n_features_used" not in df.columns
+    assert "model_string" not in df.columns
     assert df["hyperparameters"].map(
         lambda value: isinstance(value, dict)
     ).all()
@@ -72,6 +83,38 @@ def _assert_common_result_frame(df):
         df["n_selected_features"]
         == df["selected_features"].map(len)
     ).all()
+
+
+def _result_by_name(estimator, candidate_name):
+    for result in estimator.results_:
+        if result.name == candidate_name:
+            return result
+
+    raise AssertionError(f"Missing candidate result {candidate_name!r}.")
+
+
+def _non_best_result(estimator):
+    for result in estimator.results_:
+        if result.name != estimator.best_candidate_name_:
+            return result
+
+    pytest.skip("Need more than one evaluated candidate.")
+
+
+def _assert_candidate_model_description(description, result):
+    assert set(description) == EXPECTED_DESCRIPTION_KEYS
+    assert description["candidate"] == result.name
+    assert description["family"] == result.family
+    assert description["model_type"] == result.artifacts.model_type
+    assert description["model_string"] == result.artifacts.model_string
+    assert isinstance(description["model_string"], str)
+    assert description["model_string"].strip()
+    assert description["model_length"] == len(
+        description["model_string"].encode("utf-8")
+    )
+    assert isinstance(description["model_compressed_length"], int)
+    assert description["model_compressed_length"] > 0
+    assert description["surfeit"] == pytest.approx(result.components["surfeit"])
 
 
 def test_default_behavior_uses_all_supported_internal_model_families(
@@ -251,6 +294,32 @@ def test_nescience_components_explain_model_string_and_get_model(
     )
 
 
+def test_candidate_model_description_for_best_and_named_candidate(
+    binary_classification_data,
+):
+    X, y = binary_classification_data
+
+    clf = NescienceClassifier(
+        models=["decision_tree", "logistic_regression"],
+        n_bins=3,
+        random_state=42,
+    ).fit(X, y)
+
+    best_description = clf.candidate_model_description()
+    _assert_candidate_model_description(best_description, clf.best_result_)
+    assert clf.model_string() == best_description["model_string"]
+
+    named_result = _non_best_result(clf)
+    named_description = clf.candidate_model_description(named_result.name)
+    _assert_candidate_model_description(named_description, named_result)
+
+    assert _result_by_name(clf, named_description["candidate"]) is named_result
+    assert "model_string" not in clf.results_dataframe().columns
+
+    with pytest.raises(KeyError, match="missing_candidate"):
+        clf.candidate_model_description("missing_candidate")
+
+
 def test_results_dataframe_has_expected_columns(binary_classification_data):
     X, y = binary_classification_data
 
@@ -337,6 +406,7 @@ def test_classifier_does_not_use_clone_for_external_candidates():
         ("get_model", ()),
         ("results_dataframe", ()),
         ("model_string", ()),
+        ("candidate_model_description", ()),
     ],
 )
 def test_unfitted_methods_raise_not_fitted_error(method_name, args):

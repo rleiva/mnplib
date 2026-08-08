@@ -40,6 +40,16 @@ COMMON_RESULT_COLUMNS = {
     "surfeit",
 }
 
+EXPECTED_DESCRIPTION_KEYS = {
+    "candidate",
+    "family",
+    "model_type",
+    "model_string",
+    "model_length",
+    "model_compressed_length",
+    "surfeit",
+}
+
 
 @pytest.fixture()
 def regression_data():
@@ -61,6 +71,7 @@ def _assert_common_result_frame(df):
     assert "n_input_features" not in df.columns
     assert "n_features_in_use" not in df.columns
     assert "n_features_used" not in df.columns
+    assert "model_string" not in df.columns
     assert df["hyperparameters"].map(
         lambda value: isinstance(value, dict)
     ).all()
@@ -68,6 +79,38 @@ def _assert_common_result_frame(df):
         df["n_selected_features"]
         == df["selected_features"].map(len)
     ).all()
+
+
+def _result_by_name(estimator, candidate_name):
+    for result in estimator.results_:
+        if result.name == candidate_name:
+            return result
+
+    raise AssertionError(f"Missing candidate result {candidate_name!r}.")
+
+
+def _non_best_result(estimator):
+    for result in estimator.results_:
+        if result.name != estimator.best_candidate_name_:
+            return result
+
+    pytest.skip("Need more than one evaluated candidate.")
+
+
+def _assert_candidate_model_description(description, result):
+    assert set(description) == EXPECTED_DESCRIPTION_KEYS
+    assert description["candidate"] == result.name
+    assert description["family"] == result.family
+    assert description["model_type"] == result.artifacts.model_type
+    assert description["model_string"] == result.artifacts.model_string
+    assert isinstance(description["model_string"], str)
+    assert description["model_string"].strip()
+    assert description["model_length"] == len(
+        description["model_string"].encode("utf-8")
+    )
+    assert isinstance(description["model_compressed_length"], int)
+    assert description["model_compressed_length"] > 0
+    assert description["surfeit"] == pytest.approx(result.components["surfeit"])
 
 
 def test_fit_selects_minimum_nescience_candidate(regression_data):
@@ -126,6 +169,33 @@ def test_predict_score_components_explain_and_model_string(regression_data):
         model_string,
         re.MULTILINE,
     )
+
+
+def test_candidate_model_description_for_best_and_named_candidate(
+    regression_data,
+):
+    X, y = regression_data
+
+    reg = NescienceRegressor(
+        n_bins=3,
+        random_state=42,
+        feature_patience=1,
+        mlp_search_options=FAST_MLP,
+    ).fit(X, y)
+
+    best_description = reg.candidate_model_description()
+    _assert_candidate_model_description(best_description, reg.best_result_)
+    assert reg.model_string() == best_description["model_string"]
+
+    named_result = _non_best_result(reg)
+    named_description = reg.candidate_model_description(named_result.name)
+    _assert_candidate_model_description(named_description, named_result)
+
+    assert _result_by_name(reg, named_description["candidate"]) is named_result
+    assert "model_string" not in reg.results_dataframe().columns
+
+    with pytest.raises(KeyError, match="missing_candidate"):
+        reg.candidate_model_description("missing_candidate")
 
 
 def test_results_dataframe_has_expected_columns(regression_data):
@@ -299,6 +369,7 @@ def test_serialization_config_parameter_is_not_accepted(regression_data):
         ("get_model", ()),
         ("results_dataframe", ()),
         ("model_string", ()),
+        ("candidate_model_description", ()),
     ],
 )
 def test_unfitted_methods_raise_not_fitted_error(method_name, args):

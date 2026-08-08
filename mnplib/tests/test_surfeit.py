@@ -12,6 +12,8 @@ These tests target the string-based API:
 Model-specific serialization is intentionally outside the Surfeit class.
 """
 
+import zlib
+
 import numpy as np
 import pytest
 
@@ -133,6 +135,29 @@ def test_validate_model_string_returns_utf8_bytes():
 
     assert isinstance(model_bytes, bytes)
     assert model_bytes == model_string.encode("utf-8")
+
+
+def test_description_lengths_use_configured_compression():
+    model_string = "def predict(x):\n    return 0\n"
+    model_bytes = model_string.encode("utf-8")
+
+    metric = Surfeit(zlib_level=1)
+    lengths = metric.description_lengths(model_string)
+
+    assert lengths == {
+        "model_length": len(model_bytes),
+        "model_compressed_length": len(zlib.compress(model_bytes, level=1)),
+    }
+
+
+def test_description_lengths_reject_invalid_model_string():
+    metric = Surfeit()
+
+    with pytest.raises(TypeError, match="model_string"):
+        metric.description_lengths(123)
+
+    with pytest.raises(ValueError, match="must not be empty"):
+        metric.description_lengths("")
 
 
 def test_effective_compressed_length_subtracts_overhead_and_clips():
