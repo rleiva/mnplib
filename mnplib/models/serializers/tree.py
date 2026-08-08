@@ -67,16 +67,6 @@ class DecisionTreeSerializer(SklearnSerializer):
 
         return "\n".join(lines) + "\n"
 
-    def metadata(self, model, *, feature_names: list[str], subset: list[int]) -> dict:
-        """
-        Return structural tree metadata.
-        """
-        return {
-            "n_nodes"   : int(model.tree_.node_count),
-            "n_leaves"  : int(model.get_n_leaves()),
-            "max_depth" : int(model.get_depth()),
-        }
-
     def _tree_rule_lines(self, model, *, node_id: int, depth: int,
                          feature_names: list[str], task: Task) -> list[str]:
         """

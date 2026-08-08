@@ -92,6 +92,7 @@ def test_supported_regression_models_produce_artifacts_and_nescience():
         )
 
         assert isinstance(artifacts, ModelArtifacts)
+        assert not hasattr(artifacts, "metadata")
         assert artifacts.model_type == type(model).__name__
         assert len(artifacts.predictions) == len(y)
         _assert_explicit_model_string(artifacts.model_string, feature_names)
@@ -120,7 +121,7 @@ def test_supported_regression_models_produce_artifacts_and_nescience():
             feature_names=feature_names,
         )
         assert explanation["model_type"] == type(model).__name__
-        assert "model_metadata" in explanation
+        assert "model_metadata" not in explanation
 
         assert score_model(
             metric,
@@ -165,7 +166,7 @@ def test_supported_classification_models_produce_artifacts_and_nescience(
     artifacts = sklearn_model_artifacts(model, X)
 
     assert isinstance(artifacts, ModelArtifacts)
-    assert artifacts.metadata["task"] == "classification"
+    assert not hasattr(artifacts, "metadata")
     assert len(artifacts.predictions) == len(y)
     _assert_explicit_model_string(artifacts.model_string)
 
@@ -231,7 +232,7 @@ def test_static_dispatch_selects_expected_classifier_serializers(
     model.fit(X, y)
 
     assert _find_serializer(model).name == expected_serializer
-    assert sklearn_model_artifacts(model, X).metadata["serializer"] == expected_serializer
+    assert not hasattr(sklearn_model_artifacts(model, X), "metadata")
 
 
 def test_static_dispatch_selects_expected_regressor_serializers():
@@ -337,10 +338,13 @@ def test_candidate_evaluator_uses_fixed_adapter_policy():
     assert isinstance(result, CandidateResult)
     assert isinstance(result.artifacts, ModelArtifacts)
     assert result.artifacts.to_nescience_kwargs()["model_string"]
-    assert result.metadata["serializer"] == "decision_tree"
+    assert not hasattr(result.artifacts, "metadata")
+    assert not hasattr(result, "metadata")
+    assert result.hyperparameters == {}
+    assert result.n_selected_features == len(result.artifacts.subset)
 
 
-def test_original_feature_names_are_metadata_not_model_string():
+def test_original_feature_names_are_not_in_model_string():
     X, y = make_regression(n_samples=30, n_features=3, random_state=42)
     names = ["sepal_length_cm", "petal_width_cm", "fragile_human_name"]
     model = LinearRegression().fit(X, y)
@@ -349,12 +353,7 @@ def test_original_feature_names_are_metadata_not_model_string():
 
     assert "sepal" not in artifacts.model_string
     assert "petal" not in artifacts.model_string
-    assert artifacts.metadata["feature_names"] == names
-    assert artifacts.metadata["feature_reference_map"] == {
-        "X0": "sepal_length_cm",
-        "X1": "petal_width_cm",
-        "X2": "fragile_human_name",
-    }
+    assert not hasattr(artifacts, "metadata")
 
 
 def test_feature_indices_control_compact_tokens_for_selected_adapter_data():
@@ -372,10 +371,7 @@ def test_feature_indices_control_compact_tokens_for_selected_adapter_data():
     assert "X2" in artifacts.model_string
     assert "X0" in artifacts.model_string
     assert "third" not in artifacts.model_string
-    assert artifacts.metadata["feature_reference_map"] == {
-        "X2": "third",
-        "X0": "first",
-    }
+    assert not hasattr(artifacts, "metadata")
 
 
 def test_real_values_are_formatted_canonically_in_model_strings():
@@ -429,10 +425,10 @@ def test_artifacts_to_nescience_kwargs():
         predictions=np.array([1, 0, 1]),
         model_string="M Test\nT classification\nI X0 X2\nR\n return C1\n",
         model_type="TestModel",
-        metadata={"a": 1},
     )
 
     kwargs = artifacts.to_nescience_kwargs()
 
     assert set(kwargs) == {"subset", "predictions", "model_string"}
     assert kwargs["subset"] == [0, 2]
+    assert not hasattr(artifacts, "metadata")

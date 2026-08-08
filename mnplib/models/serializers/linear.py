@@ -11,8 +11,6 @@ from sklearn.linear_model import LinearRegression, LogisticRegression
 from .base import (
     SklearnSerializer,
     Task,
-    class_token,
-    format_label,
     format_number,
     nonzero_mask,
     require_fitted,
@@ -25,7 +23,6 @@ class LinearModelSerializer(SklearnSerializer):
     """
 
     name = "linear_model"
-    support_level = "stable"
     supported_types = (LinearRegression,)
 
     def task(self, model) -> Task:
@@ -67,58 +64,6 @@ class LinearModelSerializer(SklearnSerializer):
 
         return "\n".join(lines) + "\n"
 
-    def metadata(
-        self,
-        model,
-        *,
-        feature_names: list[str],
-        subset: list[int]
-    ) -> dict:
-        """
-        Return linear-model metadata.
-        """
-        metadata = {
-            "n_outputs": self._n_outputs(model),
-            "n_nonzero_coefficients": int(len(subset)),
-        }
-
-        for name in ("alpha", "l1_ratio"):
-            if hasattr(model, name):
-                metadata[name] = float(getattr(model, name))
-
-        return metadata
-
-    @staticmethod
-    def _n_outputs(model) -> int:
-        """
-        Return the number of model outputs.
-        """
-        coef = np.asarray(model.coef_)
-
-        if coef.ndim == 1:
-            return 1
-
-        return int(coef.shape[0])
-
-    @staticmethod
-    def _regularization_metadata_lines(model, lines: list[str]) -> None:
-        """
-        Append regularization parameters when present.
-        """
-
-        indent = " "
-
-        if hasattr(model, "alpha"):
-            lines.append(
-                f"{indent}alpha = {format_number(float(model.alpha))}"
-            )
-
-        if hasattr(model, "l1_ratio"):
-            lines.append(
-                f"{indent}l1_ratio = {format_number(float(model.l1_ratio))}"
-            )
-
-
 class LogisticRegressionSerializer(SklearnSerializer):
     """
     Canonical serializer for logistic regression classifiers.
@@ -156,24 +101,6 @@ class LogisticRegressionSerializer(SklearnSerializer):
             )
 
         return "\n".join(lines) + "\n"
-
-    def metadata(self, model, *, feature_names: list[str], subset: list[int]) -> dict:
-        """
-        Return logistic-regression metadata.
-        """
-        metadata = {
-            "n_classes": int(len(model.classes_)),
-            "classes": [format_label(label) for label in model.classes_],
-            "n_nonzero_coefficients": int(len(subset)),
-        }
-
-        if hasattr(model, "C"):
-            metadata["C"] = float(model.C)
-        if hasattr(model, "penalty"):
-            metadata["penalty"] = model.penalty
-
-        return metadata
-
 
 def linear_regression_rule_lines(
     model,
@@ -257,9 +184,7 @@ def logistic_regression_rule_lines(
             ...
             return class_index
 
-    The returned value is the zero-based class token. The mapping from class
-    tokens to original sklearn labels belongs in metadata, not in the model
-    string.
+    The returned value is the zero-based class token.
     """
     del feature_names  # Feature names are intentionally not used in model strings.
 

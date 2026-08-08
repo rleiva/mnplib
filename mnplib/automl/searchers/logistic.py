@@ -6,14 +6,12 @@ from __future__ import annotations
 
 import warnings
 
-import numpy as np
-
 from sklearn.exceptions import ConvergenceWarning
 from sklearn.linear_model import LogisticRegression
 
 from mnplib.automl.wrappers import SelectedFeaturesEstimator
 
-from ._feature_order import feature_mask, miscoding_feature_order
+from ._feature_order import miscoding_feature_order
 from .base import ModelFamilySearcher, SearchContext, search_report
 
 
@@ -66,14 +64,12 @@ class LogisticRegressionPrefixSearcher(ModelFamilySearcher):
 
         Each fitted candidate is evaluated by the shared CandidateEvaluator.
         """
-        order, details = miscoding_feature_order(
+        order, _ = miscoding_feature_order(
             context.evaluator.nescience.miscoding_,
             context.X.shape[1],
         )
 
         order = tuple(int(index) for index in order)
-        path = details.get("path", ())
-
         results     = []
         diagnostics = []
 
@@ -86,30 +82,30 @@ class LogisticRegressionPrefixSearcher(ModelFamilySearcher):
             )
             return search_report(self.family, results, diagnostics)
 
-        for n_features_used in range(1, len(order) + 1):
+        for n_selected_features in range(1, len(order) + 1):
 
-            selected = tuple(order[:n_features_used])
+            selected = tuple(order[:n_selected_features])
 
-            model, fit_metadata = self._fit_unregularized(context, selected)
+            model, fit_details = self._fit_unregularized(context, selected)
 
             if model is None:
                 diagnostics.append(
                     {
                         "family"                   : self.family,
                         "reason"                   : "logistic_fit_failed",
-                        "n_features_used"          : int(n_features_used),
+                        "n_selected_features"      : int(n_selected_features),
                         "selected_feature_indices" : list(selected),
-                        **fit_metadata,
+                        **fit_details,
                     }
                 )
                 continue
 
-            if not fit_metadata["converged"]:
+            if not fit_details["converged"]:
                 diagnostics.append(
                     {
                         "family"                   : self.family,
                         "reason"                   : "logistic_convergence_warning",
-                        "n_features_used"          : int(n_features_used),
+                        "n_selected_features"      : int(n_selected_features),
                         "selected_feature_indices" : list(selected),
                     }
                 )
@@ -121,26 +117,17 @@ class LogisticRegressionPrefixSearcher(ModelFamilySearcher):
                 feature_names = context.feature_names,
             )
 
-            metadata = {
-                "feature_order"            : list(order),
-                "n_features_used"          : int(n_features_used),
-                "selected_features"        : feature_mask(selected, context.X.shape[1]),
-                "selected_feature_indices" : list(selected),
-                "feature_names": [
-                    context.feature_names[index]
-                    for index in selected
-                ],
-                "selection_path_length"    : int(len(path)),
-                **fit_metadata,
-            }
-
             result = context.evaluator.evaluate(
-                name            = self._candidate_name(n_features_used),
+                name            = self._candidate_name(n_selected_features),
                 family          = self.family,
                 model           = model,
                 feature_indices = selected,
                 result_model    = public_model,
-                metadata        = metadata,
+                hyperparameters = {
+                    "penalty": None,
+                    "solver": self.solver,
+                    "max_iter": self.max_iter,
+                },
             )
 
             results.append(result)
@@ -174,20 +161,14 @@ class LogisticRegressionPrefixSearcher(ModelFamilySearcher):
                 },
             )
 
-        metadata: dict[str, object] = {
+        fit_details: dict[str, object] = {
             "penalty"   : None,
             "solver"    : self.solver,
             "max_iter"  : self.max_iter,
             "converged" : bool(converged),
         }
 
-        if hasattr(model, "n_iter_"):
-            metadata["n_iter"] = [
-                int(value)
-                for value in np.asarray(model.n_iter_).reshape(-1)
-            ]
-
-        return model, metadata
+        return model, fit_details
 
     def _fit_model(self, X, y) -> tuple[LogisticRegression, bool]:
         """
@@ -214,8 +195,8 @@ class LogisticRegressionPrefixSearcher(ModelFamilySearcher):
 
         return model, converged
 
-    def _candidate_name(self, n_features_used: int) -> str:
+    def _candidate_name(self, n_selected_features: int) -> str:
         """
         Return the stable candidate name for a feature-prefix model.
         """
-        return f"logistic_regression_prefix_{int(n_features_used)}"
+        return f"logistic_regression_prefix_{int(n_selected_features)}"

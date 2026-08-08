@@ -8,7 +8,7 @@ from sklearn.linear_model import LinearRegression
 
 from mnplib.automl.wrappers import SelectedFeaturesEstimator
 
-from ._feature_order import feature_mask, miscoding_feature_order
+from ._feature_order import miscoding_feature_order
 from .base import ModelFamilySearcher, SearchContext, search_report
 
 
@@ -23,7 +23,7 @@ class LinearRegressionPrefixSearcher(ModelFamilySearcher):
         self.patience = patience
 
     def search(self, context: SearchContext):
-        order, details = miscoding_feature_order(
+        order, _ = miscoding_feature_order(
             context.evaluator.nescience.miscoding_,
             context.X.shape[1],
         )
@@ -33,8 +33,8 @@ class LinearRegressionPrefixSearcher(ModelFamilySearcher):
         best_nescience = float("inf")
         failures_without_improvement = 0
 
-        for n_features_used in range(1, len(order) + 1):
-            selected = tuple(order[:n_features_used])
+        for n_selected_features in range(1, len(order) + 1):
+            selected = tuple(order[:n_selected_features])
             model = LinearRegression()
             model.fit(context.X[:, selected], context.y)
             public_model = SelectedFeaturesEstimator(
@@ -43,24 +43,12 @@ class LinearRegressionPrefixSearcher(ModelFamilySearcher):
                 n_features_in=context.X.shape[1],
                 feature_names=context.feature_names,
             )
-            metadata = {
-                "feature_order": list(order),
-                "n_features_used": int(n_features_used),
-                "selected_features": feature_mask(selected, context.X.shape[1]),
-                "selected_feature_indices": list(selected),
-                "feature_names": [
-                    context.feature_names[index]
-                    for index in selected
-                ],
-                "selection_path_length": int(len(details["path"])),
-            }
             result = context.evaluator.evaluate(
-                name=f"linear_regression_prefix_{n_features_used}",
+                name=f"linear_regression_prefix_{n_selected_features}",
                 family=self.family,
                 model=model,
                 feature_indices=selected,
                 result_model=public_model,
-                metadata=metadata,
             )
             results.append(result)
 
@@ -79,7 +67,7 @@ class LinearRegressionPrefixSearcher(ModelFamilySearcher):
                         "family": self.family,
                         "reason": "early_stopping_patience",
                         "patience": int(self.patience),
-                        "n_features_used": int(n_features_used),
+                        "n_selected_features": int(n_selected_features),
                     }
                 )
                 break

@@ -11,9 +11,7 @@ The serialized predictor intentionally uses a restricted Python style:
         ...
         return y
 
-The model string uses positional input references x[i]. Feature names, original
-class labels, architecture diagnostics, and training diagnostics are stored in
-metadata rather than in the executable description used to compute surfeit.
+The model string uses positional input references x[i].
 """
 
 from __future__ import annotations
@@ -27,7 +25,6 @@ from sklearn.neural_network import MLPClassifier, MLPRegressor
 from .base import (
     SklearnSerializer,
     Task,
-    format_label,
     format_number,
     nonzero_mask,
     require_fitted,
@@ -44,7 +41,6 @@ class MLPSerializer(SklearnSerializer):
     """
 
     name = "mlp_neural_network"
-    support_level = "experimental"
     supported_types = (MLPClassifier, MLPRegressor)
 
     def task(self, model) -> Task:
@@ -95,8 +91,6 @@ class MLPSerializer(SklearnSerializer):
         """
         require_fitted(model)
 
-        # Feature names are part of metadata, not part of the executable model
-        # description used for surfeit.
         del feature_names
 
         self._validate_supported_prediction_case(model)
@@ -112,63 +106,6 @@ class MLPSerializer(SklearnSerializer):
         )
 
         return "\n".join(lines) + "\n"
-
-    def metadata(
-        self,
-        model,
-        *,
-        feature_names: list[str],
-        subset: list[int],
-        feature_indices: Sequence[int] | None = None,
-    ) -> dict:
-        """
-        Return diagnostic metadata for the fitted neural network.
-
-        Metadata is deliberately separated from the model string. It supports
-        interpretation and debugging without inflating the executable predictor
-        used to compute surfeit.
-        """
-        require_fitted(model)
-
-        original_indices = self._original_feature_indices(
-            model,
-            feature_indices=feature_indices,
-        )
-
-        original_subset = [
-            int(original_indices[index])
-            for index in subset
-        ]
-
-        metadata = {
-            "hidden_layer_sizes": self._hidden_layer_sizes(model),
-            "activation": model.activation,
-            "output_activation": model.out_activation_,
-            "n_layers": int(model.n_layers_),
-            "n_outputs": int(model.n_outputs_),
-            "n_parameters": int(self._n_parameters(model)),
-            "n_nonzero_parameters": int(self._n_nonzero_parameters(model)),
-            "n_iter": int(getattr(model, "n_iter_", 0)),
-            "input_feature_indices": [int(index) for index in original_indices],
-            "used_input_feature_indices": original_subset,
-            "used_input_feature_names": [
-                feature_names[index]
-                for index in original_subset
-            ],
-        }
-
-        if isinstance(model, MLPClassifier):
-            metadata.update(
-                {
-                    "n_classes": int(len(model.classes_)),
-                    "classes": [
-                        format_label(label)
-                        for label in model.classes_
-                    ],
-                }
-            )
-
-        return metadata
 
     def _prediction_function_lines(
         self,
@@ -327,48 +264,6 @@ class MLPSerializer(SklearnSerializer):
             return [f"{indent}return a[0]"]
 
         return [f"{indent}return a"]
-
-    @staticmethod
-    def _hidden_layer_sizes(model) -> tuple[int, ...]:
-        """
-        Return hidden-layer sizes as a normalized tuple.
-        """
-        sizes = model.hidden_layer_sizes
-
-        if isinstance(sizes, int):
-            return (int(sizes),)
-
-        return tuple(int(size) for size in sizes)
-
-    @staticmethod
-    def _n_parameters(model) -> int:
-        """
-        Return the total number of fitted weights and biases.
-        """
-        total = 0
-
-        for matrix in model.coefs_:
-            total += int(np.asarray(matrix).size)
-
-        for vector in model.intercepts_:
-            total += int(np.asarray(vector).size)
-
-        return total
-
-    @staticmethod
-    def _n_nonzero_parameters(model) -> int:
-        """
-        Count non-zero weights and biases after applying zero tolerance.
-        """
-        total = 0
-
-        for matrix in model.coefs_:
-            total += int(np.sum(nonzero_mask(np.asarray(matrix, dtype=float))))
-
-        for vector in model.intercepts_:
-            total += int(np.sum(nonzero_mask(np.asarray(vector, dtype=float))))
-
-        return total
 
     @staticmethod
     def _format_weight_layers(model) -> str:

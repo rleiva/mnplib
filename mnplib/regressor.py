@@ -170,12 +170,9 @@ class NescienceRegressor(BaseEstimator, RegressorMixin):
             **self.best_artifacts_.to_nescience_kwargs()
         )
         explanation["candidate_name"] = self.best_candidate_name_
-        explanation["candidate_source"] = self.best_result_.metadata.get(
-            "candidate_source"
-        )
         explanation["model_type"] = self.best_artifacts_.model_type
         explanation["model_family"] = self.best_result_.family
-        explanation["model_metadata"] = self.best_artifacts_.metadata
+        explanation["hyperparameters"] = dict(self.best_result_.hyperparameters)
 
         return explanation
 
@@ -280,64 +277,37 @@ class NescienceRegressor(BaseEstimator, RegressorMixin):
                 name=name,
                 family=type(model).__name__,
                 model=model,
-                metadata={"candidate_source": "explicit"},
             )
             self.results_.append(result)
             if self.verbose:
                 self._print_result(result)
 
     def _result_row(self, result: CandidateResult) -> dict[str, object]:
-        metadata = dict(result.metadata)
         description_length = int(
-            metadata.get(
-                "description_length",
-                len(result.artifacts.model_string.encode("utf-8")),
-            )
+            len(result.artifacts.model_string.encode("utf-8"))
+        )
+        n_selected_features = (
+            int(result.n_selected_features)
+            if result.n_selected_features is not None
+            else int(len(result.artifacts.subset))
         )
         row = {
             "candidate": result.name,
-            "candidate_source": metadata.get("candidate_source"),
             "family": result.family,
-            "model_family": result.family,
             "model_type": result.artifacts.model_type,
-            "searched_hyperparameters": self._searched_hyperparameters(metadata),
+            "hyperparameters": dict(result.hyperparameters),
             "nescience": float(result.nescience),
+            "deficiency": float(result.components["deficiency"]),
+            "surplus": float(result.components["surplus"]),
+            "inaccuracy": float(result.components["inaccuracy"]),
+            "surfeit": float(result.components["surfeit"]),
             "native_estimator_score": result.estimator_score,
-            "estimator_score": result.estimator_score,
             "selected_features": list(result.artifacts.subset),
-            "n_features_in_use": int(len(result.artifacts.subset)),
-            "n_features_used": int(
-                metadata.get("n_features_used", len(result.artifacts.subset))
-            ),
+            "n_selected_features": n_selected_features,
             "description_length": description_length,
-            "model_description_length": description_length,
-            "support_level": metadata.get("support_level"),
         }
-        row.update(result.components)
-
-        for key, value in metadata.items():
-            if key not in row:
-                row[key] = value
 
         return row
-
-    @staticmethod
-    def _searched_hyperparameters(metadata: Mapping[str, object]) -> dict[str, object]:
-        keys = {
-            "ccp_alpha",
-            "C",
-            "epsilon",
-            "alpha",
-            "hidden_layer_sizes",
-            "activation",
-            "max_iter",
-            "tol",
-        }
-        return {
-            key: metadata[key]
-            for key in sorted(keys)
-            if key in metadata
-        }
 
     @staticmethod
     def _print_result(result: CandidateResult) -> None:

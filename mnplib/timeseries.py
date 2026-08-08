@@ -218,7 +218,7 @@ class TimeSeries(BaseEstimator, RegressorMixin):
             "selected_lags": self.selected_lags_,
             "selected_feature_indices": self.selected_feature_indices_,
             "selected_feature_names": self.selected_feature_names_,
-            "n_features_in_use": int(np.sum(self.subset_)),
+            "n_selected_features": int(np.sum(self.subset_)),
             "validation": self.validation,
             "details": details,
         }
@@ -335,7 +335,7 @@ class TimeSeries(BaseEstimator, RegressorMixin):
             "window_size": int(window_size),
             "selected_feature_indices": tuple(int(i) for i in selected),
             "selected_feature_names": tuple(str(self.feature_names_in_[i]) for i in selected),
-            "n_features_in_use": int(len(selected)),
+            "n_selected_features": int(len(selected)),
             "nescience": float(details["nescience"]),
             "deficiency": deficiency,
             "surplus": surplus,

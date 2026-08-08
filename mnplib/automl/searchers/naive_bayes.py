@@ -8,7 +8,7 @@ from sklearn.naive_bayes import GaussianNB
 
 from mnplib.automl.wrappers import SelectedFeaturesEstimator
 
-from ._feature_order import feature_mask, miscoding_feature_order
+from ._feature_order import miscoding_feature_order
 from .base import ModelFamilySearcher, SearchContext, search_report
 
 
@@ -59,13 +59,12 @@ class NaiveBayesSearcher(ModelFamilySearcher):
         result model is wrapped so that it can receive the original full input
         representation.
         """
-        order, details = miscoding_feature_order(
+        order, _ = miscoding_feature_order(
             context.evaluator.nescience.miscoding_,
             context.X.shape[1],
         )
 
         order = tuple(int(index) for index in order)
-        path = details.get("path", ())
 
         results = []
         diagnostics = []
@@ -79,8 +78,8 @@ class NaiveBayesSearcher(ModelFamilySearcher):
             )
             return search_report(self.family, results, diagnostics)
 
-        for n_features_used in range(1, len(order) + 1):
-            selected = tuple(order[:n_features_used])
+        for n_selected_features in range(1, len(order) + 1):
+            selected = tuple(order[:n_selected_features])
             X_selected = context.X[:, selected]
 
             model = GaussianNB(var_smoothing=self.var_smoothing)
@@ -92,7 +91,7 @@ class NaiveBayesSearcher(ModelFamilySearcher):
                     {
                         "family": self.family,
                         "reason": "fit_failed",
-                        "n_features_used": int(n_features_used),
+                        "n_selected_features": int(n_selected_features),
                         "selected_feature_indices": list(selected),
                         "error_type": type(exc).__name__,
                         "error_message": str(exc),
@@ -107,35 +106,21 @@ class NaiveBayesSearcher(ModelFamilySearcher):
                 feature_names=context.feature_names,
             )
 
-            metadata = {
-                "variant": "GaussianNB",
-                "var_smoothing": self.var_smoothing,
-                "feature_order": list(order),
-                "n_features_used": int(n_features_used),
-                "selected_features": feature_mask(selected, context.X.shape[1]),
-                "selected_feature_indices": list(selected),
-                "feature_names": [
-                    context.feature_names[index]
-                    for index in selected
-                ],
-                "selection_path_length": int(len(path)),
-            }
-
             result = context.evaluator.evaluate(
-                name=self._candidate_name(n_features_used),
+                name=self._candidate_name(n_selected_features),
                 family=self.family,
                 model=model,
                 feature_indices=selected,
                 result_model=public_model,
-                metadata=metadata,
+                hyperparameters={"var_smoothing": self.var_smoothing},
             )
 
             results.append(result)
 
         return search_report(self.family, results, diagnostics)
 
-    def _candidate_name(self, n_features_used: int) -> str:
+    def _candidate_name(self, n_selected_features: int) -> str:
         """
         Return a stable name for a GaussianNB feature-prefix candidate.
         """
-        return f"gaussian_nb_prefix_{int(n_features_used)}"
+        return f"gaussian_nb_prefix_{int(n_selected_features)}"

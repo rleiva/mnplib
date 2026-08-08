@@ -67,20 +67,12 @@ class DecisionTreePruningSearcher(ModelFamilySearcher):
                 continue
 
             seen_structures.add(signature)
-            metadata = {
-                "ccp_alpha" : float(alpha),
-                "alpha_tol" : self.alpha_tol,
-                "n_jobs"    : self.n_jobs,
-                "n_nodes"   : int(model.tree_.node_count),
-                "n_leaves"  : int(model.get_n_leaves()),
-                "max_depth" : int(model.get_depth()),
-            }
             results.append(
                 context.evaluator.evaluate(
                     name     = self._candidate_name(index, alpha),
                     family   = self.family,
                     model    = model,
-                    metadata = metadata,
+                    hyperparameters = {"ccp_alpha": float(alpha)},
                 )
             )
 

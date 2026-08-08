@@ -96,7 +96,6 @@ def explain_model(metric, model, X, *, feature_names=None) -> dict[str, object]:
     )
     explanation = metric.explain(**artifacts.to_nescience_kwargs())
     explanation["model_type"] = artifacts.model_type
-    explanation["model_metadata"] = artifacts.metadata
     return explanation
 
 

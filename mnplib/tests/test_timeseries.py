@@ -89,7 +89,7 @@ def test_results_dataframe_is_sorted_and_has_expected_columns():
         "window_size",
         "nescience",
         "estimator_score",
-        "n_features_in_use",
+        "n_selected_features",
         "description_length",
         "selected_feature_indices",
         "selected_feature_names",
@@ -118,7 +118,7 @@ def test_components_nescience_and_model_string():
     assert "RULE" in model_string
 
 
-def test_explain_contains_time_series_metadata():
+def test_explain_contains_time_series_details():
     y = make_series()
     ts = TimeSeries(window_size=4, n_bins=3).fit(y)
 
@@ -129,7 +129,6 @@ def test_explain_contains_time_series_metadata():
     assert explanation["selected_feature_names"] == ts.selected_feature_names_
     assert "components" in explanation
     assert "dominant_component" in explanation
-    assert "model_metadata" in explanation
 
 
 def test_lag_analysis_methods_without_exogenous_data():

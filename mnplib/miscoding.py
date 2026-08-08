@@ -675,7 +675,7 @@ class Miscoding(BaseEstimator):
                 "surplus": 0.0,
                 "miscoding": deficiency,
                 "features_in_use": mask,
-                "n_features_in_use": 0,
+                "n_selected_features": 0,
                 "selected_feature_indices": [],
                 "selected_feature_names": [],
                 "redundancy_weights": np.array([], dtype=float),
@@ -709,7 +709,7 @@ class Miscoding(BaseEstimator):
             "surplus": surplus,
             "miscoding": max(deficiency, surplus),
             "features_in_use": mask,
-            "n_features_in_use": int(np.sum(mask)),
+            "n_selected_features": int(np.sum(mask)),
             "selected_feature_indices": selected,
             "selected_feature_names": [
                 str(self.feature_names_in_[j])

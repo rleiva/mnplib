@@ -45,29 +45,29 @@ class SklearnSerializer(ABC):
         """
         require_fitted(model)
 
-        names   = resolve_feature_names(X, feature_names=feature_names, n_features=int(model.n_features_in_))
-        indices = resolve_feature_indices(feature_indices, n_features=int(model.n_features_in_))
-        tokens  = [feature_token(index) for index in indices]
+        n_features = int(model.n_features_in_)
+        if feature_names is not None:
+            resolve_feature_names(
+                X,
+                feature_names=feature_names,
+                n_features=n_features,
+            )
+
+        indices = resolve_feature_indices(
+            feature_indices,
+            n_features=n_features,
+        )
+        tokens = [feature_token(index) for index in indices]
 
         subset       = self.subset(model)
         predictions  = np.asarray(model.predict(X))
         model_string = self.serialize(model, feature_names=tokens)
-
-        metadata = self.metadata(model, feature_names=names, subset=subset)
-        metadata.setdefault("task", self.task(model))
-        metadata.setdefault("serializer", self.name)
-        metadata.setdefault("n_features_in", int(model.n_features_in_))
-        metadata.setdefault("n_features_in_use", int(len(subset)))
-        metadata.setdefault("feature_names", list(names))
-        metadata.setdefault("feature_reference_map", {tokens[j]: names[j] for j in range(len(tokens))})
-        metadata.setdefault("selected_feature_names", [names[j] for j in subset])
 
         return ModelArtifacts(
             subset       = subset,
             predictions  = predictions,
             model_string = model_string,
             model_type   = type(model).__name__,
-            metadata     = metadata
         )
 
     @abstractmethod
@@ -87,13 +87,6 @@ class SklearnSerializer(ABC):
         """
         Return a canonical string description of the fitted estimator.
         """
-
-    def metadata(self, model, *, feature_names: list[str], subset: list[int]) -> dict:
-        """
-        Return optional model-specific metadata.
-        """
-        return {}
-
 
 def format_number(value: float) -> str:
     """
@@ -136,16 +129,6 @@ def class_token(index: int) -> str:
     Return the compact class reference for a class index.
     """
     return class_token_template.format(index=int(index))
-
-
-def format_label(value) -> str:
-    """
-    Return a stable canonical representation of a target label.
-    """
-    if isinstance(value, np.generic):
-        value = value.item()
-
-    return repr(value)
 
 
 def resolve_feature_names(X, *, feature_names=None, n_features: int | None = None) -> list[str]:

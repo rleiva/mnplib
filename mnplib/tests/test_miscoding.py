@@ -231,7 +231,7 @@ def test_empty_subset_has_full_deficiency_and_zero_surplus():
     assert details["deficiency"] == pytest.approx(1.0)
     assert details["surplus"] == pytest.approx(0.0)
     assert details["miscoding"] == pytest.approx(1.0)
-    assert details["n_features_in_use"] == 0
+    assert details["n_selected_features"] == 0
 
 
 def test_subset_analysis_returns_expected_keys_and_shapes():
@@ -245,14 +245,14 @@ def test_subset_analysis_returns_expected_keys_and_shapes():
         "surplus",
         "miscoding",
         "features_in_use",
-        "n_features_in_use",
+        "n_selected_features",
         "selected_feature_indices",
         "selected_feature_names",
         "redundancy_weights",
         "feature_weights",
     }
     assert details["features_in_use"].shape == (X.shape[1],)
-    assert details["n_features_in_use"] == 2
+    assert details["n_selected_features"] == 2
     assert details["selected_feature_indices"] == [0, 2]
     assert details["selected_feature_names"] == ["x0", "x2"]
     assert details["redundancy_weights"].shape == (2,)

@@ -36,6 +36,31 @@ FAST_MLP = {
     "initial_features": 1,
 }
 
+COMMON_RESULT_COLUMNS = {
+    "candidate",
+    "family",
+    "model_type",
+    "hyperparameters",
+    "nescience",
+    "deficiency",
+    "surplus",
+    "inaccuracy",
+    "surfeit",
+    "native_estimator_score",
+    "selected_features",
+    "n_selected_features",
+    "description_length",
+}
+
+MODEL_SPECIFIC_COLUMNS = {
+    "hidden_layer_sizes",
+    "var_smoothing",
+    "ccp_alpha",
+    "solver",
+    "alpha",
+    "converged",
+}
+
 
 def _classification_context(X, y):
     """
@@ -84,6 +109,26 @@ def _base_estimator(model):
     Return the underlying sklearn estimator when a wrapper is used.
     """
     return getattr(model, "estimator", model)
+
+
+def _assert_common_result_frame(df):
+    assert COMMON_RESULT_COLUMNS.issubset(df.columns)
+    assert "metadata" not in df.columns
+    assert "candidate_source" not in df.columns
+    assert "support_level" not in df.columns
+    assert "searched_hyperparameters" not in df.columns
+    assert "n_input_features" not in df.columns
+    assert "n_features_in_use" not in df.columns
+    assert "n_features_used" not in df.columns
+    assert df["hyperparameters"].map(
+        lambda value: isinstance(value, dict)
+    ).all()
+    assert (
+        df["n_selected_features"]
+        == df["selected_features"].map(len)
+    ).all()
+    for forbidden in MODEL_SPECIFIC_COLUMNS:
+        assert forbidden not in df.columns
 
 
 def test_classifier_default_uses_all_supported_internal_model_families():
@@ -226,9 +271,7 @@ def test_regressor_candidate_mapping_is_accepted_for_comparison():
     ).fit(X, y)
 
     assert "linear_svr" in set(reg.results_dataframe()["candidate"])
-    assert {"internal", "explicit"}.issubset(
-        set(reg.results_dataframe()["candidate_source"])
-    )
+    assert "candidate_source" not in reg.results_dataframe().columns
 
 
 def test_decision_tree_pruning_path_search_skips_duplicate_structures(monkeypatch):
@@ -274,15 +317,21 @@ def test_linear_regression_feature_prefix_search_evaluates_all_prefixes():
         if result.family == "linear_regression"
     ]
 
-    assert [result.metadata["n_features_used"] for result in linear_results] == [
+    assert [
+        len(result.model.selected_features)
+        for result in linear_results
+    ] == [
         1,
         2,
         3,
         4,
         5,
     ]
-    assert all("feature_order" in result.metadata for result in linear_results)
-    assert all("selected_feature_indices" in result.metadata for result in linear_results)
+    assert all(
+        not hasattr(result, "metadata")
+        for result in linear_results
+    )
+    assert all(result.hyperparameters == {} for result in linear_results)
 
 
 def test_logistic_regression_feature_prefix_search_evaluates_all_prefixes():
@@ -306,14 +355,27 @@ def test_logistic_regression_feature_prefix_search_evaluates_all_prefixes():
         if result.family == "logistic_regression"
     ]
 
-    assert [result.metadata["n_features_used"] for result in logistic_results] == [
+    assert [
+        len(result.model.selected_features)
+        for result in logistic_results
+    ] == [
         1,
         2,
         3,
         4,
     ]
-    assert all("feature_order" in result.metadata for result in logistic_results)
-    assert all("selected_feature_indices" in result.metadata for result in logistic_results)
+    assert all(
+        result.hyperparameters == {
+            "penalty": None,
+            "solver": "lbfgs",
+            "max_iter": 1000,
+        }
+        for result in logistic_results
+    )
+    assert all(
+        not hasattr(result, "metadata")
+        for result in logistic_results
+    )
     assert all(
         result.artifacts.model_string.startswith("def predict(x):")
         for result in logistic_results
@@ -389,13 +451,20 @@ def test_naive_bayes_uses_gaussian_feature_prefixes_only():
         if result.family == "naive_bayes"
     ]
 
-    assert [result.metadata["n_features_used"] for result in nb_results] == [
+    assert [
+        len(result.model.selected_features)
+        for result in nb_results
+    ] == [
         1,
         2,
         3,
         4,
     ]
-    assert all(result.metadata["variant"] == "GaussianNB" for result in nb_results)
+    assert all(set(result.hyperparameters) == {"var_smoothing"} for result in nb_results)
+    assert all(
+        result.hyperparameters["var_smoothing"] == pytest.approx(1e-9)
+        for result in nb_results
+    )
     assert all(isinstance(_base_estimator(result.model), GaussianNB) for result in nb_results)
     assert all(
         result.artifacts.model_string.startswith("def predict(x):")
@@ -426,7 +495,9 @@ def test_mlp_search_is_internal_bounded_and_serializes_executable_predictor():
     ]
 
     assert len(mlp_results) == 1
-    assert "hidden_layer_sizes" in mlp_results[0].metadata
+    assert "hidden_layer_sizes" in mlp_results[0].hyperparameters
+    assert "activation" in mlp_results[0].hyperparameters
+    assert not hasattr(mlp_results[0], "metadata")
 
     model_string = mlp_results[0].artifacts.model_string
 
@@ -474,27 +545,15 @@ def test_classifier_and_regressor_public_workflows_and_results_columns():
             "inaccuracy",
             "surfeit",
         }
-        assert estimator.explain()["candidate_name"] == estimator.best_candidate_name_
+        explanation = estimator.explain()
+        assert explanation["candidate_name"] == estimator.best_candidate_name_
+        assert "n_input_features" not in explanation
+        assert "n_features_in_use" not in explanation
         assert estimator.get_model() is estimator.model_
 
         df = estimator.results_dataframe()
 
-        assert {
-            "candidate",
-            "candidate_source",
-            "family",
-            "searched_hyperparameters",
-            "nescience",
-            "deficiency",
-            "surplus",
-            "inaccuracy",
-            "surfeit",
-            "native_estimator_score",
-            "selected_features",
-            "n_features_used",
-            "description_length",
-            "support_level",
-        }.issubset(df.columns)
+        _assert_common_result_frame(df)
         assert df["nescience"].is_monotonic_increasing
         assert df.iloc[0]["candidate"] == estimator.best_candidate_name_
         assert estimator.best_nescience_ == pytest.approx(df.iloc[0]["nescience"])

@@ -50,7 +50,7 @@ class LinearSVCSearcher(ModelFamilySearcher):
                 random_state=self.random_state,
             )
             try:
-                converged = _fit_with_convergence_flag(model, context.X, context.y)
+                _fit_with_convergence_flag(model, context.X, context.y)
             except Exception as exc:
                 diagnostics.append(
                     {
@@ -67,13 +67,7 @@ class LinearSVCSearcher(ModelFamilySearcher):
                     name=f"linear_svc_C_{C:.6g}",
                     family=self.family,
                     model=model,
-                    metadata={
-                        "C": float(C),
-                        "max_iter": self.max_iter,
-                        "tol": self.tol,
-                        "dual": False,
-                        "converged": bool(converged),
-                    },
+                    hyperparameters={"C": float(C)},
                 )
             )
 
@@ -122,7 +116,7 @@ class LinearSVRSearcher(ModelFamilySearcher):
                     random_state=self.random_state,
                 )
                 try:
-                    converged = _fit_with_convergence_flag(
+                    _fit_with_convergence_flag(
                         model,
                         context.X,
                         context.y,
@@ -144,12 +138,9 @@ class LinearSVRSearcher(ModelFamilySearcher):
                         name=f"linear_svr_C_{C:.6g}_epsilon_{epsilon:.6g}",
                         family=self.family,
                         model=model,
-                        metadata={
+                        hyperparameters={
                             "C": float(C),
                             "epsilon": float(epsilon),
-                            "max_iter": self.max_iter,
-                            "tol": self.tol,
-                            "converged": bool(converged),
                         },
                     )
                 )

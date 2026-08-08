@@ -10,8 +10,7 @@ description is an executable simplified-Python procedure of the form:
         return y
 
 The function is intentionally compact and uses positional input references
-x[i]. Human-readable feature names and class labels are stored in metadata, not
-in the model string used to compute surfeit.
+x[i].
 """
 
 from __future__ import annotations
@@ -25,7 +24,6 @@ from sklearn.svm import LinearSVC, LinearSVR
 from .base import (
     SklearnSerializer,
     Task,
-    format_label,
     format_number,
     nonzero_mask,
     require_fitted,
@@ -97,9 +95,6 @@ class LinearSVMSerializer(SklearnSerializer):
         """
         require_fitted(model)
 
-        # The common serializer interface supplies feature names for metadata
-        # and diagnostics. They are not part of the executable description used
-        # to compute surfeit.
         del feature_names
 
         original_indices = self._original_feature_indices(
@@ -119,68 +114,6 @@ class LinearSVMSerializer(SklearnSerializer):
             )
 
         return "\n".join(lines) + "\n"
-
-    def metadata(
-        self,
-        model,
-        *,
-        feature_names: list[str],
-        subset: list[int],
-        feature_indices: Sequence[int] | None = None,
-    ) -> dict:
-        """
-        Return diagnostic metadata for the fitted linear SVM.
-
-        Metadata supports interpretation and debugging. It is deliberately kept
-        outside the serialized model string so that surfeit is computed from the
-        executable predictor only.
-        """
-        require_fitted(model)
-
-        original_indices = self._original_feature_indices(
-            model,
-            feature_indices=feature_indices,
-        )
-
-        original_subset = [
-            int(original_indices[index])
-            for index in subset
-        ]
-
-        metadata = {
-            "n_nonzero_coefficients": int(len(subset)),
-            "selected_feature_indices": original_subset,
-            "selected_feature_names": [
-                feature_names[index]
-                for index in original_subset
-            ],
-            "C": float(model.C),
-        }
-
-        if isinstance(model, LinearSVC):
-            metadata.update(
-                {
-                    "n_classes": int(len(model.classes_)),
-                    "classes": [
-                        format_label(label)
-                        for label in model.classes_
-                    ],
-                    "loss": model.loss,
-                    "penalty": model.penalty,
-                    "dual": model.dual,
-                }
-            )
-
-        if isinstance(model, LinearSVR):
-            metadata.update(
-                {
-                    "epsilon": float(model.epsilon),
-                    "loss": model.loss,
-                    "dual": model.dual,
-                }
-            )
-
-        return metadata
 
     def _classification_rule_lines(
         self,

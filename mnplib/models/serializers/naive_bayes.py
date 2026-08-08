@@ -16,7 +16,6 @@ from sklearn.naive_bayes import GaussianNB
 from .base import (
     SklearnSerializer,
     Task,
-    format_label,
     format_number,
     require_fitted
 )
@@ -36,8 +35,7 @@ class NaiveBayesSerializer(SklearnSerializer):
             ...
             return class_index
 
-    The returned class index is a compact internal token. The mapping from this
-    token to the original class label is stored in metadata.
+    The returned class index is a compact internal token.
     """
 
     name            = "naive_bayes"
@@ -96,30 +94,6 @@ class NaiveBayesSerializer(SklearnSerializer):
         lines  = self._prediction_function_lines(model, subset)
 
         return "\n".join(lines) + "\n"
-
-    def metadata(self, model, *, feature_names: list[str], subset: list[int]) -> dict:
-        """
-        Return diagnostic metadata for the fitted GaussianNB model.
-
-        Metadata is intentionally kept outside the serialized model string. It
-        supports interpretation and diagnostics without inflating the model
-        description used to compute surfeit.
-        """
-        require_fitted(model)
-        self.task(model)
-
-        return {
-            "likelihood"             : "gaussian",
-            "n_classes"              : int(len(model.classes_)),
-            "classes"                : [format_label(label) for label in model.classes_],
-            "n_features_in_use"      : int(len(subset)),
-            "selected_feature_names" : [
-                feature_names[index]
-                for index in subset
-            ],
-            "var_smoothing"          : float(getattr(model, "var_smoothing", 0.0)),
-            "epsilon"                : float(getattr(model, "epsilon_", 0.0))
-        }
 
     def _prediction_function_lines(self, model, subset: list[int]) -> list[str]:
         """

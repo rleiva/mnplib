@@ -54,7 +54,7 @@ class TimeSeriesCandidateResult:
         return max(float(self.components["deficiency"]), float(self.components["surplus"]))
 
     @property
-    def n_features_in_use(self) -> int:
+    def n_selected_features(self) -> int:
         """Return the number of selected lagged features."""
         return len(self.selected_feature_indices)
 
@@ -122,7 +122,7 @@ class TimeSeriesCandidateEvaluator:
             "schema": "canonical_nescience_time_series_model_v1",
             "model_family": spec.model_family,
             "window_size": int(spec.window_size),
-            "n_features_in_use": int(selected.size),
+            "n_selected_features": int(selected.size),
             "selected_feature_names": selected_names,
         }
 
@@ -162,7 +162,7 @@ def candidate_results_dataframe(results: list[TimeSeriesCandidateResult]) -> pd.
             "window_size": result.window_size,
             "nescience": result.nescience,
             "estimator_score": result.estimator_score,
-            "n_features_in_use": result.n_features_in_use,
+            "n_selected_features": result.n_selected_features,
             "description_length": result.description_length,
             "selected_feature_indices": result.selected_feature_indices,
             "selected_feature_names": result.selected_feature_names,

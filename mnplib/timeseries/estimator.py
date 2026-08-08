@@ -295,7 +295,7 @@ class TimeSeries(BaseEstimator, RegressorMixin):
             "selected_lags": self.selected_lags_,
             "selected_feature_indices": self.selected_feature_indices_,
             "selected_feature_names": self.selected_feature_names_,
-            "n_features_in_use": self.best_result_.n_features_in_use,
+            "n_selected_features": self.best_result_.n_selected_features,
             "model_metadata": self.best_result_.metadata,
         }
 

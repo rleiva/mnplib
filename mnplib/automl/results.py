@@ -20,7 +20,9 @@ class CandidateResult:
     nescience  : float
     components : dict[str, float]
     artifacts  : object
-    metadata   : dict[str, Any] = field(default_factory=dict)
+    estimator_score : float = float("nan")
+    n_selected_features : int | None = None
+    hyperparameters : dict[str, Any] = field(default_factory=dict)
 
     @property
     def estimator(self):
@@ -28,14 +30,6 @@ class CandidateResult:
         Convenience alias.
         """
         return self.model
-
-    @property
-    def estimator_score(self) -> float:
-        """
-        Alias for the native estimator score.
-        """
-        return float(self.metadata.get("native_score", float("nan")))
-
 
 @dataclass(frozen=True)
 class SearchReport:

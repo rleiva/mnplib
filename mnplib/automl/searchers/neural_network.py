@@ -7,8 +7,6 @@ from __future__ import annotations
 import warnings
 from typing import Literal
 
-import numpy as np
-
 from sklearn.exceptions import ConvergenceWarning
 from sklearn.neural_network import MLPClassifier, MLPRegressor
 from sklearn.preprocessing import StandardScaler
@@ -16,7 +14,7 @@ from sklearn.preprocessing import StandardScaler
 from mnplib.automl.wrappers import SelectedFeaturesEstimator
 from mnplib.models.serializers.base import feature_token, format_number
 
-from ._feature_order import feature_mask, miscoding_feature_order
+from ._feature_order import miscoding_feature_order
 from .base import ModelFamilySearcher, SearchContext, search_report
 
 
@@ -87,7 +85,7 @@ class _BaseMLPSearch(ModelFamilySearcher):
         initial = self._evaluate_state(
             context,
             order=order,
-            n_features_used=initial_n_features,
+            n_selected_features=initial_n_features,
             hidden_layer_sizes=initial_hidden,
             move="initial",
             diagnostics=diagnostics,
@@ -111,7 +109,7 @@ class _BaseMLPSearch(ModelFamilySearcher):
                 evaluated = self._evaluate_state(
                     context,
                     order=order,
-                    n_features_used=state[0],
+                    n_selected_features=state[0],
                     hidden_layer_sizes=state[1],
                     move=move,
                     diagnostics=diagnostics,
@@ -162,13 +160,16 @@ class _BaseMLPSearch(ModelFamilySearcher):
         context: SearchContext,
         *,
         order,
-        n_features_used: int,
+        n_selected_features: int,
         hidden_layer_sizes,
         move: Literal["initial", "add_feature", "add_layer", "add_unit"],
         diagnostics,
     ):
-        selected = tuple(order[:n_features_used])
-        state = (int(n_features_used), tuple(int(size) for size in hidden_layer_sizes))
+        selected = tuple(order[:n_selected_features])
+        state = (
+            int(n_selected_features),
+            tuple(int(size) for size in hidden_layer_sizes),
+        )
         X_selected = context.X[:, selected]
 
         scaler = StandardScaler()
@@ -184,14 +185,14 @@ class _BaseMLPSearch(ModelFamilySearcher):
         )
 
         try:
-            converged = self._fit_with_convergence_flag(model, X_scaled, context.y)
+            self._fit_with_convergence_flag(model, X_scaled, context.y)
         except Exception as exc:
             diagnostics.append(
                 {
                     "family": self.family,
                     "reason": "fit_failed",
                     "move": move,
-                    "n_features_used": int(n_features_used),
+                    "n_selected_features": int(n_selected_features),
                     "hidden_layer_sizes": state[1],
                     "error": str(exc),
                 }
@@ -205,30 +206,6 @@ class _BaseMLPSearch(ModelFamilySearcher):
             feature_names=context.feature_names,
             transformer=scaler,
         )
-        metadata = {
-            "family": self.family,
-            "move": move,
-            "feature_order": list(order),
-            "selected_features": feature_mask(selected, context.X.shape[1]),
-            "selected_feature_indices": list(selected),
-            "n_features_used": int(n_features_used),
-            "feature_names": [
-                context.feature_names[index]
-                for index in selected
-            ],
-            "hidden_layer_sizes": state[1],
-            "n_hidden_layers": int(len(state[1])),
-            "n_hidden_units": int(sum(state[1])),
-            "n_parameters": int(self._n_parameters(model)),
-            "activation": self.activation,
-            "solver": self.solver,
-            "alpha": self.alpha,
-            "max_iter": self.max_iter,
-            "tol": self.tol,
-            "converged": bool(converged),
-            "n_iter": int(getattr(model, "n_iter_", 0)),
-            "scaler": "StandardScaler",
-        }
         result = context.evaluator.evaluate(
             name=self._candidate_name(state, move),
             family=self.family,
@@ -241,26 +218,33 @@ class _BaseMLPSearch(ModelFamilySearcher):
                 selected,
                 context.feature_names,
             ),
-            metadata=metadata,
+            hyperparameters={
+                "hidden_layer_sizes": state[1],
+                "activation": self.activation,
+                "solver": self.solver,
+                "alpha": self.alpha,
+                "max_iter": self.max_iter,
+                "tol": self.tol,
+            },
         )
         return result, state
 
     def _moves(self, state, max_features):
-        n_features_used, hidden = state
+        n_selected_features, hidden = state
         hidden = tuple(hidden)
 
-        if n_features_used < max_features:
-            yield "add_feature", (int(n_features_used) + 1, hidden)
+        if n_selected_features < max_features:
+            yield "add_feature", (int(n_selected_features) + 1, hidden)
 
         if len(hidden) < self.max_hidden_layers:
             yield "add_layer", (
-                int(n_features_used),
+                int(n_selected_features),
                 hidden + (min(self.layer_width, self.max_units_per_layer),),
             )
 
         if max(hidden, default=0) < self.max_units_per_layer:
             yield "add_unit", (
-                int(n_features_used),
+                int(n_selected_features),
                 tuple(
                     min(int(size) + self.unit_step, self.max_units_per_layer)
                     for size in hidden
@@ -273,10 +257,10 @@ class _BaseMLPSearch(ModelFamilySearcher):
         return max(1, min(int(self.max_features), int(n_features)))
 
     def _candidate_name(self, state, move: str) -> str:
-        n_features_used, hidden = state
+        n_selected_features, hidden = state
         hidden_text = "x".join(str(size) for size in hidden)
         return (
-            f"{self.family}_{move}_features_{n_features_used}_"
+            f"{self.family}_{move}_features_{n_selected_features}_"
             f"hidden_{hidden_text}"
         )
 
@@ -290,15 +274,6 @@ class _BaseMLPSearch(ModelFamilySearcher):
             issubclass(warning.category, ConvergenceWarning)
             for warning in caught
         )
-
-    @staticmethod
-    def _n_parameters(model) -> int:
-        total = 0
-        for matrix in model.coefs_:
-            total += int(np.asarray(matrix).size)
-        for vector in model.intercepts_:
-            total += int(np.asarray(vector).size)
-        return total
 
     @staticmethod
     def _scaler_model_string(scaler, selected, feature_names) -> str:

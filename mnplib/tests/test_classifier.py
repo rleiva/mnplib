@@ -28,6 +28,22 @@ from mnplib.classifier import (
 
 FAST_MLP = {"max_candidates": 1, "max_iter": 5, "initial_features": 1}
 
+COMMON_RESULT_COLUMNS = {
+    "candidate",
+    "family",
+    "model_type",
+    "hyperparameters",
+    "nescience",
+    "native_estimator_score",
+    "selected_features",
+    "n_selected_features",
+    "description_length",
+    "deficiency",
+    "surplus",
+    "inaccuracy",
+    "surfeit",
+}
+
 
 @pytest.fixture()
 def binary_classification_data():
@@ -38,6 +54,24 @@ def binary_classification_data():
         n_redundant=0,
         random_state=42,
     )
+
+
+def _assert_common_result_frame(df):
+    assert COMMON_RESULT_COLUMNS.issubset(df.columns)
+    assert "metadata" not in df.columns
+    assert "candidate_source" not in df.columns
+    assert "support_level" not in df.columns
+    assert "searched_hyperparameters" not in df.columns
+    assert "n_input_features" not in df.columns
+    assert "n_features_in_use" not in df.columns
+    assert "n_features_used" not in df.columns
+    assert df["hyperparameters"].map(
+        lambda value: isinstance(value, dict)
+    ).all()
+    assert (
+        df["n_selected_features"]
+        == df["selected_features"].map(len)
+    ).all()
 
 
 def test_default_behavior_uses_all_supported_internal_model_families(
@@ -59,7 +93,7 @@ def test_default_behavior_uses_all_supported_internal_model_families(
         "naive_bayes",
         "mlp_classifier",
     ]
-    assert set(clf.results_dataframe()["candidate_source"]) == {"internal"}
+    assert "candidate_source" not in clf.results_dataframe().columns
 
 
 def test_selecting_only_decision_tree_runs_only_tree_searcher(
@@ -148,6 +182,7 @@ def test_fit_selects_minimum_nescience_candidate(binary_classification_data):
     assert clf.n_features_in_ == X.shape[1]
     assert isinstance(clf.best_result_, CandidateResult)
     assert clf.model_ is clf.best_result_.model
+    assert not hasattr(clf.best_result_, "metadata")
     assert clf.best_nescience_ == pytest.approx(
         min(result.nescience for result in clf.results_)
     )
@@ -199,6 +234,11 @@ def test_nescience_components_explain_model_string_and_get_model(
     explanation = clf.explain()
     assert explanation["candidate_name"] == clf.best_candidate_name_
     assert "candidate_source" not in explanation
+    assert "hyperparameters" in explanation
+    assert "metadata" not in explanation
+    assert "model_metadata" not in explanation
+    assert "n_input_features" not in explanation
+    assert "n_features_in_use" not in explanation
     assert clf.get_model() is clf.model_
     model_string = clf.model_string()
 
@@ -221,24 +261,18 @@ def test_results_dataframe_has_expected_columns(binary_classification_data):
     ).fit(X, y)
     df = clf.results_dataframe()
 
-    assert {
-        "candidate",
-        "candidate_source",
-        "family",
-        "model_type",
-        "nescience",
-        "estimator_score",
-        "native_estimator_score",
-        "selected_features",
-        "n_features_used",
-        "description_length",
-        "deficiency",
-        "surplus",
-        "inaccuracy",
-        "surfeit",
-    }.issubset(df.columns)
+    _assert_common_result_frame(df)
+    for forbidden in [
+        "hidden_layer_sizes",
+        "var_smoothing",
+        "ccp_alpha",
+        "solver",
+        "alpha",
+        "converged",
+    ]:
+        assert forbidden not in df.columns
     assert df["nescience"].is_monotonic_increasing
-    assert set(df["candidate_source"]) == {"internal"}
+    assert df.iloc[0]["candidate"] == clf.best_candidate_name_
 
 
 def test_dataframe_feature_names_are_preserved(binary_classification_data):
@@ -252,10 +286,7 @@ def test_dataframe_feature_names_are_preserved(binary_classification_data):
 
     assert list(clf.feature_names_in_) == list(X_df.columns)
     assert "feature_" not in clf.model_string()
-    assert set(clf.best_artifacts_.metadata["feature_reference_map"].values()).issubset(
-        set(X_df.columns)
-    )
-    assert clf.best_artifacts_.metadata["feature_reference_map"]
+    assert not hasattr(clf.best_artifacts_, "metadata")
 
 
 def test_no_weights_parameter_and_sklearn_clone_support(binary_classification_data):

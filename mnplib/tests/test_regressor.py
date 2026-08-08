@@ -24,6 +24,22 @@ from mnplib.regressor import CandidateResult, NescienceRegressor, Regressor
 
 FAST_MLP = {"max_candidates": 1, "max_iter": 5, "initial_features": 1}
 
+COMMON_RESULT_COLUMNS = {
+    "candidate",
+    "family",
+    "model_type",
+    "hyperparameters",
+    "nescience",
+    "native_estimator_score",
+    "selected_features",
+    "n_selected_features",
+    "description_length",
+    "deficiency",
+    "surplus",
+    "inaccuracy",
+    "surfeit",
+}
+
 
 @pytest.fixture()
 def regression_data():
@@ -34,6 +50,24 @@ def regression_data():
         noise=3.0,
         random_state=42,
     )
+
+
+def _assert_common_result_frame(df):
+    assert COMMON_RESULT_COLUMNS.issubset(df.columns)
+    assert "metadata" not in df.columns
+    assert "candidate_source" not in df.columns
+    assert "support_level" not in df.columns
+    assert "searched_hyperparameters" not in df.columns
+    assert "n_input_features" not in df.columns
+    assert "n_features_in_use" not in df.columns
+    assert "n_features_used" not in df.columns
+    assert df["hyperparameters"].map(
+        lambda value: isinstance(value, dict)
+    ).all()
+    assert (
+        df["n_selected_features"]
+        == df["selected_features"].map(len)
+    ).all()
 
 
 def test_fit_selects_minimum_nescience_candidate(regression_data):
@@ -50,10 +84,11 @@ def test_fit_selects_minimum_nescience_candidate(regression_data):
     assert reg.n_features_in_ == X.shape[1]
     assert isinstance(reg.best_result_, CandidateResult)
     assert reg.model_ is reg.best_result_.model
+    assert not hasattr(reg.best_result_, "metadata")
     assert reg.best_nescience_ == pytest.approx(
         min(result.nescience for result in reg.results_)
     )
-    assert set(reg.results_dataframe()["candidate_source"]) == {"internal"}
+    assert "candidate_source" not in reg.results_dataframe().columns
 
 
 def test_predict_score_components_explain_and_model_string(regression_data):
@@ -74,7 +109,13 @@ def test_predict_score_components_explain_and_model_string(regression_data):
         "inaccuracy",
         "surfeit",
     }
-    assert reg.explain()["candidate_name"] == reg.best_candidate_name_
+    explanation = reg.explain()
+    assert explanation["candidate_name"] == reg.best_candidate_name_
+    assert "hyperparameters" in explanation
+    assert "metadata" not in explanation
+    assert "model_metadata" not in explanation
+    assert "n_input_features" not in explanation
+    assert "n_features_in_use" not in explanation
     assert reg.get_model() is reg.model_
     model_string = reg.model_string()
 
@@ -97,23 +138,18 @@ def test_results_dataframe_has_expected_columns(regression_data):
     ).fit(X, y)
     df = reg.results_dataframe()
 
-    assert {
-        "candidate",
-        "candidate_source",
-        "family",
-        "model_type",
-        "nescience",
-        "estimator_score",
-        "native_estimator_score",
-        "selected_features",
-        "n_features_used",
-        "description_length",
-        "deficiency",
-        "surplus",
-        "inaccuracy",
-        "surfeit",
-    }.issubset(df.columns)
+    _assert_common_result_frame(df)
+    for forbidden in [
+        "hidden_layer_sizes",
+        "var_smoothing",
+        "ccp_alpha",
+        "solver",
+        "alpha",
+        "converged",
+    ]:
+        assert forbidden not in df.columns
     assert df["nescience"].is_monotonic_increasing
+    assert df.iloc[0]["candidate"] == reg.best_candidate_name_
 
 
 def test_explicit_candidates_are_accepted_as_comparison_candidates(regression_data):
@@ -132,7 +168,7 @@ def test_explicit_candidates_are_accepted_as_comparison_candidates(regression_da
 
     df = reg.results_dataframe()
     assert set(candidates).issubset(set(df["candidate"]))
-    assert {"internal", "explicit"}.issubset(set(df["candidate_source"]))
+    assert "candidate_source" not in df.columns
 
 
 def test_explicit_ensemble_candidate_is_rejected_by_static_adapter(
@@ -171,7 +207,6 @@ def test_plain_estimator_sequence_gets_generated_names(regression_data):
     assert any(
         result.name.startswith("LinearRegression_")
         for result in reg.results_
-        if result.metadata["candidate_source"] == "explicit"
     )
 
 
@@ -224,10 +259,7 @@ def test_dataframe_feature_names_are_preserved(regression_data):
 
     assert list(reg.feature_names_in_) == list(X_df.columns)
     assert "feature_" not in reg.model_string()
-    assert set(reg.best_artifacts_.metadata["feature_reference_map"].values()).issubset(
-        set(X_df.columns)
-    )
-    assert reg.best_artifacts_.metadata["feature_reference_map"]
+    assert not hasattr(reg.best_artifacts_, "metadata")
 
 
 def test_no_weights_parameter_and_sklearn_clone_support():

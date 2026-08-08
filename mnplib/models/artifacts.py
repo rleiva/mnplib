@@ -8,8 +8,8 @@ the library and is not exposed as a user preference.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, Literal
+from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
@@ -31,17 +31,12 @@ class ModelArtifacts:
 
     model_type : str
         Name of the estimator class.
-
-    metadata : dict, default={}
-        Optional model-specific diagnostics. The metric classes do not depend
-        on this field; it is provided for reporting and debugging.
     """
 
     subset       : list[int]
     predictions  : np.ndarray
     model_string : str
     model_type   : str
-    metadata     : dict[str, Any] = field(default_factory=dict)
 
     def to_nescience_kwargs(self) -> dict[str, Any]:
         """

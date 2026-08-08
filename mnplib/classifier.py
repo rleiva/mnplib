@@ -96,6 +96,7 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
     def __init__(
         self,
         models               : Sequence[str] | None = None,
+        candidates           = None,
         X_type               : XType = "numeric",
         aggregation          : Aggregation = "euclidean",
         n_bins               : BinSpec = "auto",
@@ -108,6 +109,7 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
         verbose              : int = 0,
     ):
         self.models                     = models
+        self.candidates                 = candidates
         self.X_type                     = X_type
         self.aggregation                = aggregation
         self.n_bins                     = n_bins
@@ -140,11 +142,6 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
         # self.best_candidate_name_
         # self.classes_
         # self.is_fitted_
-
-        if hasattr(self.model_, "classes_"):
-            self.classes_ = np.asarray(self.model_.classes_)
-
-        self.is_fitted_ = True
 
     def fit(self, X, y):
         """
@@ -271,7 +268,7 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
         explanation["candidate_name"] = self.best_candidate_name_
         explanation["model_type"]     = self.best_artifacts_.model_type
         explanation["model_family"]   = self.best_result_.family
-        explanation["model_metadata"] = self.best_artifacts_.metadata
+        explanation["hyperparameters"] = dict(self.best_result_.hyperparameters)
 
         return explanation
 
@@ -302,6 +299,13 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
         """
         Validate and normalize selected internal model-family names.
         """
+        if self.candidates is not None:
+            raise ValueError(
+                "NescienceClassifier does not accept arbitrary candidate "
+                "estimators; use the models parameter to select supported "
+                "internal model families."
+            )
+
         if self.models is None:
             return list(SUPPORTED_MODELS)
 
@@ -413,60 +417,31 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
         """
         Convert one candidate result into a diagnostics-table row.
         """
-        metadata = dict(result.metadata)
         description_length = int(
-            metadata.get(
-                "description_length",
-                len(result.artifacts.model_string.encode("utf-8")),
-            )
+            len(result.artifacts.model_string.encode("utf-8"))
+        )
+        n_selected_features = (
+            int(result.n_selected_features)
+            if result.n_selected_features is not None
+            else int(len(result.artifacts.subset))
         )
         row = {
             "candidate"                : result.name,
-            "model_family"             : result.family,
+            "family"                  : result.family,
             "model_type"               : result.artifacts.model_type,
-            "searched_hyperparameters" : self._searched_hyperparameters(metadata),
+            "hyperparameters"          : dict(result.hyperparameters),
             "nescience"                : float(result.nescience),
+            "deficiency"               : float(result.components["deficiency"]),
+            "surplus"                  : float(result.components["surplus"]),
+            "inaccuracy"               : float(result.components["inaccuracy"]),
+            "surfeit"                  : float(result.components["surfeit"]),
             "native_estimator_score"   : result.estimator_score,
-            "estimator_score"          : result.estimator_score,
             "selected_features"        : list(result.artifacts.subset),
-            "n_features_in_use"        : int(len(result.artifacts.subset)),
-            "n_features_used"          : int(
-                metadata.get("n_features_used", len(result.artifacts.subset))
-            ),
-            "model_description_length" : description_length,
-            "support_level"            : metadata.get("support_level"),
+            "n_selected_features"      : n_selected_features,
+            "description_length"       : description_length,
         }
-        row.update(result.components)
-
-        for key, value in metadata.items():
-            if key not in row:
-                row[key] = value
 
         return row
-
-    @staticmethod
-    def _searched_hyperparameters(metadata: Mapping[str, object]) -> dict[str, object]:
-        """
-        Extract common hyperparameters from candidate metadata.
-        """
-        keys = {
-            "ccp_alpha",
-            "C",
-            "epsilon",
-            "alpha",
-            "var_smoothing",
-            "penalty",
-            "solver",
-            "hidden_layer_sizes",
-            "activation",
-            "max_iter",
-            "tol",
-        }
-        return {
-            key: metadata[key]
-            for key in sorted(keys)
-            if key in metadata
-        }
 
     @staticmethod
     def _print_result(result: CandidateResult) -> None:
@@ -488,3 +463,6 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
 
         n_features = int(getattr(X, "shape")[1])
         return [f"X{i}" for i in range(n_features)]
+
+
+Classifier = NescienceClassifier

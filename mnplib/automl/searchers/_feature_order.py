@@ -40,7 +40,7 @@ def miscoding_feature_order(miscoding, n_features: int) -> tuple[list[int], dict
 
 def feature_mask(indices, n_features: int) -> list[int]:
     """
-    Return a binary mask for reporting selected features.
+    Return a binary mask for selected features.
     """
     mask = np.zeros(int(n_features), dtype=int)
     mask[list(indices)] = 1
