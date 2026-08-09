@@ -368,8 +368,8 @@ def test_feature_indices_control_compact_tokens_for_selected_adapter_data():
         feature_indices=selected,
     )
 
-    assert "X2" in artifacts.model_string
-    assert "X0" in artifacts.model_string
+    assert "x[2]" in artifacts.model_string
+    assert "x[0]" in artifacts.model_string
     assert "third" not in artifacts.model_string
     assert not hasattr(artifacts, "metadata")
 
@@ -383,7 +383,7 @@ def test_real_values_are_formatted_canonically_in_model_strings():
     )
 
     assert expected_intercept in artifacts.model_string
-    assert re.search(r"\bX\d+\b", artifacts.model_string)
+    assert re.search(r"x\[\d+\]", artifacts.model_string)
     assert not re.search(r"\d+\.\d{4,}", artifacts.model_string)
 
 

@@ -113,16 +113,20 @@ def linear_regression_rule_lines(
     coef = np.asarray(model.coef_, dtype=float)
     intercept = np.asarray(model.intercept_, dtype=float)
     indent = " "
+    lines: list[str] = ["def predict(x):"]
 
     if coef.ndim == 1:
-        return single_output_linear_rule(
-            output_name="y",
-            intercept=float(intercept.reshape(-1)[0]),
-            coefficients=coef,
-            feature_names=feature_names,
-        ) + [f"{indent}return y"]
+        lines.extend(
+            single_output_linear_rule(
+                output_name="y",
+                intercept=float(intercept.reshape(-1)[0]),
+                coefficients=coef,
+                feature_names=feature_names,
+            )
+        )
+        lines.append(f"{indent}return y")
+        return lines
 
-    lines: list[str] = []
     intercept_values = intercept.reshape(-1)
 
     for output_index, coefficients in enumerate(coef):
@@ -163,11 +167,26 @@ def single_output_linear_rule(
 
         sign = "+=" if coefficient >= 0 else "-="
         magnitude = format_number(abs(coefficient))
+        feature_reference = _feature_reference(
+            feature_names[feature_index],
+            fallback_index=feature_index,
+        )
         lines.append(
-            f"{indent}{output_name} {sign} {magnitude}*{feature_names[feature_index]}"
+            f"{indent}{output_name} {sign} {magnitude}*{feature_reference}"
         )
 
     return lines
+
+
+def _feature_reference(feature_name: str, *, fallback_index: int) -> str:
+    """
+    Return an executable positional reference for a compact feature token.
+    """
+    text = str(feature_name)
+    if text.startswith("X") and text[1:].isdigit():
+        return f"x[{int(text[1:])}]"
+
+    return f"x[{int(fallback_index)}]"
 
 
 def logistic_regression_rule_lines(

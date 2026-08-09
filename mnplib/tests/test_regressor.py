@@ -13,13 +13,15 @@ import pytest
 
 from sklearn.base import clone
 from sklearn.datasets import make_regression
-from sklearn.dummy import DummyRegressor
-from sklearn.ensemble import RandomForestRegressor
 from sklearn.exceptions import NotFittedError
-from sklearn.linear_model import LinearRegression
 from sklearn.tree import DecisionTreeRegressor
 
-from mnplib.regressor import CandidateResult, NescienceRegressor, Regressor
+from mnplib.regressor import (
+    SUPPORTED_MODELS,
+    CandidateResult,
+    NescienceRegressor,
+    Regressor,
+)
 
 
 FAST_MLP = {"max_candidates": 1, "max_iter": 5, "initial_features": 1}
@@ -111,6 +113,97 @@ def _assert_candidate_model_description(description, result):
     assert isinstance(description["model_compressed_length"], int)
     assert description["model_compressed_length"] > 0
     assert description["surfeit"] == pytest.approx(result.components["surfeit"])
+
+
+def test_default_behavior_uses_all_supported_internal_model_families(
+    regression_data,
+):
+    X, y = regression_data
+
+    reg = NescienceRegressor(
+        n_bins=3,
+        random_state=42,
+        mlp_search_options=FAST_MLP,
+    ).fit(X, y)
+
+    assert reg.model_names_ == SUPPORTED_MODELS
+    assert [searcher.family for searcher in reg.searchers_] == [
+        "linear_regression",
+        "decision_tree_regressor",
+        "linear_svr",
+        "mlp_regressor",
+    ]
+    assert "candidate_source" not in reg.results_dataframe().columns
+
+
+def test_selecting_only_decision_tree_runs_only_tree_searcher(regression_data):
+    X, y = regression_data
+
+    reg = NescienceRegressor(
+        models=["decision_tree"],
+        n_bins=3,
+        random_state=42,
+    ).fit(X, y)
+
+    assert reg.model_names_ == ("decision_tree",)
+    assert [searcher.family for searcher in reg.searchers_] == [
+        "decision_tree_regressor",
+    ]
+    assert {result.family for result in reg.results_} == {
+        "decision_tree_regressor"
+    }
+
+
+def test_selected_models_preserve_user_order(regression_data):
+    X, y = regression_data
+
+    reg = NescienceRegressor(
+        models=["decision_tree", "linear_regression"],
+        n_bins=3,
+        random_state=42,
+    ).fit(X, y)
+
+    assert reg.model_names_ == ("decision_tree", "linear_regression")
+    assert [searcher.family for searcher in reg.searchers_] == [
+        "decision_tree_regressor",
+        "linear_regression",
+    ]
+    assert {result.family for result in reg.results_} == {
+        "decision_tree_regressor",
+        "linear_regression",
+    }
+
+
+def test_invalid_model_name_raises_clear_value_error(regression_data):
+    X, y = regression_data
+
+    with pytest.raises(ValueError, match="random_forest"):
+        NescienceRegressor(
+            models=["random_forest"],
+            n_bins=3,
+        ).fit(X, y)
+
+
+def test_arbitrary_candidate_mapping_is_rejected(regression_data):
+    X, y = regression_data
+
+    with pytest.raises(ValueError, match="does not accept arbitrary candidate"):
+        NescienceRegressor(
+            candidates={
+                "my_model": DecisionTreeRegressor(max_depth=2, random_state=42)
+            },
+            n_bins=3,
+        ).fit(X, y)
+
+
+def test_arbitrary_candidate_sequence_is_rejected(regression_data):
+    X, y = regression_data
+
+    with pytest.raises(ValueError, match="does not accept arbitrary candidate"):
+        NescienceRegressor(
+            candidates=[DecisionTreeRegressor(max_depth=2, random_state=42)],
+            n_bins=3,
+        ).fit(X, y)
 
 
 def test_fit_selects_minimum_nescience_candidate(regression_data):
@@ -220,102 +313,6 @@ def test_results_dataframe_has_expected_columns(regression_data):
         assert forbidden not in df.columns
     assert df["nescience"].is_monotonic_increasing
     assert df.iloc[0]["candidate"] == reg.best_candidate_name_
-
-
-def test_explicit_candidates_are_accepted_as_comparison_candidates(regression_data):
-    X, y = regression_data
-
-    candidates = {
-        "linear_explicit": LinearRegression(),
-        "tree_explicit": DecisionTreeRegressor(max_depth=2, random_state=42),
-    }
-    reg = NescienceRegressor(
-        candidates=candidates,
-        n_bins=3,
-        random_state=42,
-        mlp_search_options=FAST_MLP,
-    ).fit(X, y)
-
-    df = reg.results_dataframe()
-    assert set(candidates).issubset(set(df["candidate"]))
-    assert "candidate_source" not in df.columns
-
-
-def test_explicit_ensemble_candidate_is_rejected_by_static_adapter(
-    regression_data,
-):
-    X, y = regression_data
-
-    with pytest.raises(
-        ValueError,
-        match="Unsupported scikit-learn model type RandomForestRegressor",
-    ):
-        NescienceRegressor(
-            candidates={
-                "explicit_forest": RandomForestRegressor(
-                    n_estimators=3,
-                    max_depth=2,
-                    random_state=42,
-                )
-            },
-            n_bins=3,
-            random_state=42,
-            mlp_search_options=FAST_MLP,
-        ).fit(X, y)
-
-
-def test_plain_estimator_sequence_gets_generated_names(regression_data):
-    X, y = regression_data
-
-    reg = NescienceRegressor(
-        candidates=[LinearRegression()],
-        n_bins=3,
-        random_state=42,
-        mlp_search_options=FAST_MLP,
-    ).fit(X, y)
-
-    assert any(
-        result.name.startswith("LinearRegression_")
-        for result in reg.results_
-    )
-
-
-def test_empty_candidate_collection_raises_value_error(regression_data):
-    X, y = regression_data
-
-    with pytest.raises(ValueError, match="explicit candidate"):
-        NescienceRegressor(
-            candidates=[],
-            n_bins=3,
-            mlp_search_options=FAST_MLP,
-        ).fit(X, y)
-
-
-def test_profile_string_candidates_raise_value_error(regression_data):
-    X, y = regression_data
-
-    with pytest.raises(ValueError, match="profile strings"):
-        NescienceRegressor(
-            candidates="standard",
-            n_bins=3,
-            mlp_search_options=FAST_MLP,
-        ).fit(X, y)
-
-
-def test_unsupported_explicit_candidate_raises_clear_value_error(
-    regression_data,
-):
-    X, y = regression_data
-
-    with pytest.raises(
-        ValueError,
-        match="Unsupported scikit-learn model type DummyRegressor",
-    ):
-        NescienceRegressor(
-            candidates=[("dummy", DummyRegressor())],
-            n_bins=3,
-            mlp_search_options=FAST_MLP,
-        ).fit(X, y)
 
 
 def test_dataframe_feature_names_are_preserved(regression_data):

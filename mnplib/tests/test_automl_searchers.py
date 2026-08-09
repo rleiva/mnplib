@@ -23,11 +23,18 @@ from sklearn.tree import DecisionTreeClassifier
 from mnplib.automl import CandidateEvaluator
 from mnplib.automl.searchers import (
     DecisionTreePruningSearcher,
+    LinearSVRSearcher,
     SearchContext,
 )
-from mnplib.classifier import SUPPORTED_MODELS, NescienceClassifier
+from mnplib.classifier import (
+    SUPPORTED_MODELS as CLASSIFIER_SUPPORTED_MODELS,
+    NescienceClassifier,
+)
 from mnplib.nescience import Nescience
-from mnplib.regressor import NescienceRegressor
+from mnplib.regressor import (
+    SUPPORTED_MODELS as REGRESSOR_SUPPORTED_MODELS,
+    NescienceRegressor,
+)
 
 
 FAST_MLP = {
@@ -120,6 +127,7 @@ def _assert_common_result_frame(df):
     assert "n_input_features" not in df.columns
     assert "n_features_in_use" not in df.columns
     assert "n_features_used" not in df.columns
+    assert "model_string" not in df.columns
     assert df["hyperparameters"].map(
         lambda value: isinstance(value, dict)
     ).all()
@@ -146,12 +154,50 @@ def test_classifier_default_uses_all_supported_internal_model_families():
         mlp_search_options=FAST_MLP,
     ).fit(X, y)
 
-    assert clf.model_names_ == SUPPORTED_MODELS
+    assert clf.model_names_ == CLASSIFIER_SUPPORTED_MODELS
+
+
+def test_regressor_default_uses_all_supported_internal_model_families():
+    X, y = make_regression(
+        n_samples=40,
+        n_features=4,
+        n_informative=2,
+        random_state=42,
+    )
+
+    reg = NescienceRegressor(
+        n_bins=3,
+        random_state=42,
+        mlp_search_options=FAST_MLP,
+    ).fit(X, y)
+
+    assert reg.model_names_ == REGRESSOR_SUPPORTED_MODELS
 
 
 def test_weights_parameter_is_removed_from_automl_constructors():
     assert "weights" not in inspect.signature(NescienceClassifier).parameters
     assert "weights" not in inspect.signature(NescienceRegressor).parameters
+
+
+def test_regressor_exposes_classifier_parallel_public_methods():
+    public_methods = {
+        "fit",
+        "predict",
+        "score",
+        "nescience_score",
+        "components",
+        "explain",
+        "get_model",
+        "model_string",
+        "candidate_model_description",
+        "results_dataframe",
+    }
+
+    for method_name in public_methods:
+        assert callable(getattr(NescienceClassifier, method_name))
+        assert callable(getattr(NescienceRegressor, method_name))
+
+    assert not hasattr(NescienceRegressor, "predict_proba")
 
 
 def test_internal_classifier_searchers_are_nescience_guided_and_include_mlp():
@@ -253,25 +299,49 @@ def test_classifier_candidate_sequence_is_rejected():
         )._resolve_searchers()
 
 
-def test_regressor_candidate_mapping_is_accepted_for_comparison():
-    X, y = make_regression(
-        n_samples=50,
-        n_features=4,
-        n_informative=2,
-        random_state=42,
+def test_regressor_can_select_decision_tree_only():
+    reg = NescienceRegressor(models=["decision_tree"])
+
+    assert [searcher.family for searcher in reg._resolve_searchers()] == [
+        "decision_tree_regressor",
+    ]
+
+
+def test_regressor_can_select_decision_tree_and_linear_regression():
+    reg = NescienceRegressor(
+        models=["decision_tree", "linear_regression"],
     )
 
-    reg = NescienceRegressor(
-        candidates={
-            "linear_svr": LinearSVR(max_iter=10000, random_state=42),
-        },
-        n_bins=3,
-        random_state=42,
-        mlp_search_options=FAST_MLP,
-    ).fit(X, y)
+    assert [searcher.family for searcher in reg._resolve_searchers()] == [
+        "decision_tree_regressor",
+        "linear_regression",
+    ]
 
-    assert "linear_svr" in set(reg.results_dataframe()["candidate"])
-    assert "candidate_source" not in reg.results_dataframe().columns
+
+def test_regressor_rejects_single_model_string():
+    with pytest.raises((TypeError, ValueError), match="models"):
+        NescienceRegressor(models="decision_tree")._resolve_searchers()
+
+
+def test_regressor_invalid_model_name_raises_value_error():
+    with pytest.raises(ValueError, match="random_forest"):
+        NescienceRegressor(models=["random_forest"])._resolve_searchers()
+
+
+def test_regressor_candidate_mapping_is_rejected():
+    with pytest.raises(ValueError, match="arbitrary candidate"):
+        NescienceRegressor(
+            candidates={
+                "tree": DecisionTreeClassifier(max_depth=2, random_state=42),
+            },
+        )._resolve_searchers()
+
+
+def test_regressor_candidate_sequence_is_rejected():
+    with pytest.raises(ValueError, match="arbitrary candidate"):
+        NescienceRegressor(
+            candidates=[DecisionTreeClassifier(max_depth=2, random_state=42)],
+        )._resolve_searchers()
 
 
 def test_decision_tree_pruning_path_search_skips_duplicate_structures(monkeypatch):
@@ -404,6 +474,7 @@ def test_linear_svm_searchers_remain_internal_candidates():
         random_state=42,
     )
     reg = NescienceRegressor(
+        models=["linear_svr"],
         n_bins=3,
         random_state=42,
         mlp_search_options=FAST_MLP,
@@ -424,10 +495,40 @@ def test_linear_svm_searchers_remain_internal_candidates():
     assert svr_results
     assert all(isinstance(_base_estimator(result.model), LinearSVC) for result in svc_results)
     assert all(isinstance(_base_estimator(result.model), LinearSVR) for result in svr_results)
+    assert [
+        len(result.model.selected_features)
+        for result in svr_results
+    ] == [
+        1,
+        2,
+        3,
+        4,
+    ]
+    assert all(
+        result.name == f"linear_svr_prefix_{index}"
+        for index, result in enumerate(svr_results, start=1)
+    )
+    assert all(
+        result.hyperparameters == {
+            "C": 1.0,
+            "epsilon": 0.0,
+            "max_iter": 5000,
+            "tol": 1e-4,
+        }
+        for result in svr_results
+    )
     assert all(
         result.artifacts.model_string.startswith("def predict(x):")
         for result in svc_results + svr_results
     )
+
+
+def test_linear_svr_searcher_uses_fixed_prefix_policy():
+    parameters = inspect.signature(LinearSVRSearcher).parameters
+
+    assert "C_values" not in parameters
+    assert "epsilon_values" not in parameters
+    assert {"C", "epsilon", "max_iter", "tol"}.issubset(parameters)
 
 
 def test_naive_bayes_uses_gaussian_feature_prefixes_only():
@@ -560,7 +661,7 @@ def test_classifier_and_regressor_public_workflows_and_results_columns():
 
 
 def test_explicit_artifact_workflow_is_preserved(monkeypatch):
-    X, y = make_classification(
+    Xc, yc = make_classification(
         n_samples=50,
         n_features=4,
         n_informative=2,
@@ -588,7 +689,18 @@ def test_explicit_artifact_workflow_is_preserved(monkeypatch):
     NescienceClassifier(
         models=["decision_tree"],
         n_bins=3,
-    ).fit(X, y)
+    ).fit(Xc, yc)
+
+    Xr, yr = make_regression(
+        n_samples=50,
+        n_features=4,
+        n_informative=2,
+        random_state=42,
+    )
+    NescienceRegressor(
+        models=["linear_regression"],
+        n_bins=3,
+    ).fit(Xr, yr)
 
     assert calls
     assert all(
@@ -607,6 +719,7 @@ def test_no_train_test_split_or_cross_validation_inside_automl_source():
             "mnplib/regressor.py",
             "mnplib/automl/searchers/logistic.py",
             "mnplib/automl/searchers/linear_models.py",
+            "mnplib/automl/searchers/linear_svm.py",
             "mnplib/automl/searchers/neural_network.py",
         ]
         if (root / path).exists()

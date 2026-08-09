@@ -95,10 +95,9 @@ class LinearSVMSerializer(SklearnSerializer):
         """
         require_fitted(model)
 
-        del feature_names
-
         original_indices = self._original_feature_indices(
             model,
+            feature_names=feature_names,
             feature_indices=feature_indices,
         )
 
@@ -260,6 +259,7 @@ class LinearSVMSerializer(SklearnSerializer):
     def _original_feature_indices(
         model,
         *,
+        feature_names: list[str],
         feature_indices: Sequence[int] | None,
     ) -> tuple[int, ...]:
         """
@@ -273,7 +273,19 @@ class LinearSVMSerializer(SklearnSerializer):
         n_features = int(model.n_features_in_)
 
         if feature_indices is None:
-            return tuple(range(n_features))
+            if len(feature_names) != n_features:
+                raise ValueError(
+                    "feature_names must contain one token for each column used "
+                    "by the fitted Linear SVM estimator."
+                )
+
+            return tuple(
+                LinearSVMSerializer._feature_index_from_token(
+                    name,
+                    fallback_index=index,
+                )
+                for index, name in enumerate(feature_names)
+            )
 
         original_indices = tuple(int(index) for index in feature_indices)
 
@@ -284,3 +296,11 @@ class LinearSVMSerializer(SklearnSerializer):
             )
 
         return original_indices
+
+    @staticmethod
+    def _feature_index_from_token(name: str, *, fallback_index: int) -> int:
+        text = str(name)
+        if text.startswith("X") and text[1:].isdigit():
+            return int(text[1:])
+
+        return int(fallback_index)

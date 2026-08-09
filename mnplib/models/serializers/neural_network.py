@@ -91,12 +91,11 @@ class MLPSerializer(SklearnSerializer):
         """
         require_fitted(model)
 
-        del feature_names
-
         self._validate_supported_prediction_case(model)
 
         original_indices = self._original_feature_indices(
             model,
+            feature_names=feature_names,
             feature_indices=feature_indices,
         )
 
@@ -349,6 +348,7 @@ class MLPSerializer(SklearnSerializer):
     def _original_feature_indices(
         model,
         *,
+        feature_names: list[str],
         feature_indices: Sequence[int] | None,
     ) -> tuple[int, ...]:
         """
@@ -362,7 +362,19 @@ class MLPSerializer(SklearnSerializer):
         n_features = int(model.n_features_in_)
 
         if feature_indices is None:
-            return tuple(range(n_features))
+            if len(feature_names) != n_features:
+                raise ValueError(
+                    "feature_names must contain one token for each input "
+                    "column used by the fitted MLP estimator."
+                )
+
+            return tuple(
+                MLPSerializer._feature_index_from_token(
+                    name,
+                    fallback_index=index,
+                )
+                for index, name in enumerate(feature_names)
+            )
 
         original_indices = tuple(int(index) for index in feature_indices)
 
@@ -373,6 +385,14 @@ class MLPSerializer(SklearnSerializer):
             )
 
         return original_indices
+
+    @staticmethod
+    def _feature_index_from_token(name: str, *, fallback_index: int) -> int:
+        text = str(name)
+        if text.startswith("X") and text[1:].isdigit():
+            return int(text[1:])
+
+        return int(fallback_index)
 
     @staticmethod
     def _needs_exp_constant(model) -> bool:
