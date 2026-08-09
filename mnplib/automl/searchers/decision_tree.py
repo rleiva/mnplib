@@ -11,14 +11,14 @@ import numpy as np
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 
 from .base import ModelFamilySearcher, SearchContext, search_report
+from mnplib.utils import discretize_vector
 
 class DecisionTreePruningSearcher(ModelFamilySearcher):
     """
     Search a decision-tree family by evaluating pruning-path trees.
     """
 
-    def __init__(self, estimator_cls, *, alpha_tol: float = 1e-12,
-                 n_jobs: int | None = None, random_state: Any = None,):
+    def __init__(self, estimator_cls, *, n_jobs: int | None = None, random_state: Any = None,):
         
         if estimator_cls not in (DecisionTreeClassifier, DecisionTreeRegressor):
             raise TypeError(
@@ -27,7 +27,6 @@ class DecisionTreePruningSearcher(ModelFamilySearcher):
             )
 
         self.estimator_cls = estimator_cls
-        self.alpha_tol     = float(alpha_tol)
         self.n_jobs        = n_jobs
         self.random_state  = random_state
         self.family        = (
@@ -38,7 +37,7 @@ class DecisionTreePruningSearcher(ModelFamilySearcher):
 
     def search(self, context: SearchContext):
 
-        initial = self.estimator_cls(random_state=self.random_state,)
+        initial = self.estimator_cls(random_state=self.random_state, min_samples_leaf=5)
         initial.fit(context.X, context.y)
         pruning_path = initial.cost_complexity_pruning_path(context.X, context.y)
         alphas = self._unique_alphas(pruning_path.ccp_alphas)
@@ -78,25 +77,50 @@ class DecisionTreePruningSearcher(ModelFamilySearcher):
 
         return search_report(self.family, results, diagnostics)
 
+
     def _unique_alphas(self, alphas) -> list[float]:
+        """
+        Return representative pruning alphas.
 
-        values = sorted(float(alpha) for alpha in np.asarray(alphas, dtype=float))
-        unique: list[float] = []
+        The pruning path may contain thousands of effective ccp_alpha values.
+        This method reduces them by discretizing a scaled log-transformation of
+        the alpha distribution and selecting one original alpha per occupied bin.
+        """
+        values = np.asarray(alphas, dtype=float)
+        values = values[np.isfinite(values)]
+        values = values[values >= 0.0]
+        values = np.unique(values)
 
-        for alpha in values:
-            if not np.isfinite(alpha):
-                continue
-            if alpha < 0.0 and abs(alpha) <= self.alpha_tol:
-                alpha = 0.0
-            if not unique:
-                unique.append(alpha)
-                continue
+        if values.size == 0:
+            return []
 
-            scale = max(1.0, abs(unique[-1]), abs(alpha))
-            if abs(alpha - unique[-1]) > self.alpha_tol * scale:
-                unique.append(alpha)
+        positive = values[values > 0.0]
 
-        return unique
+        positive.sort()
+
+        if positive.size == 0:
+            return [0.0]
+
+        scale = float(positive.min())
+        transformed = np.log1p(values / scale)
+
+        bins = discretize_vector(transformed)
+
+        representatives: list[float] = []
+
+        for bin_id in np.unique(bins):
+            indices = np.flatnonzero(bins == bin_id)
+
+            bin_values = transformed[indices]
+            center = 0.5 * (bin_values.min() + bin_values.max())
+
+            representative_index = indices[
+                np.argmin(np.abs(transformed[indices] - center))
+            ]
+
+            representatives.append(float(values[representative_index]))
+
+        return sorted(set(representatives))
 
     @staticmethod
     def _tree_structure_signature(model) -> tuple:

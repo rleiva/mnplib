@@ -83,9 +83,6 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
 
     random_state : int, RandomState instance, or None, default=None
         Random state forwarded to stochastic searchers and estimators.
-    alpha_tol : float, default=1e-12
-        Tolerance used to collapse nearly duplicate cost-complexity pruning
-        alphas.
     logistic_max_iter : int, default=1000
         Maximum iterations for logistic-regression candidates.
     mlp_search_options : mapping or None, default=None
@@ -104,7 +101,6 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
         threshold_fraction   : float = 0.01,
         surplus_penalty      : float = 1.0,
         random_state         = None,
-        alpha_tol            : float = 1e-12,
         logistic_max_iter    : int = 1000,
         mlp_search_options   : Mapping[str, object] | None = None,
         verbose              : int = 0,
@@ -117,7 +113,6 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
         self.threshold_fraction         = threshold_fraction
         self.surplus_penalty            = surplus_penalty
         self.random_state               = random_state
-        self.alpha_tol                  = alpha_tol
         self.logistic_max_iter          = logistic_max_iter
         self.mlp_search_options         = mlp_search_options
         self.verbose                    = verbose
@@ -378,7 +373,6 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
         if name == "decision_tree":
             return DecisionTreePruningSearcher(
                 DecisionTreeClassifier,
-                alpha_tol    = self.alpha_tol,
                 random_state = self.random_state,
             )
 

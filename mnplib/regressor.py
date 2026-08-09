@@ -83,9 +83,6 @@ class NescienceRegressor(BaseEstimator, RegressorMixin):
         Estimated zlib wrapper overhead forwarded to the surfeit component.
     random_state : int, RandomState instance, or None, default=None
         Random state forwarded to stochastic searchers and estimators.
-    alpha_tol : float, default=1e-12
-        Tolerance used to collapse nearly duplicate cost-complexity pruning
-        alphas.
     n_jobs : int or None, default=None
         Parallelism hint forwarded to searchers that support it.
     feature_patience : int or None, default=None
@@ -109,7 +106,6 @@ class NescienceRegressor(BaseEstimator, RegressorMixin):
         zlib_level: int = 9,
         zlib_overhead: int = 6,
         random_state=None,
-        alpha_tol: float = 1e-12,
         n_jobs: int | None = None,
         feature_patience: int | None = None,
         mlp_search_options: Mapping[str, object] | None = None,
@@ -125,7 +121,6 @@ class NescienceRegressor(BaseEstimator, RegressorMixin):
         self.zlib_level = zlib_level
         self.zlib_overhead = zlib_overhead
         self.random_state = random_state
-        self.alpha_tol = alpha_tol
         self.n_jobs = n_jobs
         self.feature_patience = feature_patience
         self.mlp_search_options = mlp_search_options
@@ -135,8 +130,8 @@ class NescienceRegressor(BaseEstimator, RegressorMixin):
         """
         Fit selected internal searchers and choose minimum nescience.
         """
-        model_names = self._resolve_model_names()
-        feature_names = self._resolve_input_feature_names(X)
+        model_names          = self._resolve_model_names()
+        feature_names        = self._resolve_input_feature_names(X)
         X_checked, y_checked = check_X_y(X, y, dtype=None, ensure_2d=True)
 
         self.X_ = X_checked
@@ -163,9 +158,9 @@ class NescienceRegressor(BaseEstimator, RegressorMixin):
             nescience=self.nescience_,
             feature_names=list(self.feature_names_in_),
         )
-        self.results_ = []
+        self.results_     = []
         self.diagnostics_ = []
-        self.searchers_ = self._resolve_searchers(model_names)
+        self.searchers_   = self._resolve_searchers(model_names)
         self._fit_searchers()
 
         if not self.results_:
@@ -336,7 +331,6 @@ class NescienceRegressor(BaseEstimator, RegressorMixin):
         if name == "decision_tree":
             return DecisionTreePruningSearcher(
                 DecisionTreeRegressor,
-                alpha_tol=self.alpha_tol,
                 n_jobs=self.n_jobs,
                 random_state=self.random_state,
             )

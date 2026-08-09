@@ -106,15 +106,12 @@ X, y = make_regression(
     random_state=42,
 )
 
-model = NescienceRegressor(
-    n_bins=3,
-    random_state=42,
-)
+model = NescienceRegressor()
 
 model.fit(X, y)
 
-print(model.predict(X[:5]))
-print(model.nescience_score())
+print(model.predict(X))
+print(model.score())
 print(model.components())
 ```
 
