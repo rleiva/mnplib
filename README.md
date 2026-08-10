@@ -111,7 +111,7 @@ model = NescienceRegressor()
 model.fit(X, y)
 
 print(model.predict(X))
-print(model.score())
+print(model.score(X, y))
 print(model.components())
 ```
 

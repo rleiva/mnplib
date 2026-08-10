@@ -1,11 +1,8 @@
-# Contributors
+# Past Contributors
 
  * Antonio Fernandez <antonio.fernandez@imdea.org>
  * Vincenzo Mancuso <vincenzo.mancuso@imdea.org>
  * Simon Bihoreau <simon.bihoreau@ensta-paris.fr>
-
-# Past Contributors
-
  * Paolo Casari <paolo.casari@imdea.org>
  * Mattis Choummanivong <mattis.choummanivong@ensta-paris.fr>
  * Alexander Lynch <alexander.lynch97@gmail.com>
