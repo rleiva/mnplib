@@ -334,12 +334,8 @@ class Miscoding(BaseEstimator):
     # Greedy feature selection
     #
 
-    def select_features(
-        self,
-        *,
-        max_features: int | None = None,
-        min_improvement: float | None = None,
-        return_details: bool = False,
+    def select_features(self, *, max_features: int | None = None,
+                        min_improvement: float | None = None, return_details: bool = False,
     ):
         """
         Select features by greedy redundancy-penalized aggregation.
@@ -347,7 +343,7 @@ class Miscoding(BaseEstimator):
         At each step, the method evaluates every candidate feature not yet
         selected and adds the feature that produces the largest reduction in
         subset miscoding. The subset score is computed with the same
-        redundancy-discounted aggregation used by :meth:`miscoding_subset`.
+        redundancy-discounted aggregation used by `miscoding_subset`.
 
         Parameters
         ----------
@@ -372,27 +368,26 @@ class Miscoding(BaseEstimator):
         """
         check_is_fitted(self)
 
-        improvement_threshold = (
-            self.min_improvement
-            if min_improvement is None
-            else float(min_improvement)
-        )
+        improvement_threshold = (self.min_improvement if min_improvement is None
+                                 else float(min_improvement))
         if improvement_threshold < 0:
             raise ValueError("min_improvement must be non-negative.")
 
-        max_features = (
-            self.n_features_in_
-            if max_features is None
-            else min(int(max_features), self.n_features_in_)
+        max_features = (self.n_features_in_ if max_features is None
+                        else min(int(max_features), self.n_features_in_)
         )
         if max_features < 0:
             raise ValueError("max_features must be non-negative.")
 
-        selected: list[int] = []
-        path: list[dict[str, object]] = []
-        current = self._subset_measures(selected)
+        selected : list[int] = []
+        path     : list[dict[str, object]] = []
+        current  = self._subset_measures(selected)
 
         while len(selected) < max_features:
+
+            # TODO: Remove
+            print("Selected:", selected)
+
             candidates = self._selection_candidates(selected, current["miscoding"])
             if candidates.empty:
                 break
@@ -409,15 +404,15 @@ class Miscoding(BaseEstimator):
 
             path.append(
                 {
-                    "step": len(path) + 1,
+                    "step":          len(path) + 1,
                     "feature_index": feature,
-                    "feature_name": str(self.feature_names_in_[feature]),
-                    "deficiency": current["deficiency"],
-                    "surplus": current["surplus"],
-                    "miscoding": current["miscoding"],
-                    "improvement": improvement,
+                    "feature_name":  str(self.feature_names_in_[feature]),
+                    "deficiency":    current["deficiency"],
+                    "surplus":       current["surplus"],
+                    "miscoding":     current["miscoding"],
+                    "improvement":   improvement,
                     "selected_feature_indices": tuple(selected),
-                    "selected_feature_names": tuple(
+                    "selected_feature_names":   tuple(
                         str(self.feature_names_in_[j]) for j in selected
                     ),
                 }
@@ -430,17 +425,14 @@ class Miscoding(BaseEstimator):
             return mask
 
         return {
-            "selected_features": mask,
-            "selected_feature_indices": selected,
-            "selected_feature_names": [
-                str(self.feature_names_in_[j])
-                for j in selected
-            ],
-            "min_improvement": float(improvement_threshold),
-            "path": pd.DataFrame(path),
-            "subset": self._subset_measures(selected),
-            "features": self.feature_analysis(),
-            "redundancy": self.feature_redundancy(),
+            "selected_features"        : mask,
+            "selected_feature_indices" : selected,
+            "selected_feature_names"   : [str(self.feature_names_in_[j]) for j in selected],
+            "min_improvement"          : float(improvement_threshold),
+            "path"                     : pd.DataFrame(path),
+            "subset"                   : self._subset_measures(selected),
+            "features"                 : self.feature_analysis(),
+            "redundancy"               : self.feature_redundancy(),
         }
 
     #
@@ -657,13 +649,15 @@ class Miscoding(BaseEstimator):
         matrix = self.redundancy_[np.ix_(selected, selected)]
         off_diagonal_sum = np.sum(matrix, axis=1) - np.diag(matrix)
         return 1.0 / (1.0 + off_diagonal_sum)
+    
 
     def _subset_measures(self, subset) -> dict[str, object]:
         """
         Compute redundancy-discounted deficiency, surplus, and miscoding for a
         selected feature subset.
         """
-        selected = self._selected_indices(subset)
+
+        selected = self._normalize_indices(subset)
 
         mask = np.zeros(self.n_features_in_, dtype=int)
         mask[selected] = 1
@@ -671,59 +665,47 @@ class Miscoding(BaseEstimator):
         if len(selected) == 0:
             deficiency = 0.0 if self.target_code_length_ <= 0.0 else 1.0
             return {
-                "deficiency": deficiency,
-                "surplus": 0.0,
-                "miscoding": deficiency,
-                "features_in_use": mask,
-                "n_selected_features": 0,
-                "selected_feature_indices": [],
-                "selected_feature_names": [],
-                "redundancy_weights": np.array([], dtype=float),
-                "feature_weights": np.array([], dtype=float),
+                "deficiency"               : deficiency,
+                "surplus"                  : 0.0,
+                "miscoding"                : deficiency,
+                "features_in_use"          : mask,
+                "n_selected_features"      : 0,
+                "selected_feature_indices" : [],
+                "selected_feature_names"   : [],
+                "redundancy_weights"       : np.array([], dtype=float),
+                "feature_weights"          : np.array([], dtype=float),
             }
 
-        selected_array = np.asarray(selected, dtype=int)
-        alpha = self._redundancy_weights(selected)
+        selected_array  = np.asarray(selected, dtype=int)
+        alpha           = self._redundancy_weights(selected)
         feature_lengths = self.feature_code_lengths_[selected_array]
 
         deficiency_values = np.clip(self.deficiency_[selected_array], 0.0, 1.0)
-        surplus_values = np.clip(self.surplus_[selected_array], 0.0, 1.0)
+        surplus_values    = np.clip(self.surplus_[selected_array], 0.0, 1.0)
 
-        deficiency = float(
-            np.prod(np.power(deficiency_values, alpha))
-        )
+        deficiency = float(np.prod(np.power(deficiency_values, alpha)))
 
         feature_weights = alpha * feature_lengths
-        weight_sum = float(np.sum(feature_weights))
-        surplus = (
-            0.0
-            if weight_sum <= 0.0
-            else float(np.sum(feature_weights * surplus_values) / weight_sum)
-        )
+        weight_sum      = float(np.sum(feature_weights))
+        surplus         = (0.0 if weight_sum <= 0.0
+                           else float(np.sum(feature_weights * surplus_values) / weight_sum))
 
         deficiency = float(np.clip(deficiency, 0.0, 1.0))
-        surplus = float(np.clip(surplus, 0.0, 1.0))
+        surplus    = float(np.clip(surplus, 0.0, 1.0))
 
         return {
-            "deficiency": deficiency,
-            "surplus": surplus,
-            "miscoding": max(deficiency, surplus),
-            "features_in_use": mask,
-            "n_selected_features": int(np.sum(mask)),
-            "selected_feature_indices": selected,
-            "selected_feature_names": [
-                str(self.feature_names_in_[j])
-                for j in selected
-            ],
-            "redundancy_weights": alpha,
-            "feature_weights": feature_weights,
+            "deficiency"               : deficiency,
+            "surplus"                  : surplus,
+            "miscoding"                : max(deficiency, surplus),
+            "features_in_use"          : mask,
+            "n_selected_features"      : int(np.sum(mask)),
+            "selected_feature_indices" : selected,
+            "selected_feature_names"   : [str(self.feature_names_in_[j]) for j in selected],
+            "redundancy_weights"       : alpha,
+            "feature_weights"          : feature_weights,
         }
 
-    def _selection_candidates(
-        self,
-        selected: list[int],
-        current_miscoding: float,
-    ) -> pd.DataFrame:
+    def _selection_candidates(self, selected: list[int], current_miscoding: float) -> pd.DataFrame:
         """
         Evaluate all candidate features for the next greedy selection step.
         """
@@ -731,24 +713,23 @@ class Miscoding(BaseEstimator):
         rows: list[dict[str, object]] = []
 
         for feature in range(self.n_features_in_):
+
             if feature in selected_set:
                 continue
 
             candidate_subset = selected + [feature]
-            values = self._subset_measures(candidate_subset)
-            improvement = current_miscoding - float(values["miscoding"])
+            values           = self._subset_measures(candidate_subset)
+            improvement      = current_miscoding - float(values["miscoding"])
 
-            rows.append(
-                {
-                    "feature_index": feature,
-                    "feature_name": str(self.feature_names_in_[feature]),
-                    "deficiency": float(values["deficiency"]),
-                    "surplus": float(values["surplus"]),
-                    "miscoding": float(values["miscoding"]),
-                    "improvement": float(improvement),
-                    "candidate_subset": tuple(candidate_subset),
-                }
-            )
+            rows.append({
+                "feature_index"    : feature,
+                "feature_name"     : str(self.feature_names_in_[feature]),
+                "deficiency"       : float(values["deficiency"]),
+                "surplus"          : float(values["surplus"]),
+                "miscoding"        : float(values["miscoding"]),
+                "improvement"      : float(improvement),
+                "candidate_subset" : tuple(candidate_subset),
+            })
 
         if not rows:
             return pd.DataFrame(
@@ -773,10 +754,11 @@ class Miscoding(BaseEstimator):
     # Index handling and numerical helpers
     #
 
-    def _selected_indices(self, selected) -> list[int]:
+    def _normalize_indices(self, selected) -> list[int]:
         """
         Normalize a binary mask or index list into validated feature indices.
         """
+
         if selected is None:
             return []
 
