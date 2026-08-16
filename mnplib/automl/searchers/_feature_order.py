@@ -7,33 +7,25 @@ from __future__ import annotations
 import numpy as np
 
 
-def miscoding_feature_order(miscoding, n_features: int) -> tuple[list[int], dict]:
+def miscoding_feature_order(
+    miscoding,
+    n_features: int,
+    *,
+    criterion: str = "deficiency",
+    max_features: int | None = None,
+) -> tuple[list[int], dict]:
     """
-    Return a full feature order seeded by ``Miscoding.select_features()``.
+    Return a miscoding-guided feature order for AutoML prefix search.
     """
-    details = miscoding.select_features(
-        max_features=n_features,
-        min_improvement=0.0,
+    limit = n_features if max_features is None else min(int(max_features), n_features)
+    details = miscoding.rank_features(
+        max_features=limit,
+        criterion=criterion,
         return_details=True,
     )
 
-    selected = [int(index) for index in details["selected_feature_indices"]]
-    selected_set = set(selected)
-
-    analysis = details["features"]
-    remaining = [
-        int(row.feature_index)
-        for row in analysis.itertuples(index=False)
-        if int(row.feature_index) not in selected_set
-    ]
-
-    order = selected + remaining
-    if len(order) != n_features:
-        present = set(order)
-        order.extend(index for index in range(n_features) if index not in present)
-
+    order = [int(index) for index in details["feature_order"]]
     details = dict(details)
-    details["feature_order"] = order
 
     return order, details
 

@@ -78,6 +78,11 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
     surplus_penalty : float, default=1.0
         Surplus penalty parameter forwarded to the underlying nescience
         machinery.
+    feature_ranking_criterion : {"deficiency", "miscoding"}, default="deficiency"
+        Criterion used to rank features for model-family prefix search.
+    max_feature_prefixes : int or None, default=None
+        Maximum number of ranked feature prefixes evaluated by searchers. If
+        ``None``, every feature can appear in the prefix sequence.
     The canonical model string is fixed by the library because it contributes
     directly to surfeit and therefore to nescience.
 
@@ -100,6 +105,8 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
         n_bins               : BinSpec = "auto",
         threshold_fraction   : float = 0.01,
         surplus_penalty      : float = 1.0,
+        feature_ranking_criterion : str = "deficiency",
+        max_feature_prefixes : int | None = None,
         random_state         = None,
         logistic_max_iter    : int = 1000,
         mlp_search_options   : Mapping[str, object] | None = None,
@@ -112,6 +119,8 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
         self.n_bins                     = n_bins
         self.threshold_fraction         = threshold_fraction
         self.surplus_penalty            = surplus_penalty
+        self.feature_ranking_criterion  = feature_ranking_criterion
+        self.max_feature_prefixes       = max_feature_prefixes
         self.random_state               = random_state
         self.logistic_max_iter          = logistic_max_iter
         self.mlp_search_options         = mlp_search_options
@@ -413,6 +422,8 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
             task          = "classification",
             random_state  = self.random_state,
             verbose       = self.verbose,
+            feature_ranking_criterion = self.feature_ranking_criterion,
+            max_feature_prefixes      = self.max_feature_prefixes,
         )
 
         for searcher in self.searchers_:

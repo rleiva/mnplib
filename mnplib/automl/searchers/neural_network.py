@@ -67,8 +67,23 @@ class _BaseMLPSearch(ModelFamilySearcher):
         order, _ = miscoding_feature_order(
             context.evaluator.nescience.miscoding_,
             context.X.shape[1],
+            criterion=context.feature_ranking_criterion,
+            max_features=context.max_feature_prefixes,
         )
+        if not order:
+            return search_report(
+                self.family,
+                results=[],
+                diagnostics=[
+                    {
+                        "family": self.family,
+                        "reason": "empty_feature_order",
+                    }
+                ],
+            )
+
         max_features = self._resolve_max_features(context.X.shape[1])
+        max_features = min(max_features, len(order))
         initial_n_features = min(
             max(1, self.initial_features),
             max_features,

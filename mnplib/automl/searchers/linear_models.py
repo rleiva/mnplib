@@ -26,6 +26,8 @@ class LinearRegressionPrefixSearcher(ModelFamilySearcher):
         order, _ = miscoding_feature_order(
             context.evaluator.nescience.miscoding_,
             context.X.shape[1],
+            criterion=context.feature_ranking_criterion,
+            max_features=context.max_feature_prefixes,
         )
 
         results = []

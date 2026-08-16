@@ -62,6 +62,8 @@ class NaiveBayesSearcher(ModelFamilySearcher):
         order, _ = miscoding_feature_order(
             context.evaluator.nescience.miscoding_,
             context.X.shape[1],
+            criterion=context.feature_ranking_criterion,
+            max_features=context.max_feature_prefixes,
         )
 
         order = tuple(int(index) for index in order)

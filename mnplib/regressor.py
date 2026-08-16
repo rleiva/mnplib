@@ -77,6 +77,11 @@ class NescienceRegressor(BaseEstimator, RegressorMixin):
     surplus_penalty : float, default=1.0
         Surplus penalty parameter forwarded to the underlying nescience
         machinery.
+    feature_ranking_criterion : {"deficiency", "miscoding"}, default="deficiency"
+        Criterion used to rank features for model-family prefix search.
+    max_feature_prefixes : int or None, default=None
+        Maximum number of ranked feature prefixes evaluated by searchers. If
+        ``None``, every feature can appear in the prefix sequence.
     zlib_level : int, default=9
         Compression level forwarded to the surfeit component.
     zlib_overhead : int, default=6
@@ -103,6 +108,8 @@ class NescienceRegressor(BaseEstimator, RegressorMixin):
         n_bins: BinSpec = "auto",
         threshold_fraction: float = 0.01,
         surplus_penalty: float = 1.0,
+        feature_ranking_criterion: str = "deficiency",
+        max_feature_prefixes: int | None = None,
         zlib_level: int = 9,
         zlib_overhead: int = 6,
         random_state=None,
@@ -118,6 +125,8 @@ class NescienceRegressor(BaseEstimator, RegressorMixin):
         self.n_bins = n_bins
         self.threshold_fraction = threshold_fraction
         self.surplus_penalty = surplus_penalty
+        self.feature_ranking_criterion = feature_ranking_criterion
+        self.max_feature_prefixes = max_feature_prefixes
         self.zlib_level = zlib_level
         self.zlib_overhead = zlib_overhead
         self.random_state = random_state
@@ -357,6 +366,8 @@ class NescienceRegressor(BaseEstimator, RegressorMixin):
             task="regression",
             random_state=self.random_state,
             verbose=self.verbose,
+            feature_ranking_criterion=self.feature_ranking_criterion,
+            max_feature_prefixes=self.max_feature_prefixes,
         )
 
         for searcher in self.searchers_:

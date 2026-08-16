@@ -35,6 +35,7 @@ XType = Literal["auto", "numeric", "categorical"]
 YType = Literal["auto", "numeric", "categorical"]
 BinSpec = int | Literal["auto"]
 SubsetMode = Literal["deficiency", "surplus", "miscoding"]
+RankingCriterion = Literal["deficiency", "miscoding"]
 
 
 class Miscoding(BaseEstimator):
@@ -61,14 +62,15 @@ class Miscoding(BaseEstimator):
     the individual feature surpluses. Subset miscoding is the maximum of the
     aggregated deficiency and surplus.
 
-    Feature selection is performed greedily. At each step, the estimator adds
-    the feature whose inclusion produces the largest reduction in subset
-    miscoding according to the same redundancy-discounted aggregation.
+    ``select_features()`` greedily selects a strict subset by requiring subset
+    miscoding improvement. ``rank_features()`` greedily orders features for
+    model construction and continues after subset miscoding stops improving.
     """
 
     _VALID_X_TYPES = ("auto", "numeric", "categorical")
     _VALID_Y_TYPES = ("auto", "numeric", "categorical")
     _VALID_SUBSET_MODES = ("deficiency", "surplus", "miscoding")
+    _VALID_RANKING_CRITERIA = ("deficiency", "miscoding")
 
     def __init__(
         self,
@@ -331,19 +333,19 @@ class Miscoding(BaseEstimator):
         return self._subset_measures(subset)
 
     #
-    # Greedy feature selection
+    # Feature selection and ordering
     #
 
     def select_features(self, *, max_features: int | None = None,
                         min_improvement: float | None = None, return_details: bool = False,
     ):
         """
-        Select features by greedy redundancy-penalized aggregation.
+        Select features by strict subset-miscoding improvement.
 
         At each step, the method evaluates every candidate feature not yet
-        selected and adds the feature that produces the largest reduction in
-        subset miscoding. The subset score is computed with the same
-        redundancy-discounted aggregation used by `miscoding_subset`.
+        selected and adds the feature that produces the lowest subset miscoding.
+        Selection stops when the best candidate does not reduce subset
+        miscoding by more than ``min_improvement``.
 
         Parameters
         ----------
@@ -373,11 +375,7 @@ class Miscoding(BaseEstimator):
         if improvement_threshold < 0:
             raise ValueError("min_improvement must be non-negative.")
 
-        max_features = (self.n_features_in_ if max_features is None
-                        else min(int(max_features), self.n_features_in_)
-        )
-        if max_features < 0:
-            raise ValueError("max_features must be non-negative.")
+        max_features = self._validate_max_features(max_features)
 
         selected : list[int] = []
         path     : list[dict[str, object]] = []
@@ -385,15 +383,15 @@ class Miscoding(BaseEstimator):
 
         while len(selected) < max_features:
 
-            # TODO: Remove
-            print("Selected:", selected)
-
-            candidates = self._selection_candidates(selected, current["miscoding"])
+            candidates = self._sort_candidates(
+                self._candidate_extensions(selected, current),
+                criterion="miscoding",
+            )
             if candidates.empty:
                 break
 
             best = candidates.iloc[0]
-            improvement = float(best["improvement"])
+            improvement = float(best["miscoding_improvement"])
 
             if improvement <= improvement_threshold:
                 break
@@ -404,15 +402,18 @@ class Miscoding(BaseEstimator):
 
             path.append(
                 {
-                    "step":          len(path) + 1,
+                    "step": len(path) + 1,
                     "feature_index": feature,
-                    "feature_name":  str(self.feature_names_in_[feature]),
-                    "deficiency":    current["deficiency"],
-                    "surplus":       current["surplus"],
-                    "miscoding":     current["miscoding"],
-                    "improvement":   improvement,
+                    "feature_name": str(self.feature_names_in_[feature]),
+                    "deficiency": float(current["deficiency"]),
+                    "surplus": float(current["surplus"]),
+                    "miscoding": float(current["miscoding"]),
+                    "deficiency_improvement": float(best["deficiency_improvement"]),
+                    "surplus_change": float(best["surplus_change"]),
+                    "miscoding_improvement": improvement,
+                    "improvement": improvement,
                     "selected_feature_indices": tuple(selected),
-                    "selected_feature_names":   tuple(
+                    "selected_feature_names": tuple(
                         str(self.feature_names_in_[j]) for j in selected
                     ),
                 }
@@ -433,6 +434,94 @@ class Miscoding(BaseEstimator):
             "subset"                   : self._subset_measures(selected),
             "features"                 : self.feature_analysis(),
             "redundancy"               : self.feature_redundancy(),
+        }
+
+    def rank_features(
+        self,
+        *,
+        max_features: int | None = None,
+        criterion: RankingCriterion = "deficiency",
+        return_details: bool = False,
+    ):
+        """
+        Rank features for redundancy-aware model construction.
+
+        The ranking is greedy and uses the same redundancy-discounted subset
+        diagnostics as ``miscoding_subset``. Unlike ``select_features()``, this
+        method keeps adding features to the order until the requested number of
+        features has been ranked, even when subset miscoding stops improving.
+
+        Parameters
+        ----------
+        max_features : int, optional
+            Maximum number of features to rank. If omitted, every feature is
+            ranked.
+
+        criterion : {"deficiency", "miscoding"}, default="deficiency"
+            Candidate ordering criterion. ``"deficiency"`` prioritizes the
+            lowest resulting subset deficiency, then miscoding, surplus, and
+            feature index. ``"miscoding"`` prioritizes the lowest resulting
+            subset miscoding, then deficiency, surplus, and feature index.
+
+        return_details : bool, default=False
+            If ``False``, return ordered feature indices. If ``True``, return a
+            dictionary with the feature order, feature names, ranking path, and
+            supporting diagnostics.
+
+        Returns
+        -------
+        list[int] or dict
+            Ordered feature indices by default, or detailed ranking output when
+            ``return_details=True``.
+        """
+        check_is_fitted(self)
+        self._validate_ranking_criterion(criterion)
+        max_features = self._validate_max_features(max_features)
+
+        selected: list[int] = []
+        path: list[dict[str, object]] = []
+        current = self._subset_measures(selected)
+
+        while len(selected) < max_features:
+            candidates = self._sort_candidates(
+                self._candidate_extensions(selected, current),
+                criterion=criterion,
+            )
+            if candidates.empty:
+                break
+
+            best = candidates.iloc[0]
+            feature = int(best["feature_index"])
+            selected.append(feature)
+            current = self._subset_measures(selected)
+
+            path.append(
+                {
+                    "step": len(path) + 1,
+                    "feature_index": feature,
+                    "feature_name": str(self.feature_names_in_[feature]),
+                    "deficiency": float(best["deficiency"]),
+                    "surplus": float(best["surplus"]),
+                    "miscoding": float(best["miscoding"]),
+                    "deficiency_improvement": float(best["deficiency_improvement"]),
+                    "surplus_change": float(best["surplus_change"]),
+                    "miscoding_improvement": float(best["miscoding_improvement"]),
+                    "selected_feature_indices": tuple(selected),
+                    "selected_feature_names": tuple(
+                        str(self.feature_names_in_[j]) for j in selected
+                    ),
+                }
+            )
+
+        if not return_details:
+            return selected
+
+        return {
+            "feature_order": selected,
+            "feature_names": [str(self.feature_names_in_[j]) for j in selected],
+            "path": pd.DataFrame(path),
+            "features": self.feature_analysis(),
+            "redundancy": self.feature_redundancy(),
         }
 
     #
@@ -705,9 +794,13 @@ class Miscoding(BaseEstimator):
             "feature_weights"          : feature_weights,
         }
 
-    def _selection_candidates(self, selected: list[int], current_miscoding: float) -> pd.DataFrame:
+    def _candidate_extensions(
+        self,
+        selected: list[int],
+        current: dict[str, object],
+    ) -> pd.DataFrame:
         """
-        Evaluate all candidate features for the next greedy selection step.
+        Evaluate all one-feature extensions of the current selected set.
         """
         selected_set = set(selected)
         rows: list[dict[str, object]] = []
@@ -719,16 +812,23 @@ class Miscoding(BaseEstimator):
 
             candidate_subset = selected + [feature]
             values           = self._subset_measures(candidate_subset)
-            improvement      = current_miscoding - float(values["miscoding"])
 
             rows.append({
-                "feature_index"    : feature,
-                "feature_name"     : str(self.feature_names_in_[feature]),
-                "deficiency"       : float(values["deficiency"]),
-                "surplus"          : float(values["surplus"]),
-                "miscoding"        : float(values["miscoding"]),
-                "improvement"      : float(improvement),
-                "candidate_subset" : tuple(candidate_subset),
+                "feature_index": feature,
+                "feature_name": str(self.feature_names_in_[feature]),
+                "deficiency": float(values["deficiency"]),
+                "surplus": float(values["surplus"]),
+                "miscoding": float(values["miscoding"]),
+                "deficiency_improvement": (
+                    float(current["deficiency"]) - float(values["deficiency"])
+                ),
+                "surplus_change": (
+                    float(values["surplus"]) - float(current["surplus"])
+                ),
+                "miscoding_improvement": (
+                    float(current["miscoding"]) - float(values["miscoding"])
+                ),
+                "candidate_subset": tuple(candidate_subset),
             })
 
         if not rows:
@@ -739,16 +839,63 @@ class Miscoding(BaseEstimator):
                     "deficiency",
                     "surplus",
                     "miscoding",
-                    "improvement",
+                    "deficiency_improvement",
+                    "surplus_change",
+                    "miscoding_improvement",
                     "candidate_subset",
                 ]
             )
 
-        return pd.DataFrame(rows).sort_values(
-            by=["miscoding", "deficiency", "surplus", "feature_index"],
+        return pd.DataFrame(rows)
+
+    def _sort_candidates(
+        self,
+        candidates: pd.DataFrame,
+        *,
+        criterion: RankingCriterion,
+    ) -> pd.DataFrame:
+        """
+        Sort candidate extensions according to the requested ranking criterion.
+        """
+        self._validate_ranking_criterion(criterion)
+
+        if candidates.empty:
+            return candidates
+
+        if criterion == "deficiency":
+            columns = ["deficiency", "miscoding", "surplus", "feature_index"]
+        else:
+            columns = ["miscoding", "deficiency", "surplus", "feature_index"]
+
+        return candidates.sort_values(
+            by=columns,
             ascending=[True, True, True, True],
             ignore_index=True,
         )
+
+    def _validate_max_features(self, max_features: int | None) -> int:
+        """
+        Validate and cap a requested feature count.
+        """
+        if max_features is None:
+            return int(self.n_features_in_)
+
+        max_features = int(max_features)
+        if max_features < 0:
+            raise ValueError("max_features must be non-negative.")
+
+        return min(max_features, int(self.n_features_in_))
+
+    @classmethod
+    def _validate_ranking_criterion(cls, criterion: str) -> None:
+        """
+        Validate ranking criterion values.
+        """
+        if criterion not in cls._VALID_RANKING_CRITERIA:
+            raise ValueError(
+                "Valid options for 'criterion' are {}. Got criterion={!r} instead."
+                .format(cls._VALID_RANKING_CRITERIA, criterion)
+            )
 
     #
     # Index handling and numerical helpers
@@ -883,5 +1030,25 @@ def select_features(
     return metric.select_features(
         max_features=max_features,
         min_improvement=min_improvement,
+        return_details=return_details,
+    )
+
+
+def rank_features(
+    X,
+    y,
+    *,
+    max_features: int | None = None,
+    criterion: RankingCriterion = "deficiency",
+    return_details: bool = False,
+    **kwargs,
+):
+    """
+    Rank features using a functional interface.
+    """
+    metric = Miscoding(**kwargs).fit(X, y)
+    return metric.rank_features(
+        max_features=max_features,
+        criterion=criterion,
         return_details=return_details,
     )

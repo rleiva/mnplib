@@ -26,6 +26,8 @@ class SearchContext:
     task          : Task
     random_state  : Any = None
     verbose       : int = 0
+    feature_ranking_criterion : str = "deficiency"
+    max_feature_prefixes      : int | None = None
 
 
 class ModelFamilySearcher:

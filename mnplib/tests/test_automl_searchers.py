@@ -12,6 +12,7 @@ from __future__ import annotations
 import inspect
 import pathlib
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -30,6 +31,7 @@ from mnplib.classifier import (
     SUPPORTED_MODELS as CLASSIFIER_SUPPORTED_MODELS,
     NescienceClassifier,
 )
+from mnplib.miscoding import Miscoding
 from mnplib.nescience import Nescience
 from mnplib.regressor import (
     SUPPORTED_MODELS as REGRESSOR_SUPPORTED_MODELS,
@@ -361,9 +363,12 @@ def test_decision_tree_pruning_path_search_skips_duplicate_structures(monkeypatc
 
     report = searcher.search(_classification_context(X, y))
 
-    assert len(report.results) == 1
+    assert len(report.results) == X.shape[1]
     assert report.diagnostics
-    assert report.diagnostics[0]["reason"] == "duplicate_tree_structure"
+    assert all(
+        row["reason"] == "duplicate_tree_structure"
+        for row in report.diagnostics
+    )
 
 
 def test_linear_regression_feature_prefix_search_evaluates_all_prefixes():
@@ -402,6 +407,151 @@ def test_linear_regression_feature_prefix_search_evaluates_all_prefixes():
         for result in linear_results
     )
     assert all(result.hyperparameters == {} for result in linear_results)
+
+
+def test_automl_uses_feature_ranking_for_prefix_search(monkeypatch):
+    X, y = make_classification(
+        n_samples=60,
+        n_features=4,
+        n_informative=2,
+        n_redundant=0,
+        random_state=42,
+    )
+
+    calls = {"rank": 0}
+    original_rank_features = Miscoding.rank_features
+
+    def spy_rank_features(self, *args, **kwargs):
+        calls["rank"] += 1
+        return original_rank_features(self, *args, **kwargs)
+
+    def fail_select_features(self, *args, **kwargs):
+        raise AssertionError("AutoML prefix search should use rank_features().")
+
+    monkeypatch.setattr(Miscoding, "rank_features", spy_rank_features)
+    monkeypatch.setattr(Miscoding, "select_features", fail_select_features)
+
+    clf = NescienceClassifier(
+        models=["logistic_regression"],
+        n_bins=3,
+        random_state=42,
+    ).fit(X, y)
+
+    assert calls["rank"] > 0
+    assert [
+        len(result.model.selected_features)
+        for result in clf.results_
+        if result.family == "logistic_regression"
+    ] == [1, 2, 3, 4]
+
+
+def test_automl_evaluates_prefixes_beyond_strict_selection():
+    y_class = np.array([0, 0, 1, 1, 0, 1, 0, 1])
+    X_class = np.column_stack(
+        [
+            y_class,
+            1 - y_class,
+            np.array([0, 1, 0, 1, 1, 0, 1, 0]),
+        ]
+    )
+    strict_class = Miscoding(
+        X_type="categorical",
+        y_type="categorical",
+    ).fit(X_class, y_class).select_features(return_details=True)
+
+    clf = NescienceClassifier(
+        models=["logistic_regression"],
+        X_type="categorical",
+        n_bins=2,
+        random_state=42,
+    ).fit(X_class, y_class)
+    classifier_prefix_lengths = [
+        len(result.model.selected_features)
+        for result in clf.results_
+        if result.family == "logistic_regression"
+    ]
+
+    assert len(strict_class["selected_feature_indices"]) == 1
+    assert max(classifier_prefix_lengths) > len(
+        strict_class["selected_feature_indices"]
+    )
+    assert clf.best_result_.nescience == pytest.approx(
+        min(result.nescience for result in clf.results_)
+    )
+
+    y_reg = np.linspace(0.0, 1.0, 12)
+    X_reg = np.column_stack(
+        [
+            y_reg,
+            np.sin(np.arange(12.0)),
+            np.cos(np.arange(12.0)),
+        ]
+    )
+    strict_reg = Miscoding(
+        X_type="numeric",
+        y_type="numeric",
+        n_bins=4,
+    ).fit(X_reg, y_reg).select_features(return_details=True)
+
+    reg = NescienceRegressor(
+        models=["linear_regression"],
+        X_type="numeric",
+        n_bins=4,
+        random_state=42,
+    ).fit(X_reg, y_reg)
+    regressor_prefix_lengths = [
+        len(result.model.selected_features)
+        for result in reg.results_
+        if result.family == "linear_regression"
+    ]
+
+    assert len(strict_reg["selected_feature_indices"]) == 1
+    assert max(regressor_prefix_lengths) > len(strict_reg["selected_feature_indices"])
+    assert reg.best_result_.nescience == pytest.approx(
+        min(result.nescience for result in reg.results_)
+    )
+
+
+def test_max_feature_prefixes_limits_prefix_candidates():
+    Xc, yc = make_classification(
+        n_samples=60,
+        n_features=4,
+        n_informative=2,
+        n_redundant=0,
+        random_state=42,
+    )
+    clf = NescienceClassifier(
+        models=["logistic_regression"],
+        n_bins=3,
+        random_state=42,
+        max_feature_prefixes=2,
+    ).fit(Xc, yc)
+
+    assert [
+        len(result.model.selected_features)
+        for result in clf.results_
+        if result.family == "logistic_regression"
+    ] == [1, 2]
+
+    Xr, yr = make_regression(
+        n_samples=60,
+        n_features=4,
+        n_informative=2,
+        noise=0.1,
+        random_state=42,
+    )
+    reg = NescienceRegressor(
+        models=["linear_regression"],
+        n_bins=3,
+        random_state=42,
+        max_feature_prefixes=2,
+    ).fit(Xr, yr)
+
+    assert [
+        len(result.model.selected_features)
+        for result in reg.results_
+        if result.family == "linear_regression"
+    ] == [1, 2]
 
 
 def test_logistic_regression_feature_prefix_search_evaluates_all_prefixes():

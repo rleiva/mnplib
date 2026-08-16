@@ -13,10 +13,12 @@ These tests target the redundancy-discounted implementation:
     - subset_analysis(subset)
     - miscoding_subset(subset, mode=...)
     - select_features(...)
+    - rank_features(...)
     - feature_analysis(X, y, **kwargs)
     - feature_redundancy(X, y, **kwargs)
     - miscoding_subset(X, y, subset, **kwargs)
     - select_features(X, y, **kwargs)
+    - rank_features(X, y, **kwargs)
 """
 
 import numpy as np
@@ -30,6 +32,7 @@ from mnplib.miscoding import (
     feature_analysis,
     feature_redundancy,
     miscoding_subset,
+    rank_features,
     select_features,
 )
 
@@ -53,6 +56,21 @@ def make_redundant_noisy_data():
     noisy = np.array([0, 1, 0, 1, 1, 0, 1, 0])
     X = np.column_stack([noisy, noisy])
     return X, y
+
+
+def make_distributed_signal_data():
+    """Return a dataset whose target is represented across several features."""
+    rng = np.random.default_rng(1)
+    n_samples = 2000
+
+    x0 = rng.integers(0, 2, size=n_samples)
+    x1 = rng.integers(0, 2, size=n_samples)
+    x2 = rng.integers(0, 2, size=n_samples)
+    x3 = rng.integers(0, 2, size=n_samples)
+    y = 8 * x0 + 4 * x1 + 2 * x2 + x3
+    noise = rng.integers(0, 16, size=(n_samples, 6))
+
+    return np.column_stack([x0, x1, x2, x3, noise]), y
 
 
 def test_constructor_defaults():
@@ -319,6 +337,102 @@ def test_select_features_selects_a_perfect_feature_first():
     assert details["path"].iloc[0]["miscoding"] == pytest.approx(0.0)
 
 
+def test_select_features_stops_when_subset_miscoding_does_not_improve():
+    X, y = make_simple_classification_data()
+
+    metric = Miscoding(X_type="categorical", y_type="categorical").fit(X, y)
+    details = metric.select_features(max_features=3, return_details=True)
+
+    assert len(details["selected_feature_indices"]) == 1
+    assert int(details["selected_features"].sum()) == 1
+    assert details["subset"]["miscoding"] == pytest.approx(0.0)
+
+
+def test_rank_features_continues_after_miscoding_stops_improving():
+    X, y = make_simple_classification_data()
+
+    metric = Miscoding(X_type="categorical", y_type="categorical").fit(X, y)
+    strict = metric.select_features(max_features=3, return_details=True)
+    details = metric.rank_features(return_details=True)
+
+    assert len(strict["selected_feature_indices"]) == 1
+    assert details["feature_order"] == [0, 2, 1]
+    assert len(details["path"]) == X.shape[1]
+    assert (
+        details["path"].iloc[1:]["miscoding_improvement"] <= 0.0
+    ).any()
+
+
+def test_rank_features_returns_full_or_bounded_unique_order():
+    X, y = make_simple_classification_data()
+
+    metric = Miscoding(X_type="categorical", y_type="categorical").fit(X, y)
+    full_order = metric.rank_features()
+    bounded_order = metric.rank_features(max_features=2)
+
+    assert len(full_order) == X.shape[1]
+    assert len(set(full_order)) == X.shape[1]
+    assert set(full_order) == set(range(X.shape[1]))
+    assert len(bounded_order) == 2
+    assert len(set(bounded_order)) == 2
+
+
+def test_rank_features_return_details_has_expected_shape():
+    X, y = make_simple_classification_data()
+
+    metric = Miscoding(X_type="categorical", y_type="categorical").fit(X, y)
+    details = metric.rank_features(max_features=2, return_details=True)
+
+    assert set(details) == {
+        "feature_order",
+        "feature_names",
+        "path",
+        "features",
+        "redundancy",
+    }
+    assert len(details["feature_order"]) == 2
+    assert len(details["feature_names"]) == 2
+    assert len(details["path"]) == 2
+    assert {
+        "step",
+        "feature_index",
+        "feature_name",
+        "deficiency",
+        "surplus",
+        "miscoding",
+        "deficiency_improvement",
+        "surplus_change",
+        "miscoding_improvement",
+        "selected_feature_indices",
+        "selected_feature_names",
+    }.issubset(details["path"].columns)
+
+
+def test_rank_features_deficiency_prioritizes_target_relevant_features():
+    X, y = make_distributed_signal_data()
+
+    metric = Miscoding(X_type="categorical", y_type="categorical").fit(X, y)
+    order = metric.rank_features(max_features=6, criterion="deficiency")
+
+    assert len(order) == 6
+    assert len(set(order)) == 6
+    assert set(order[:4]).issubset(set(range(10)))
+    assert len(set(order[:4]) & {0, 1, 2, 3}) >= 3
+
+
+def test_rank_features_miscoding_criterion_and_invalid_criterion():
+    X, y = make_distributed_signal_data()
+
+    metric = Miscoding(X_type="categorical", y_type="categorical").fit(X, y)
+    order = metric.rank_features(criterion="miscoding")
+
+    assert len(order) == X.shape[1]
+    assert len(set(order)) == X.shape[1]
+
+    with pytest.raises(ValueError, match="criterion"):
+        metric.rank_features(criterion="invalid")
+
+
 def test_select_features_return_details():
     X, y = make_simple_classification_data()
 
@@ -416,6 +530,9 @@ def test_methods_requiring_fit_raise_not_fitted_error():
         metric.select_features()
 
     with pytest.raises(NotFittedError):
+        metric.rank_features()
+
+    with pytest.raises(NotFittedError):
         metric.miscoding_subset([])
 
 
@@ -503,6 +620,22 @@ def test_functional_select_features_matches_estimator():
     estimator = Miscoding(X_type="categorical", y_type="categorical").fit(X, y)
 
     assert np.array_equal(direct, estimator.select_features(max_features=1))
+
+
+def test_functional_rank_features_matches_estimator():
+    X, y = make_simple_classification_data()
+
+    direct = rank_features(
+        X,
+        y,
+        X_type="categorical",
+        y_type="categorical",
+        max_features=2,
+    )
+
+    estimator = Miscoding(X_type="categorical", y_type="categorical").fit(X, y)
+
+    assert direct == estimator.rank_features(max_features=2)
 
 
 def test_code_length_cache_is_populated_after_fit():

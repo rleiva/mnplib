@@ -10,7 +10,9 @@ import numpy as np
 
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 
+from mnplib.automl.wrappers import SelectedFeaturesEstimator
 from .base import ModelFamilySearcher, SearchContext, search_report
+from ._feature_order import miscoding_feature_order
 from mnplib.utils import discretize_vector
 
 class DecisionTreePruningSearcher(ModelFamilySearcher):
@@ -18,7 +20,14 @@ class DecisionTreePruningSearcher(ModelFamilySearcher):
     Search a decision-tree family by evaluating pruning-path trees.
     """
 
-    def __init__(self, estimator_cls, *, n_jobs: int | None = None, random_state: Any = None,):
+    def __init__(
+        self,
+        estimator_cls,
+        *,
+        alpha_tol: float = 1e-12,
+        n_jobs: int | None = None,
+        random_state: Any = None,
+    ):
         
         if estimator_cls not in (DecisionTreeClassifier, DecisionTreeRegressor):
             raise TypeError(
@@ -27,6 +36,7 @@ class DecisionTreePruningSearcher(ModelFamilySearcher):
             )
 
         self.estimator_cls = estimator_cls
+        self.alpha_tol     = float(alpha_tol)
         self.n_jobs        = n_jobs
         self.random_state  = random_state
         self.family        = (
@@ -36,44 +46,85 @@ class DecisionTreePruningSearcher(ModelFamilySearcher):
         )
 
     def search(self, context: SearchContext):
+        order, _ = miscoding_feature_order(
+            context.evaluator.nescience.miscoding_,
+            context.X.shape[1],
+            criterion=context.feature_ranking_criterion,
+            max_features=context.max_feature_prefixes,
+        )
 
-        initial = self.estimator_cls(random_state=self.random_state, min_samples_leaf=5)
-        initial.fit(context.X, context.y)
-        pruning_path = initial.cost_complexity_pruning_path(context.X, context.y)
-        alphas = self._unique_alphas(pruning_path.ccp_alphas)
-
-        results         = []
-        diagnostics     = []
+        results = []
+        diagnostics = []
         seen_structures = set()
 
-        for index, alpha in enumerate(alphas):
-            model = self.estimator_cls(
-                ccp_alpha        = float(alpha),
-                random_state     = self.random_state,
+        if not order:
+            diagnostics.append(
+                {
+                    "family": self.family,
+                    "reason": "empty_feature_order",
+                }
             )
-            model.fit(context.X, context.y)
+            return search_report(self.family, results, diagnostics)
 
-            signature = self._tree_structure_signature(model)
-            if signature in seen_structures:
-                diagnostics.append(
-                    {
-                        "family"    : self.family,
-                        "candidate" : self._candidate_name(index, alpha),
-                        "reason"    : "duplicate_tree_structure",
-                        "ccp_alpha" : float(alpha),
-                    }
-                )
-                continue
+        for prefix_size in range(1, len(order) + 1):
+            selected = tuple(order[:prefix_size])
+            X_selected = context.X[:, selected]
 
-            seen_structures.add(signature)
-            results.append(
-                context.evaluator.evaluate(
-                    name     = self._candidate_name(index, alpha),
-                    family   = self.family,
-                    model    = model,
-                    hyperparameters = {"ccp_alpha": float(alpha)},
-                )
+            initial = self.estimator_cls(
+                random_state=self.random_state,
+                min_samples_leaf=5,
             )
+            initial.fit(X_selected, context.y)
+            pruning_path = initial.cost_complexity_pruning_path(
+                X_selected,
+                context.y,
+            )
+            alphas = self._unique_alphas(pruning_path.ccp_alphas)
+
+            for index, alpha in enumerate(alphas):
+                model = self.estimator_cls(
+                    ccp_alpha=float(alpha),
+                    random_state=self.random_state,
+                )
+                model.fit(X_selected, context.y)
+
+                signature = (
+                    selected,
+                    self._tree_structure_signature(model),
+                )
+                if signature in seen_structures:
+                    diagnostics.append(
+                        {
+                            "family": self.family,
+                            "candidate": self._candidate_name(
+                                prefix_size,
+                                index,
+                                alpha,
+                            ),
+                            "reason": "duplicate_tree_structure",
+                            "ccp_alpha": float(alpha),
+                            "n_selected_features": int(prefix_size),
+                        }
+                    )
+                    continue
+
+                seen_structures.add(signature)
+                public_model = SelectedFeaturesEstimator(
+                    model,
+                    selected,
+                    n_features_in=context.X.shape[1],
+                    feature_names=context.feature_names,
+                )
+                results.append(
+                    context.evaluator.evaluate(
+                        name=self._candidate_name(prefix_size, index, alpha),
+                        family=self.family,
+                        model=model,
+                        feature_indices=selected,
+                        result_model=public_model,
+                        hyperparameters={"ccp_alpha": float(alpha)},
+                    )
+                )
 
         return search_report(self.family, results, diagnostics)
 
@@ -133,5 +184,8 @@ class DecisionTreePruningSearcher(ModelFamilySearcher):
             tuple(thresholds.tolist()),
         )
 
-    def _candidate_name(self, index: int, alpha: float) -> str:
-        return f"{self.family}_ccp_{index}_alpha_{float(alpha):.6g}"
+    def _candidate_name(self, prefix_size: int, index: int, alpha: float) -> str:
+        return (
+            f"{self.family}_prefix_{int(prefix_size)}_"
+            f"ccp_{index}_alpha_{float(alpha):.6g}"
+        )
