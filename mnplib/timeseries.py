@@ -28,7 +28,7 @@ from .nescience import Nescience
 
 XType = Literal["auto", "numeric", "mixed", "categorical"]
 YType = Literal["auto", "numeric", "categorical"]
-BinSpec = int | Literal["auto"]
+BinSpec = int | Literal["auto", "adaptive"]
 Validation = Literal["none", "holdout"]
 Aggregation = Literal[
     "euclidean",

@@ -42,6 +42,13 @@ COMMON_RESULT_COLUMNS = {
     "surplus",
     "inaccuracy",
     "surfeit",
+    "is_reliable",
+    "failure_reason",
+    "n_samples",
+    "n_observed_joint_states",
+    "mean_joint_occupancy",
+    "n_singleton_joint_states",
+    "singleton_fraction",
 }
 
 EXPECTED_DESCRIPTION_KEYS = {
@@ -115,6 +122,14 @@ def _assert_candidate_model_description(description, result):
     assert isinstance(description["model_compressed_length"], int)
     assert description["model_compressed_length"] > 0
     assert description["surfeit"] == pytest.approx(result.components["surfeit"])
+
+
+def _assert_finite_nescience_prefix_is_sorted(df):
+    values = df["nescience"].to_numpy(dtype=float)
+    finite = np.isfinite(values)
+
+    assert list(finite) == sorted(finite, reverse=True)
+    assert np.all(np.diff(values[finite]) >= 0.0)
 
 
 def test_default_behavior_uses_all_supported_internal_model_families(
@@ -340,7 +355,7 @@ def test_results_dataframe_has_expected_columns(binary_classification_data):
         "converged",
     ]:
         assert forbidden not in df.columns
-    assert df["nescience"].is_monotonic_increasing
+    _assert_finite_nescience_prefix_is_sorted(df)
     assert df.iloc[0]["candidate"] == clf.best_candidate_name_
 
 
@@ -416,7 +431,7 @@ def test_unfitted_methods_raise_not_fitted_error(method_name, args):
         getattr(clf, method_name)(*args)
 
 
-def test_backward_compatible_classifier_alias(binary_classification_data):
+def test_classifier_alias(binary_classification_data):
     X, y = binary_classification_data
 
     clf = Classifier(

@@ -59,6 +59,13 @@ COMMON_RESULT_COLUMNS = {
     "selected_features",
     "n_selected_features",
     "description_length",
+    "is_reliable",
+    "failure_reason",
+    "n_samples",
+    "n_observed_joint_states",
+    "mean_joint_occupancy",
+    "n_singleton_joint_states",
+    "singleton_fraction",
 }
 
 MODEL_SPECIFIC_COLUMNS = {
@@ -363,7 +370,8 @@ def test_decision_tree_pruning_path_search_skips_duplicate_structures(monkeypatc
 
     report = searcher.search(_classification_context(X, y))
 
-    assert len(report.results) == X.shape[1]
+    assert 1 <= len(report.results) <= X.shape[1]
+    assert all(result.is_reliable for result in report.results)
     assert report.diagnostics
     assert all(
         row["reason"] == "duplicate_tree_structure"
@@ -371,7 +379,7 @@ def test_decision_tree_pruning_path_search_skips_duplicate_structures(monkeypatc
     )
 
 
-def test_linear_regression_feature_prefix_search_evaluates_all_prefixes():
+def test_linear_regression_feature_prefix_search_evaluates_reliable_prefixes():
     X, y = make_regression(
         n_samples=70,
         n_features=5,
@@ -399,9 +407,8 @@ def test_linear_regression_feature_prefix_search_evaluates_all_prefixes():
         1,
         2,
         3,
-        4,
-        5,
     ]
+    assert all(result.is_reliable for result in linear_results)
     assert all(
         not hasattr(result, "metadata")
         for result in linear_results
@@ -442,7 +449,86 @@ def test_automl_uses_feature_ranking_for_prefix_search(monkeypatch):
         len(result.model.selected_features)
         for result in clf.results_
         if result.family == "logistic_regression"
-    ] == [1, 2, 3, 4]
+    ] == [1, 2, 3]
+
+
+def test_automl_estimators_fit_with_adaptive_miscoding():
+    Xc, yc = make_classification(
+        n_samples=60,
+        n_features=4,
+        n_informative=2,
+        n_redundant=0,
+        random_state=42,
+    )
+    clf = NescienceClassifier(
+        models=["logistic_regression"],
+        n_bins="adaptive",
+        random_state=42,
+    ).fit(Xc, yc)
+
+    Xr, yr = make_regression(
+        n_samples=60,
+        n_features=4,
+        n_informative=2,
+        noise=0.1,
+        random_state=42,
+    )
+    reg = NescienceRegressor(
+        models=["linear_regression"],
+        n_bins="adaptive",
+        random_state=42,
+    ).fit(Xr, yr)
+
+    for estimator in [clf, reg]:
+        df = estimator.results_dataframe()
+
+        _assert_common_result_frame(df)
+        assert df["nescience"].is_monotonic_increasing
+        assert df.iloc[0]["candidate"] == estimator.best_candidate_name_
+        assert estimator.best_nescience_ == pytest.approx(df.iloc[0]["nescience"])
+        assert estimator.best_result_.is_reliable is True
+
+
+def test_automl_keeps_unreliable_candidates_sorted_last():
+    X, y = make_classification(
+        n_samples=60,
+        n_features=4,
+        n_informative=2,
+        n_redundant=0,
+        random_state=42,
+    )
+
+    clf = NescienceClassifier(
+        models=["linear_svc", "logistic_regression"],
+        n_bins=3,
+        random_state=42,
+    ).fit(X, y)
+    df = clf.results_dataframe()
+
+    assert clf.best_result_.family == "logistic_regression"
+    assert clf.best_result_.is_reliable is True
+    assert np.isfinite(clf.best_result_.nescience)
+    assert bool(df.iloc[0]["is_reliable"]) is True
+    assert bool(df.iloc[-1]["is_reliable"]) is False
+    assert np.isnan(df.iloc[-1]["nescience"])
+    assert df.iloc[-1]["failure_reason"] == "joint_distribution_too_sparse"
+
+
+def test_automl_raises_when_no_reliable_candidate_exists():
+    X, y = make_classification(
+        n_samples=60,
+        n_features=4,
+        n_informative=2,
+        n_redundant=0,
+        random_state=42,
+    )
+
+    with pytest.raises(ValueError, match="No reliable candidate subset"):
+        NescienceClassifier(
+            models=["linear_svc"],
+            n_bins=3,
+            random_state=42,
+        ).fit(X, y)
 
 
 def test_automl_evaluates_prefixes_beyond_strict_selection():
@@ -479,24 +565,24 @@ def test_automl_evaluates_prefixes_beyond_strict_selection():
         min(result.nescience for result in clf.results_)
     )
 
-    y_reg = np.linspace(0.0, 1.0, 12)
+    y_reg = np.tile([0.0, 1.0], 50)
     X_reg = np.column_stack(
         [
             y_reg,
-            np.sin(np.arange(12.0)),
-            np.cos(np.arange(12.0)),
+            1.0 - y_reg,
+            np.tile([0.0, 0.0, 1.0, 1.0], 25),
         ]
     )
     strict_reg = Miscoding(
         X_type="numeric",
         y_type="numeric",
-        n_bins=4,
+        n_bins=2,
     ).fit(X_reg, y_reg).select_features(return_details=True)
 
     reg = NescienceRegressor(
         models=["linear_regression"],
         X_type="numeric",
-        n_bins=4,
+        n_bins=2,
         random_state=42,
     ).fit(X_reg, y_reg)
     regressor_prefix_lengths = [
@@ -554,7 +640,7 @@ def test_max_feature_prefixes_limits_prefix_candidates():
     ] == [1, 2]
 
 
-def test_logistic_regression_feature_prefix_search_evaluates_all_prefixes():
+def test_logistic_regression_feature_prefix_search_evaluates_reliable_prefixes():
     X, y = make_classification(
         n_samples=70,
         n_features=4,
@@ -582,8 +668,8 @@ def test_logistic_regression_feature_prefix_search_evaluates_all_prefixes():
         1,
         2,
         3,
-        4,
     ]
+    assert all(result.is_reliable for result in logistic_results)
     assert all(
         result.hyperparameters == {
             "penalty": None,
@@ -612,7 +698,7 @@ def test_linear_svm_searchers_remain_internal_candidates():
     )
     clf = NescienceClassifier(
         models=["linear_svc"],
-        n_bins=3,
+        n_bins=2,
         random_state=42,
     ).fit(Xc, yc)
 
@@ -652,8 +738,8 @@ def test_linear_svm_searchers_remain_internal_candidates():
         1,
         2,
         3,
-        4,
     ]
+    assert all(result.is_reliable for result in svc_results + svr_results)
     assert all(
         result.name == f"linear_svr_prefix_{index}"
         for index, result in enumerate(svr_results, start=1)
@@ -709,8 +795,8 @@ def test_naive_bayes_uses_gaussian_feature_prefixes_only():
         1,
         2,
         3,
-        4,
     ]
+    assert all(result.is_reliable for result in nb_results)
     assert all(set(result.hyperparameters) == {"var_smoothing"} for result in nb_results)
     assert all(
         result.hyperparameters["var_smoothing"] == pytest.approx(1e-9)

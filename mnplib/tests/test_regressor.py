@@ -376,7 +376,7 @@ def test_unfitted_methods_raise_not_fitted_error(method_name, args):
         getattr(reg, method_name)(*args)
 
 
-def test_backward_compatible_regressor_alias(regression_data):
+def test_regressor_alias(regression_data):
     X, y = regression_data
 
     reg = Regressor(

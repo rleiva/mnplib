@@ -43,22 +43,29 @@ def test_discretize_vector_uses_uniform_bins():
     assert np.array_equal(labels[5:], np.ones(5, dtype=int))
 
 
-def test_discretize_vector_auto_uses_rice_rule():
-    x = np.arange(8, dtype=float)
+def test_discretize_vector_auto_uses_floor_cube_root_rule():
+    x = np.arange(10, dtype=float)
 
     labels = discretize_vector(x, n_bins="auto")
 
-    # Rice's rule gives ceil(2 * 8**(1/3)) = 4 bins.
     assert labels.shape == x.shape
     assert set(np.unique(labels)) == {0, 1, 2, 3}
 
 
-def test_discretize_vector_one_bin_returns_zero_labels():
+def test_discretize_vector_adaptive_matches_auto_for_one_vector():
+    x = np.arange(10, dtype=float)
+
+    assert np.array_equal(
+        discretize_vector(x, n_bins="adaptive"),
+        discretize_vector(x, n_bins="auto"),
+    )
+
+
+def test_discretize_vector_rejects_one_bin():
     x = np.array([1.0, 2.0, 3.0])
 
-    labels = discretize_vector(x, n_bins=1)
-
-    assert np.array_equal(labels, np.zeros(x.size, dtype=int))
+    with pytest.raises(ValueError):
+        discretize_vector(x, n_bins=1)
 
 
 def test_discretize_vector_rejects_empty_input():

@@ -30,7 +30,7 @@ from sklearn.utils.validation import check_is_fitted
 from .utils import empirical_distribution
 
 YType = Literal["auto", "numeric", "categorical"]
-BinSpec = int | Literal["auto"]
+BinSpec = int | Literal["auto", "adaptive"]
 
 class Surfeit(BaseEstimator):
     """
@@ -47,9 +47,10 @@ class Surfeit(BaseEstimator):
     y_type : {"auto", "numeric", "categorical"}, default="auto"
         Encoding strategy for the target variable.
 
-    n_bins : int or "auto", default="auto"
-        Number of uniform bins used for numeric targets. If ``"auto"``,
-        Rice's rule is used by the empirical-distribution utilities.
+    n_bins : int, "auto", or "adaptive", default="auto"
+        Number of uniform bins used for numeric targets. ``"auto"`` uses
+        ``max(2, floor(2 * n_samples**(1/3)))``. ``"adaptive"`` is equivalent
+        for target-only quantities.
 
     zlib_level : int, default=9
         Compression level passed to ``zlib.compress``. Must be between 0 and 9.
@@ -331,7 +332,7 @@ def surfeit_score(
     y_type : {"auto", "numeric", "categorical"}, default="auto"
         Encoding strategy for the target variable.
 
-    n_bins : int or "auto", default="auto"
+    n_bins : int, "auto", or "adaptive", default="auto"
         Number of uniform bins used for numeric targets.
 
     zlib_level : int, default=9

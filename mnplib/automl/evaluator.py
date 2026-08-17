@@ -7,8 +7,6 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-import numpy as np
-
 from mnplib.models import ModelArtifacts, sklearn_model_artifacts
 
 from .results import CandidateResult
@@ -76,7 +74,23 @@ class CandidateEvaluator:
             model_string_prefix=model_string_prefix,
         )
 
-        components = self.nescience.components(**artifacts.to_nescience_kwargs())
+        subset_diagnostics = self.nescience.miscoding_.subset_analysis(
+            artifacts.subset
+        )
+        components = {
+            "deficiency": float(subset_diagnostics["deficiency"]),
+            "surplus": float(subset_diagnostics["surplus"]),
+            "inaccuracy": float(
+                self.nescience.inaccuracy_.inaccuracy_predictions(
+                    artifacts.predictions
+                )
+            ),
+            "surfeit": float(
+                self.nescience.surfeit_.surfeit_string(
+                    artifacts.model_string
+                )
+            ),
+        }
         value = self.nescience.aggregate_components(**components)
         public_model = model if result_model is None else result_model
 
@@ -90,6 +104,7 @@ class CandidateEvaluator:
             estimator_score = self._native_score(public_model, X_for_adapter),
             n_selected_features = int(len(artifacts.subset)),
             hyperparameters = dict(hyperparameters or {}),
+            subset_diagnostics = dict(subset_diagnostics),
         )
 
     def _remap_artifacts(

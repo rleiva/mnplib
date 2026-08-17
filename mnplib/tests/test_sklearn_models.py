@@ -80,7 +80,7 @@ def test_supported_regression_models_produce_artifacts_and_nescience():
         ),
     ]
 
-    metric = Nescience(X_type="numeric", y_type="numeric", n_bins=3).fit(X, y)
+    metric = Nescience(X_type="numeric", y_type="numeric", n_bins=2).fit(X, y)
 
     for model in models:
         model.fit(X, y)
@@ -160,7 +160,7 @@ def test_supported_classification_models_produce_artifacts_and_nescience(
         random_state=42,
     )
     X = X_transform(X_raw)
-    metric = Nescience(X_type="numeric", y_type="categorical").fit(X, y)
+    metric = Nescience(X_type="numeric", y_type="categorical", n_bins=2).fit(X, y)
 
     model.fit(X, y)
     artifacts = sklearn_model_artifacts(model, X)

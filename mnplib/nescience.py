@@ -49,7 +49,7 @@ from .surfeit import Surfeit
 
 XType = Literal["auto", "numeric", "categorical"]
 YType = Literal["auto", "numeric", "categorical"]
-BinSpec = int | Literal["auto"]
+BinSpec = int | Literal["auto", "adaptive"]
 Aggregation = Literal[
     "euclidean",
     "arithmetic",
@@ -95,9 +95,11 @@ class Nescience(BaseEstimator):
         ``inaccuracy``, and ``surfeit``. If a mapping is supplied, valid keys
         are those component names. Missing mapping keys default to 1.0.
 
-    n_bins : int or "auto", default="auto"
-        Number of uniform bins used for numeric variables. If ``"auto"``,
-        the empirical-distribution utilities resolve the number of bins.
+    n_bins : int, "auto", or "adaptive", default="auto"
+        Number of uniform bins used for numeric variables. ``"auto"`` uses
+        ``max(2, floor(2 * n_samples**(1/3)))``. ``"adaptive"`` applies the
+        subset-size rule inside ``Miscoding`` and matches ``"auto"`` for
+        target-only quantities.
 
     threshold_fraction : float, default=0.01
         Minimum relative target-code-length reduction used by the internal

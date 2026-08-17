@@ -23,6 +23,14 @@ class CandidateResult:
     estimator_score : float = float("nan")
     n_selected_features : int | None = None
     hyperparameters : dict[str, Any] = field(default_factory=dict)
+    subset_diagnostics : dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def is_reliable(self) -> bool:
+        """
+        Return whether the candidate subset diagnostics are reliable.
+        """
+        return bool(self.subset_diagnostics.get("is_reliable", True))
 
     @property
     def estimator(self):

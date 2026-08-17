@@ -33,7 +33,7 @@ from .nescience import Nescience
 
 
 XType = Literal["auto", "numeric", "categorical"]
-BinSpec = int | Literal["auto"]
+BinSpec = int | Literal["auto", "adaptive"]
 Aggregation = Literal[
     "euclidean",
     "arithmetic",
@@ -69,7 +69,7 @@ class NescienceRegressor(BaseEstimator, RegressorMixin):
     aggregation : {"euclidean", "arithmetic", "geometric", "harmonic", \
             "maximum", "addition", "product"}, default="euclidean"
         Aggregation rule used by the underlying ``Nescience`` object.
-    n_bins : int or "auto", default="auto"
+    n_bins : int, "auto", or "adaptive", default="auto"
         Discretization rule for numerical variables where required by the
         nescience components.
     threshold_fraction : float, default=0.01
@@ -172,10 +172,18 @@ class NescienceRegressor(BaseEstimator, RegressorMixin):
         self.searchers_   = self._resolve_searchers(model_names)
         self._fit_searchers()
 
-        if not self.results_:
-            raise RuntimeError("No candidate regressor was successfully evaluated.")
+        valid_results = [
+            result
+            for result in self.results_
+            if result.is_reliable and np.isfinite(result.nescience)
+        ]
+        if not valid_results:
+            raise ValueError(
+                "No reliable candidate subset could be evaluated with the "
+                "available sample size and discretization."
+            )
 
-        best_result = min(self.results_, key=lambda result: result.nescience)
+        best_result = min(valid_results, key=lambda result: result.nescience)
         self.best_result_ = best_result
         self.model_ = best_result.model
         self.best_nescience_ = float(best_result.nescience)
@@ -246,7 +254,15 @@ class NescienceRegressor(BaseEstimator, RegressorMixin):
         check_is_fitted(self)
 
         rows = [self._result_row(result) for result in self.results_]
-        return pd.DataFrame(rows).sort_values("nescience").reset_index(drop=True)
+        return (
+            pd.DataFrame(rows)
+            .sort_values(
+                ["is_reliable", "nescience"],
+                ascending=[False, True],
+                na_position="last",
+            )
+            .reset_index(drop=True)
+        )
 
     def model_string(self) -> str:
         """
@@ -404,6 +420,13 @@ class NescienceRegressor(BaseEstimator, RegressorMixin):
             "selected_features": list(result.artifacts.subset),
             "n_selected_features": n_selected_features,
             "description_length": description_length,
+            "is_reliable": bool(result.subset_diagnostics.get("is_reliable", True)),
+            "failure_reason": result.subset_diagnostics.get("failure_reason"),
+            "n_samples": result.subset_diagnostics.get("n_samples"),
+            "n_observed_joint_states": result.subset_diagnostics.get("n_observed_joint_states"),
+            "mean_joint_occupancy": result.subset_diagnostics.get("mean_joint_occupancy"),
+            "n_singleton_joint_states": result.subset_diagnostics.get("n_singleton_joint_states"),
+            "singleton_fraction": result.subset_diagnostics.get("singleton_fraction"),
         }
 
         return row

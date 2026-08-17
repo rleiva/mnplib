@@ -34,7 +34,13 @@ The library is built around the notion of **nescience**, which combines several 
 
 `select_features()` performs strict miscoding-based subset selection. It keeps a feature only when adding it reduces subset miscoding by the configured improvement threshold.
 
-`rank_features()` produces a miscoding-guided, redundancy-aware feature order for model construction. It keeps ordering features even when subset miscoding stops improving.
+`rank_features()` produces a miscoding-guided empirical feature order for model construction. It keeps ordering features even when subset miscoding stops improving.
+
+Numeric miscoding diagnostics support `n_bins="auto"` and `n_bins="adaptive"`.
+`"auto"` uses `b = max(2, floor(2 * n^(1/3)))`. `"adaptive"` uses
+`b(S) = max(2, floor(2 * n^(1/3) / log2(|S| + 1)))` for subset-level empirical
+quantities; for `|S| = 1` it equals `"auto"`, and for larger subsets it coarsens
+discretization to reduce empirical joint sparsity.
 
 ### Inaccuracy
 

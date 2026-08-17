@@ -16,11 +16,9 @@ standard parts of the workflow:
       entropy, and code length.
 
 Numeric variables are discretized independently using uniform bin edges. When
-``n_bins='auto'``, the number of bins is selected with Rice's rule,
-
-    ``ceil(2 * n_samples**(1/3))``,
-
-bounded above by the number of samples.
+``n_bins="auto"``, the number of bins is
+``max(2, floor(2 * n_samples**(1/3)))``. For one-dimensional quantities,
+``n_bins="adaptive"`` uses the same rule.
 
 Categorical variables are encoded according to order of first appearance. The
 actual integer labels are not meaningful; only equality classes and empirical
@@ -54,7 +52,7 @@ from sklearn.utils.validation import (
 )
 
 
-BinSpec = int | Literal["auto"]
+BinSpec = int | Literal["auto", "adaptive"]
 
 __all__ = [
     "EmpiricalSummary",
@@ -272,8 +270,10 @@ def _encode_columns(
     * numeric : sequence of bool
           Whether each variable is numeric. Numeric variables are discretized;
           categorical variables are factorized into integer codes.
-    * n_bins : int or "auto", default="auto"
-          Number of bins for numeric variables. If ``"auto"``, Rice's rule is used.
+    * n_bins : int, "auto", or "adaptive", default="auto"
+          Number of bins for numeric variables. ``"auto"`` uses
+          ``max(2, floor(2 * n_samples**(1/3)))``. ``"adaptive"`` is
+          equivalent for one-dimensional quantities.
     Returns
     * numpy.ndarray
           Integer array of shape ``(n_samples, n_variables)``.
@@ -303,6 +303,34 @@ def _encode_columns(
 #
 
 
+def _auto_n_bins(n_samples: int) -> int:
+    """
+    Resolve the automatic one-dimensional bin count.
+    """
+    n_samples = int(n_samples)
+    if n_samples <= 0:
+        raise ValueError("n_samples must be positive.")
+
+    value = 2.0 * n_samples ** (1.0 / 3.0)
+    return max(2, int(np.floor(value)))
+
+
+def _adaptive_n_bins(n_samples: int, subset_size: int) -> int:
+    """
+    Resolve the adaptive empirical subset bin count.
+    """
+    n_samples = int(n_samples)
+    subset_size = int(subset_size)
+
+    if n_samples <= 0:
+        raise ValueError("n_samples must be positive.")
+    if subset_size <= 0:
+        raise ValueError("subset_size must be positive.")
+
+    value = 2.0 * n_samples ** (1.0 / 3.0) / np.log2(subset_size + 1)
+    return max(2, int(np.floor(value)))
+
+
 def _resolve_bins(
     n_bins: BinSpec,
     n_samples: int,
@@ -310,14 +338,8 @@ def _resolve_bins(
     """
     Resolve an explicit or automatic bin specification.
 
-    The automatic rule is Rice's rule:
-
-        ceil(2 * n_samples**(1/3))
-
-    The returned value is constrained to be at most ``n_samples``.
-
     Parameters
-    * n_bins : int or "auto"
+    * n_bins : int, "auto", or "adaptive"
           Requested bin specification.
     * n_samples : int
           Number of observations.
@@ -328,21 +350,28 @@ def _resolve_bins(
 
     Raises
     * ValueError
-          If ``n_samples`` is not positive, or if ``n_bins`` is neither
-          ``"auto"`` nor a positive integer.
+          If ``n_samples`` is not positive, or if ``n_bins`` is invalid.
     """
     n_samples = int(n_samples)
 
     if n_samples <= 0:
         raise ValueError("n_samples must be positive.")
 
-    if n_bins == "auto":
-        bins = int(np.ceil(2.0 * n_samples ** (1.0 / 3.0)))
-        return int(min(bins, n_samples))
+    if n_bins in ("auto", "adaptive"):
+        return _auto_n_bins(n_samples)
 
-    bins = int(n_bins)
-    if bins < 1:
-        raise ValueError("n_bins must be a positive integer or 'auto'.")
+    if isinstance(n_bins, str):
+        raise ValueError("n_bins must be an integer >= 2, 'auto', or 'adaptive'.")
+
+    try:
+        bins = int(n_bins)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "n_bins must be an integer >= 2, 'auto', or 'adaptive'."
+        ) from exc
+
+    if bins < 2:
+        raise ValueError("n_bins must be an integer >= 2, 'auto', or 'adaptive'.")
     return bins
 
 
@@ -359,8 +388,10 @@ def discretize_vector(
     Parameters
     * x : array-like
           Numeric vector to discretize.
-    * n_bins : int or "auto", default="auto"
-          Number of uniform bins. If ``"auto"``, Rice's rule is used.
+    * n_bins : int, "auto", or "adaptive", default="auto"
+          Number of uniform bins. ``"auto"`` uses
+          ``max(2, floor(2 * n_samples**(1/3)))``. ``"adaptive"`` is
+          equivalent for one-dimensional quantities.
 
     Returns
     * numpy.ndarray
@@ -369,7 +400,7 @@ def discretize_vector(
     values = _numeric_array(x, name="x")
     bins   = _resolve_bins(n_bins, n_samples=values.size)
     
-    if bins <= 1 or float(np.min(values)) == float(np.max(values)):
+    if float(np.min(values)) == float(np.max(values)):
         return np.zeros(values.size, dtype=int)
 
     edges = np.histogram_bin_edges(values, bins=bins)
@@ -502,9 +533,10 @@ def empirical_distribution(
     * numeric : sequence of bool
           Flags indicating whether each variable is numeric. Numeric variables
           are discretized; categorical variables are symbolically encoded.
-    * n_bins : int or "auto", default="auto"
+    * n_bins : int, "auto", or "adaptive", default="auto"
           Number of uniform bins for numeric variables.
-          If ``"auto"``, Rice's rule is used.
+          ``"auto"`` uses ``max(2, floor(2 * n_samples**(1/3)))``.
+          ``"adaptive"`` is equivalent for one-dimensional quantities.
 
     Returns
     * EmpiricalSummary

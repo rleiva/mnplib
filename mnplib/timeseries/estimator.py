@@ -45,7 +45,7 @@ from .selection import (
 
 XType = Literal["auto", "numeric", "categorical"]
 YType = Literal["auto", "numeric"]
-BinSpec = int | Literal["auto"]
+BinSpec = int | Literal["auto", "adaptive"]
 Aggregation = Literal[
     "euclidean",
     "arithmetic",

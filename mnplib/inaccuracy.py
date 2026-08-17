@@ -24,7 +24,7 @@ from .utils import empirical_distribution
 
 
 YType = Literal["auto", "numeric", "categorical"]
-BinSpec = int | Literal["auto"]
+BinSpec = int | Literal["auto", "adaptive"]
 
 
 class Inaccuracy(BaseEstimator):
@@ -42,9 +42,10 @@ class Inaccuracy(BaseEstimator):
     y_type : {"auto", "numeric", "categorical"}, default="auto"
         Encoding strategy for the target variable.
 
-    n_bins : int or "auto", default="auto"
-        Number of uniform bins used for numeric targets. If ``"auto"``,
-        Rice's rule is used by the empirical-distribution utilities.
+    n_bins : int, "auto", or "adaptive", default="auto"
+        Number of uniform bins used for numeric targets. ``"auto"`` uses
+        ``max(2, floor(2 * n_samples**(1/3)))``. ``"adaptive"`` is equivalent
+        for target-only quantities.
     """
 
     _VALID_Y_TYPES = ("auto", "numeric", "categorical")

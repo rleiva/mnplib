@@ -100,7 +100,10 @@ def test_results_dataframe_is_sorted_and_has_expected_columns():
         "surfeit",
     }
     assert expected.issubset(df.columns)
-    assert df["nescience"].is_monotonic_increasing
+    values = df["nescience"].to_numpy(dtype=float)
+    finite = np.isfinite(values)
+    assert list(finite) == sorted(finite, reverse=True)
+    assert np.all(np.diff(values[finite]) >= 0.0)
     assert df.iloc[0]["model_name"] == ts.model_name_
 
 
