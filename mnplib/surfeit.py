@@ -4,10 +4,9 @@ Surfeit based on compressed model descriptions.
 This module implements the surfeit component of nescience. Surfeit measures
 how much unnecessary structure appears to be present in a model description.
 
-The class is intentionally string-based: it computes surfeit from an explicit
-model description string. Model-specific serialization is deliberately kept
-outside this class, so the metric remains independent of any particular machine
-learning library or estimator type.
+The string-based computation is the primitive metric operation. Fitted-model
+methods obtain canonical model descriptions through the library serializer
+layer and then delegate to the same string-based computation.
 
 @author:    Rafael Garcia Leiva
 @mail:      rgarcialeiva@gmail.com
@@ -27,6 +26,7 @@ from sklearn.utils import check_X_y
 from sklearn.utils.multiclass import type_of_target
 from sklearn.utils.validation import check_is_fitted
 
+from .models import sklearn_model_artifacts
 from .utils import empirical_distribution
 
 YType = Literal["auto", "numeric", "categorical"]
@@ -34,13 +34,17 @@ BinSpec = int | Literal["auto", "adaptive"]
 
 class Surfeit(BaseEstimator):
     """
-    Compute the surfeit of a model description string.
+    Compute the surfeit of a model description or fitted estimator.
 
     Surfeit is estimated by comparing the raw length of a model description with
     a compressed reference length. The compressed length is corrected by
     subtracting the fixed zlib wrapper overhead, then bounded by the target code
     length. This prevents the reference description from exceeding the amount of
     information available in the target representation.
+
+    Use ``surfeit_string()`` when a canonical model description is already
+    available. Use ``surfeit_model()`` for a fitted estimator supported by the
+    library serializer layer.
 
     Parameters
     ----------
@@ -85,9 +89,9 @@ class Surfeit(BaseEstimator):
         """
         Fit the surfeit object with a dataset.
 
-        The feature matrix is stored only to preserve familiar estimator shape
-        attributes. Surfeit itself depends on the target representation and on a
-        model description string.
+        The feature matrix is stored to preserve familiar estimator attributes
+        and to support fitted-model serialization when no explicit evaluation
+        matrix is provided.
 
         Parameters
         ----------
@@ -102,9 +106,14 @@ class Surfeit(BaseEstimator):
         self : Surfeit
             Fitted estimator.
         """
+        feature_names = self._feature_names_from_input(X)
         self.X_, self.y_ = check_X_y(X, y, dtype=None, ensure_2d=True)
         self._fit_target(self.y_)
         self.n_features_in_ = self.X_.shape[1]
+        self._serializer_X_ = X if feature_names is not None else self.X_
+        if feature_names is None:
+            feature_names = [f"x{i}" for i in range(self.n_features_in_)]
+        self.feature_names_in_ = np.asarray(feature_names, dtype=object)
 
         return self
 
@@ -126,6 +135,7 @@ class Surfeit(BaseEstimator):
             Fitted estimator.
         """
         self.X_ = None
+        self._clear_feature_metadata()
         self._fit_target(y)
 
         return self
@@ -155,6 +165,104 @@ class Surfeit(BaseEstimator):
             compressed_length=compressed_length,
         )
 
+    def surfeit_model(
+        self,
+        model,
+        *,
+        X=None,
+        feature_names=None,
+        feature_indices=None,
+    ) -> float:
+        """
+        Compute surfeit for a fitted estimator.
+
+        The estimator is serialized through the library model adapter layer.
+        The resulting canonical model description is evaluated by
+        ``surfeit_string()``.
+
+        Parameters
+        ----------
+        model : fitted estimator
+            Fitted model supported by the serializer layer.
+
+        X : array-like of shape (n_samples, n_features), optional
+            Evaluation matrix used by serializers that require model inputs.
+            If omitted, the matrix supplied to ``fit(X, y)`` is used when
+            available.
+
+        feature_names : sequence of str, optional
+            Names for the model input columns. If omitted, names are resolved
+            from ``fit(X, y)``, from ``X``, or from the fitted estimator input
+            dimension.
+
+        feature_indices : sequence of int, optional
+            Mapping from local estimator input columns to original feature
+            indices.
+
+        Returns
+        -------
+        float
+            Surfeit value in the interval [0, 1].
+        """
+        check_is_fitted(self)
+        model_string = self._model_string_from_model(
+            model,
+            X=X,
+            feature_names=feature_names,
+            feature_indices=feature_indices,
+        )
+        return self.surfeit_string(model_string)
+
+    def model_description(
+        self,
+        model,
+        *,
+        X=None,
+        feature_names=None,
+        feature_indices=None,
+    ) -> dict[str, object]:
+        """
+        Return canonical model-description diagnostics for a fitted estimator.
+
+        Parameters
+        ----------
+        model : fitted estimator
+            Fitted model supported by the serializer layer.
+
+        X : array-like of shape (n_samples, n_features), optional
+            Evaluation matrix used by serializers that require model inputs.
+
+        feature_names : sequence of str, optional
+            Names for the model input columns.
+
+        feature_indices : sequence of int, optional
+            Mapping from local estimator input columns to original feature
+            indices.
+
+        Returns
+        -------
+        dict
+            Model string, length diagnostics, surfeit, and serializer metadata.
+        """
+        check_is_fitted(self)
+        artifacts = self._model_artifacts_from_model(
+            model,
+            X=X,
+            feature_names=feature_names,
+            feature_indices=feature_indices,
+        )
+        lengths = self.description_lengths(artifacts.model_string)
+        value = self.surfeit_string(artifacts.model_string)
+
+        return {
+            "model_string": artifacts.model_string,
+            **lengths,
+            "surfeit": value,
+            "model_type": artifacts.model_type,
+            "selected_features": list(artifacts.subset),
+            "n_selected_features": len(artifacts.subset),
+        }
+
     def description_lengths(self, model_string: str) -> dict[str, int]:
         """
         Return byte-length diagnostics for a model description string.
@@ -175,6 +283,198 @@ class Surfeit(BaseEstimator):
             "model_length": len(model_bytes),
             "model_compressed_length": len(self._compress_bytes(model_bytes)),
         }
+
+    def _model_string_from_model(
+        self,
+        model,
+        *,
+        X=None,
+        feature_names=None,
+        feature_indices=None,
+    ) -> str:
+        """Return a canonical model description for a fitted estimator."""
+        return self._model_artifacts_from_model(
+            model,
+            X=X,
+            feature_names=feature_names,
+            feature_indices=feature_indices,
+        ).model_string
+
+    def _model_artifacts_from_model(
+        self,
+        model,
+        *,
+        X=None,
+        feature_names=None,
+        feature_indices=None,
+    ):
+        """Return serializer artifacts for a fitted estimator."""
+        X_model = self._resolve_model_X(
+            model,
+            X=X,
+            feature_names=feature_names,
+            feature_indices=feature_indices,
+        )
+        resolved_feature_names = self._resolve_model_feature_names(
+            model,
+            X=X_model,
+            feature_names=feature_names,
+            feature_indices=feature_indices,
+        )
+        return sklearn_model_artifacts(
+            model,
+            X_model,
+            feature_names=resolved_feature_names,
+            feature_indices=feature_indices,
+        )
+
+    def _resolve_model_X(
+        self,
+        model,
+        *,
+        X=None,
+        feature_names=None,
+        feature_indices=None,
+    ):
+        """Resolve the model input matrix used by the serializer layer."""
+        if X is not None:
+            if feature_indices is not None:
+                shape = getattr(X, "shape", None)
+                if (
+                    shape is not None
+                    and len(shape) == 2
+                    and int(shape[1]) != len(list(feature_indices))
+                ):
+                    return self._take_columns(X, feature_indices)
+            return X
+
+        if getattr(self, "X_", None) is not None:
+            fitted_X = getattr(self, "_serializer_X_", self.X_)
+            if feature_indices is None:
+                return fitted_X
+            return self._take_columns(fitted_X, feature_indices)
+
+        n_features = self._infer_model_input_count(
+            model,
+            feature_names=feature_names,
+            feature_indices=feature_indices,
+        )
+        return np.zeros((1, n_features), dtype=float)
+
+    def _resolve_model_feature_names(
+        self,
+        model,
+        *,
+        X,
+        feature_names=None,
+        feature_indices=None,
+    ) -> list[str]:
+        """Resolve model input names for serializer validation."""
+        n_features = self._infer_model_input_count(
+            model,
+            X=X,
+            feature_names=feature_names,
+            feature_indices=feature_indices,
+        )
+
+        if feature_names is not None:
+            return self._align_feature_names(
+                feature_names,
+                n_features=n_features,
+                feature_indices=feature_indices,
+            )
+
+        if hasattr(self, "feature_names_in_"):
+            return self._align_feature_names(
+                self.feature_names_in_,
+                n_features=n_features,
+                feature_indices=feature_indices,
+            )
+
+        names = self._feature_names_from_input(X)
+        if names is not None:
+            return self._align_feature_names(
+                names,
+                n_features=n_features,
+                feature_indices=feature_indices,
+            )
+
+        return [f"x{i}" for i in range(n_features)]
+
+    @staticmethod
+    def _feature_names_from_input(X):
+        """Return column names from a tabular input when available."""
+        if hasattr(X, "columns"):
+            return [str(name) for name in X.columns]
+        return None
+
+    @classmethod
+    def _align_feature_names(
+        cls,
+        names,
+        *,
+        n_features: int,
+        feature_indices=None,
+    ) -> list[str]:
+        """Return feature names matching the estimator input dimension."""
+        names = [str(name) for name in names]
+        if len(names) == int(n_features):
+            return names
+
+        if feature_indices is not None:
+            indices = [int(index) for index in feature_indices]
+            if indices and max(indices) < len(names):
+                aligned = [names[index] for index in indices]
+                if len(aligned) == int(n_features):
+                    return aligned
+
+        raise ValueError(
+            "feature_names must have length {}. Got {} names instead."
+            .format(int(n_features), len(names))
+        )
+
+    @staticmethod
+    def _take_columns(X, feature_indices):
+        """Return selected columns from an array-like or DataFrame input."""
+        indices = [int(index) for index in feature_indices]
+        if hasattr(X, "iloc"):
+            return X.iloc[:, indices]
+        return np.asarray(X)[:, indices]
+
+    @staticmethod
+    def _infer_model_input_count(
+        model,
+        *,
+        X=None,
+        feature_names=None,
+        feature_indices=None,
+    ) -> int:
+        """Infer the number of columns expected by the fitted model."""
+        if X is not None:
+            shape = getattr(X, "shape", None)
+            if shape is not None and len(shape) == 2:
+                return int(shape[1])
+
+        if feature_indices is not None:
+            return len(list(feature_indices))
+
+        if feature_names is not None:
+            return len(list(feature_names))
+
+        n_features = getattr(model, "n_features_in_", None)
+        if n_features is not None:
+            return int(n_features)
+
+        raise ValueError(
+            "Feature information is required to serialize this model. "
+            "Provide X or feature_names, or fit Surfeit with X and y."
+        )
+
+    def _clear_feature_metadata(self) -> None:
+        """Remove feature metadata when fitting with only a target vector."""
+        for name in ("n_features_in_", "feature_names_in_", "_serializer_X_"):
+            if hasattr(self, name):
+                delattr(self, name)
 
     def _fit_target(self, y) -> None:
         """Fit target-dependent attributes."""
@@ -356,3 +656,131 @@ def surfeit_score(
     metric.fit_y(y)
 
     return metric.surfeit_string(model_string)
+
+
+def surfeit_model_score(
+    model,
+    X,
+    y,
+    *,
+    feature_names=None,
+    feature_indices=None,
+    y_type: YType = "auto",
+    n_bins: BinSpec = "auto",
+    zlib_level: int = 9,
+    zlib_overhead: int = 6,
+) -> float:
+    """
+    Compute surfeit for a fitted estimator using a functional interface.
+
+    Parameters
+    ----------
+    model : fitted estimator
+        Fitted model supported by the serializer layer.
+
+    X : array-like of shape (n_samples, n_features)
+        Evaluation matrix.
+
+    y : array-like of shape (n_samples,)
+        Target values used to fit the surfeit metric.
+
+    feature_names : sequence of str, optional
+        Names for the model input columns.
+
+    feature_indices : sequence of int, optional
+        Mapping from local estimator input columns to original feature indices.
+
+    y_type : {"auto", "numeric", "categorical"}, default="auto"
+        Encoding strategy for the target variable.
+
+    n_bins : int, "auto", or "adaptive", default="auto"
+        Number of uniform bins used for numeric targets.
+
+    zlib_level : int, default=9
+        Compression level passed to ``zlib.compress``.
+
+    zlib_overhead : int, default=6
+        Estimated zlib wrapper overhead, in bytes.
+
+    Returns
+    -------
+    float
+        Surfeit value in the interval [0, 1].
+    """
+    metric = Surfeit(
+        y_type=y_type,
+        n_bins=n_bins,
+        zlib_level=zlib_level,
+        zlib_overhead=zlib_overhead,
+    )
+    metric.fit(X, y)
+    return metric.surfeit_model(
+        model,
+        X=X,
+        feature_names=feature_names,
+        feature_indices=feature_indices,
+    )
+
+
+def model_description(
+    model,
+    X,
+    y,
+    *,
+    feature_names=None,
+    feature_indices=None,
+    y_type: YType = "auto",
+    n_bins: BinSpec = "auto",
+    zlib_level: int = 9,
+    zlib_overhead: int = 6,
+) -> dict[str, object]:
+    """
+    Return model-description diagnostics using a functional interface.
+
+    Parameters
+    ----------
+    model : fitted estimator
+        Fitted model supported by the serializer layer.
+
+    X : array-like of shape (n_samples, n_features)
+        Evaluation matrix.
+
+    y : array-like of shape (n_samples,)
+        Target values used to fit the surfeit metric.
+
+    feature_names : sequence of str, optional
+        Names for the model input columns.
+
+    feature_indices : sequence of int, optional
+        Mapping from local estimator input columns to original feature indices.
+
+    y_type : {"auto", "numeric", "categorical"}, default="auto"
+        Encoding strategy for the target variable.
+
+    n_bins : int, "auto", or "adaptive", default="auto"
+        Number of uniform bins used for numeric targets.
+
+    zlib_level : int, default=9
+        Compression level passed to ``zlib.compress``.
+
+    zlib_overhead : int, default=6
+        Estimated zlib wrapper overhead, in bytes.
+
+    Returns
+    -------
+    dict
+        Model string, length diagnostics, surfeit, and serializer metadata.
+    """
+    metric = Surfeit(
+        y_type=y_type,
+        n_bins=n_bins,
+        zlib_level=zlib_level,
+        zlib_overhead=zlib_overhead,
+    )
+    metric.fit(X, y)
+    return metric.model_description(
+        model,
+        X=X,
+        feature_names=feature_names,
+        feature_indices=feature_indices,
+    )

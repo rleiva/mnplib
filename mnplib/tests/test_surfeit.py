@@ -1,25 +1,39 @@
 """
 Tests for the simplified Surfeit class.
 
-These tests target the string-based API:
-
-    - Surfeit(y_type="auto", n_bins="auto", zlib_level=9, zlib_overhead=6)
-    - fit(X, y)
-    - fit_y(y)
-    - surfeit_string(model_string)
-    - surfeit_score(model_string, y, ...)
-
-Model-specific serialization is intentionally outside the Surfeit class.
+These tests cover explicit model strings and fitted estimators supported by the
+canonical serializer layer.
 """
 
 import zlib
 
 import numpy as np
+import pandas as pd
 import pytest
 
+from sklearn.datasets import make_regression
+from sklearn.ensemble import RandomForestRegressor
 from sklearn.exceptions import NotFittedError
+from sklearn.linear_model import LinearRegression
 
-from mnplib.surfeit import Surfeit, surfeit_score
+from mnplib.regressor import NescienceRegressor
+from mnplib.surfeit import (
+    Surfeit,
+    model_description,
+    surfeit_model_score,
+    surfeit_score,
+)
+
+
+def _linear_regression_problem():
+    X, y = make_regression(
+        n_samples=80,
+        n_features=3,
+        noise=0.1,
+        random_state=42,
+    )
+    model = LinearRegression().fit(X, y)
+    return X, y, model
 
 
 def test_constructor_defaults():
@@ -54,6 +68,7 @@ def test_fit_sets_fitted_attributes_for_classification_target():
     assert metric.is_fitted_ is True
     assert metric.n_samples_in_ == len(y)
     assert metric.n_features_in_ == 1
+    assert metric.feature_names_in_.tolist() == ["x0"]
     assert metric.y_isnumeric_ is False
     assert metric.len_y_ >= 0.0
 
@@ -103,6 +118,168 @@ def test_surfeit_score_matches_estimator_usage():
     via_estimator = metric.surfeit_string(model_string)
 
     assert direct == pytest.approx(via_estimator)
+
+
+def test_surfeit_model_works_for_fitted_linear_regression():
+    X, y, model = _linear_regression_problem()
+
+    metric = Surfeit(y_type="numeric").fit(X, y)
+    value = metric.surfeit_model(model)
+
+    assert isinstance(value, float)
+    assert 0.0 <= value <= 1.0
+
+
+def test_model_description_returns_lengths_and_surfeit():
+    X, y, model = _linear_regression_problem()
+
+    metric = Surfeit(y_type="numeric").fit(X, y)
+    description = metric.model_description(model)
+
+    assert {
+        "model_string",
+        "model_length",
+        "model_compressed_length",
+        "surfeit",
+    }.issubset(description)
+    assert description["model_type"] == "LinearRegression"
+    assert description["selected_features"] == [0, 1, 2]
+    assert description["n_selected_features"] == 3
+    assert description["model_length"] == len(
+        description["model_string"].encode("utf-8")
+    )
+    assert description["surfeit"] == pytest.approx(metric.surfeit_model(model))
+
+
+def test_surfeit_model_matches_serializer_string_result():
+    X, y, model = _linear_regression_problem()
+
+    metric = Surfeit(y_type="numeric").fit(X, y)
+    model_string = metric.model_description(model)["model_string"]
+
+    assert metric.surfeit_model(model) == pytest.approx(
+        metric.surfeit_string(model_string)
+    )
+
+
+def test_fit_preserves_dataframe_feature_names_for_model_api():
+    X, y, _ = _linear_regression_problem()
+    X_df = pd.DataFrame(X, columns=["a", "b", "c"])
+    model = LinearRegression().fit(X_df, y)
+
+    metric = Surfeit(y_type="numeric").fit(X_df, y)
+    description = metric.model_description(model)
+
+    assert metric.feature_names_in_.tolist() == ["a", "b", "c"]
+    assert "model_string" in description
+    assert 0.0 <= description["surfeit"] <= 1.0
+
+
+def test_surfeit_model_accepts_explicit_feature_names():
+    X, y, model = _linear_regression_problem()
+
+    metric = Surfeit(y_type="numeric").fit(X, y)
+    value = metric.surfeit_model(model, feature_names=["a", "b", "c"])
+
+    assert 0.0 <= value <= 1.0
+
+
+def test_surfeit_model_after_fit_y_uses_supplied_X_or_feature_names():
+    X, y, model = _linear_regression_problem()
+
+    metric = Surfeit(y_type="numeric").fit_y(y)
+    from_X = metric.surfeit_model(model, X=X)
+    from_names = metric.surfeit_model(model, feature_names=["a", "b", "c"])
+
+    assert 0.0 <= from_X <= 1.0
+    assert from_names == pytest.approx(from_X)
+
+
+def test_surfeit_model_rejects_unsupported_estimator_type():
+    X, y, _ = _linear_regression_problem()
+    model = RandomForestRegressor(n_estimators=3, random_state=42).fit(X, y)
+    metric = Surfeit(y_type="numeric").fit(X, y)
+
+    with pytest.raises(ValueError, match="Unsupported scikit-learn model type"):
+        metric.surfeit_model(model)
+
+
+def test_surfeit_model_rejects_unfitted_supported_estimator():
+    X, y, _ = _linear_regression_problem()
+    metric = Surfeit(y_type="numeric").fit(X, y)
+
+    with pytest.raises(NotFittedError):
+        metric.surfeit_model(LinearRegression())
+
+
+def test_surfeit_model_score_matches_estimator_usage():
+    X, y, model = _linear_regression_problem()
+
+    functional = surfeit_model_score(model, X, y, y_type="numeric")
+    metric = Surfeit(y_type="numeric").fit(X, y)
+
+    assert functional == pytest.approx(metric.surfeit_model(model))
+
+
+def test_surfeit_model_score_slices_full_X_with_feature_indices():
+    X, y, _ = _linear_regression_problem()
+    selected = [0, 2]
+    model = LinearRegression().fit(X[:, selected], y)
+
+    functional = surfeit_model_score(
+        model,
+        X,
+        y,
+        feature_indices=selected,
+        y_type="numeric",
+    )
+    metric = Surfeit(y_type="numeric").fit(X, y)
+    direct = metric.surfeit_model(
+        model,
+        X=X[:, selected],
+        feature_indices=selected,
+    )
+
+    assert functional == pytest.approx(direct)
+
+
+def test_functional_model_description_matches_estimator_usage():
+    X, y, model = _linear_regression_problem()
+
+    direct = model_description(model, X, y, y_type="numeric")
+    metric = Surfeit(y_type="numeric").fit(X, y)
+    via_estimator = metric.model_description(model)
+
+    assert direct["model_string"] == via_estimator["model_string"]
+    assert direct["surfeit"] == pytest.approx(via_estimator["surfeit"])
+
+
+def test_surfeit_model_matches_automl_candidate_artifact_surfeit():
+    X, y = make_regression(
+        n_samples=120,
+        n_features=3,
+        n_informative=2,
+        noise=0.1,
+        random_state=7,
+    )
+    automl = NescienceRegressor(
+        models=["linear_regression"],
+        n_bins=2,
+        max_feature_prefixes=2,
+    ).fit(X, y)
+    result = automl.best_result_
+    selected = list(result.artifacts.subset)
+
+    value = automl.nescience_.surfeit_.surfeit_model(
+        result.model.estimator,
+        X=X[:, selected],
+        feature_indices=selected,
+    )
+
+    assert value == pytest.approx(result.components["surfeit"])
+    assert value == pytest.approx(
+        automl.nescience_.surfeit_.surfeit_string(result.artifacts.model_string)
+    )
 
 
 def test_surfeit_string_requires_fitted_estimator():

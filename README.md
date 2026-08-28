@@ -50,6 +50,25 @@ discretization to reduce empirical joint sparsity.
 
 `Surfeit` measures the unnecessary complexity of a model description. A model may be accurate but unnecessarily complex; surfeit is intended to capture this excess descriptive cost.
 
+```python
+from sklearn.linear_model import LinearRegression
+from mnplib.surfeit import Surfeit
+
+model = LinearRegression()
+model.fit(X, y)
+
+surfeit = Surfeit()
+surfeit.fit(X, y)
+
+value = surfeit.surfeit_model(model)
+```
+
+When a canonical model description is already available, the string API remains available:
+
+```python
+value = surfeit.surfeit_string(model_string)
+```
+
 ### Nescience
 
 `Nescience` combines representation quality, model error, and model complexity into a single quantity. It can be used to compare models from different model families, provided that each model can be converted into an explicit representation containing:
