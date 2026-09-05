@@ -29,8 +29,7 @@ class TimeSeriesCandidateResult:
     """
     Nescience evaluation result for one fitted forecasting candidate.
 
-    The dataclass replaces string-key dictionaries so that result construction is
-    explicit, typed, and easier to maintain. Values that are displayed in result
+    Result construction is explicit and typed. Values displayed in result
     tables are derived from this object in one place.
     """
 
@@ -47,11 +46,21 @@ class TimeSeriesCandidateResult:
     model_string: str
     predictions: np.ndarray
     metadata: dict[str, Any]
+    subset_diagnostics: dict[str, Any]
+
+    @property
+    def is_reliable(self) -> bool:
+        """Return whether the subset diagnostics are reliable."""
+        return bool(self.subset_diagnostics.get("is_reliable", True))
 
     @property
     def miscoding(self) -> float:
         """Return subset miscoding as ``max(deficiency, surplus)``."""
-        return max(float(self.components["deficiency"]), float(self.components["surplus"]))
+        deficiency = float(self.components["deficiency"])
+        surplus = float(self.components["surplus"])
+        if not (np.isfinite(deficiency) and np.isfinite(surplus)):
+            return float("nan")
+        return max(deficiency, surplus)
 
     @property
     def n_selected_features(self) -> int:
@@ -109,8 +118,9 @@ class TimeSeriesCandidateEvaluator:
             raise ValueError("Candidate subset must select at least one feature.")
 
         predictions = np.asarray(spec.model.predict(self.X[:, selected]), dtype=float).ravel()
+        subset_diagnostics = self.miscoding.subset_analysis(subset)
         components = self._components(
-            subset=subset,
+            subset_diagnostics=subset_diagnostics,
             predictions=predictions,
             model_string=spec.model_string,
         )
@@ -140,13 +150,20 @@ class TimeSeriesCandidateEvaluator:
             model_string=spec.model_string,
             predictions=predictions,
             metadata=metadata,
+            subset_diagnostics=subset_diagnostics,
         )
 
-    def _components(self, *, subset, predictions, model_string: str) -> dict[str, float]:
+    def _components(
+        self,
+        *,
+        subset_diagnostics,
+        predictions,
+        model_string: str,
+    ) -> dict[str, float]:
         """Compute the four nescience components from explicit artifacts."""
         return {
-            "deficiency": float(self.miscoding.miscoding_subset(subset, mode="deficiency")),
-            "surplus": float(self.miscoding.miscoding_subset(subset, mode="surplus")),
+            "deficiency": float(subset_diagnostics["deficiency"]),
+            "surplus": float(subset_diagnostics["surplus"]),
             "inaccuracy": float(self.inaccuracy.inaccuracy_predictions(predictions)),
             "surfeit": float(self.surfeit.surfeit_string(model_string)),
         }
@@ -167,8 +184,20 @@ def candidate_results_dataframe(results: list[TimeSeriesCandidateResult]) -> pd.
             "selected_feature_indices": result.selected_feature_indices,
             "selected_feature_names": result.selected_feature_names,
             "miscoding": result.miscoding,
+            "is_reliable": result.is_reliable,
+            "failure_reason": result.subset_diagnostics.get("failure_reason"),
+            "n_samples": result.subset_diagnostics.get("n_samples"),
+            "n_observed_joint_states": result.subset_diagnostics.get("n_observed_joint_states"),
+            "mean_joint_occupancy": result.subset_diagnostics.get("mean_joint_occupancy"),
+            "n_singleton_joint_states": result.subset_diagnostics.get("n_singleton_joint_states"),
+            "singleton_fraction": result.subset_diagnostics.get("singleton_fraction"),
         }
         row.update(result.components)
         rows.append(row)
 
-    return pd.DataFrame(rows).sort_values("nescience", ignore_index=True)
+    return pd.DataFrame(rows).sort_values(
+        ["is_reliable", "nescience"],
+        ascending=[False, True],
+        ignore_index=True,
+        na_position="last",
+    )

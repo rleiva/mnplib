@@ -5,9 +5,9 @@ The estimator treats forecasting as model selection over lagged representations.
 It builds a supervised lagged matrix, evaluates a compact set of forecasting
 families, and selects the candidate with minimum nescience.
 
-The implementation follows the latest explicit-artifact API of mnplib: candidate
-models are evaluated through ``subset``, ``predictions``, and ``model_string``.
-The public estimator never asks a metric object to inspect a fitted model.
+The implementation follows the API of mnplib: candidate models are evaluated through
+``subset``, ``predictions``, and ``model_string``. The public estimator never asks
+a metric object to inspect a fitted model.
 """
 
 from __future__ import annotations
@@ -170,7 +170,7 @@ class TimeSeries(BaseEstimator, RegressorMixin):
 
         self.miscoding_ = self._make_miscoding().fit(self.X_supervised_, self.y_supervised_)
         self.inaccuracy_ = self._make_inaccuracy().fit_y(self.y_supervised_)
-        self.surfeit_ = self._make_surfeit().fit_y(self.y_supervised_)
+        self.surfeit_ = self._make_surfeit().fit(self.X_supervised_, self.y_supervised_)
         self.nescience_ = self._make_aggregator()
 
         specs = self._candidate_specs()
@@ -187,7 +187,18 @@ class TimeSeries(BaseEstimator, RegressorMixin):
             feature_names=self.feature_names_in_,
         )
         results = [evaluator.evaluate(spec) for spec in specs]
-        results.sort(key=lambda result: result.nescience)
+        valid_results = [
+            result
+            for result in results
+            if result.is_reliable and np.isfinite(result.nescience)
+        ]
+        if not valid_results:
+            raise ValueError(
+                "No reliable time-series candidate subset could be evaluated "
+                "with the available sample size and discretization."
+            )
+
+        results.sort(key=self._candidate_sort_key)
 
         self.candidate_results_ = results
         self.results_ = candidate_results_dataframe(results)
@@ -338,9 +349,9 @@ class TimeSeries(BaseEstimator, RegressorMixin):
             )
         return pd.concat(tables, ignore_index=True)
 
-    # ------------------------------------------------------------------
+    #
     # Candidate creation
-    # ------------------------------------------------------------------
+    #
 
     def _candidate_specs(self) -> list[TimeSeriesCandidateSpec]:
         """Create and fit all configured candidate forecasting models."""
@@ -443,9 +454,9 @@ class TimeSeries(BaseEstimator, RegressorMixin):
         subset[:window] = True
         return subset
 
-    # ------------------------------------------------------------------
+    #
     # Lag diagnostics
-    # ------------------------------------------------------------------
+    #
 
     def _lag_analysis(
         self,
@@ -488,9 +499,9 @@ class TimeSeries(BaseEstimator, RegressorMixin):
         )
         return metric.feature_analysis().iloc[0]
 
-    # ------------------------------------------------------------------
+    #
     # Metric factories
-    # ------------------------------------------------------------------
+    #
 
     def _make_aggregator(self) -> Nescience:
         """Return an unfitted Nescience instance used only for aggregation."""
@@ -526,9 +537,9 @@ class TimeSeries(BaseEstimator, RegressorMixin):
             zlib_overhead=self.zlib_overhead,
         )
 
-    # ------------------------------------------------------------------
+    #
     # Configuration and helpers
-    # ------------------------------------------------------------------
+    #
 
     def _resolved_model_names(self) -> tuple[str, ...]:
         if self.models is None:
@@ -601,6 +612,12 @@ class TimeSeries(BaseEstimator, RegressorMixin):
         self.selected_feature_indices_ = list(result.selected_feature_indices)
         self.selected_feature_names_ = list(result.selected_feature_names)
         self.selected_lags_ = self._selected_lags_from_indices(result.selected_feature_indices)
+
+    @staticmethod
+    def _candidate_sort_key(result: TimeSeriesCandidateResult) -> tuple[object, ...]:
+        if result.is_reliable and np.isfinite(result.nescience):
+            return (0, float(result.nescience), result.n_selected_features, result.model_name)
+        return (1, float("inf"), result.n_selected_features, result.model_name)
 
     def _validate_configuration(self) -> None:
         if self.y_type not in self._VALID_Y_TYPES:

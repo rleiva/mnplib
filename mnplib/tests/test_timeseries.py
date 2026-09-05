@@ -98,12 +98,21 @@ def test_results_dataframe_is_sorted_and_has_expected_columns():
         "miscoding",
         "inaccuracy",
         "surfeit",
+        "is_reliable",
+        "failure_reason",
+        "n_samples",
+        "n_observed_joint_states",
+        "mean_joint_occupancy",
+        "n_singleton_joint_states",
+        "singleton_fraction",
     }
     assert expected.issubset(df.columns)
     values = df["nescience"].to_numpy(dtype=float)
     finite = np.isfinite(values)
     assert list(finite) == sorted(finite, reverse=True)
     assert np.all(np.diff(values[finite]) >= 0.0)
+    assert bool(df.iloc[0]["is_reliable"])
+    assert np.isfinite(float(df.iloc[0]["nescience"]))
     assert df.iloc[0]["model_name"] == ts.model_name_
 
 
@@ -278,3 +287,27 @@ def test_candidate_components_are_computed_from_explicit_artifacts():
 
     assert result.components == pytest.approx(direct_components)
     assert result.nescience == pytest.approx(ts.nescience_.aggregate_components(**direct_components))
+
+
+def test_candidate_results_include_subset_reliability_diagnostics():
+    y = make_series()
+    ts = TimeSeries(window_size=4, models=["autoregressive"], n_bins=3).fit(y)
+    result = ts.best_result_
+    diagnostics = ts.miscoding_.subset_analysis(result.subset)
+
+    assert result.is_reliable is True
+    assert result.subset_diagnostics["is_reliable"] is True
+    assert result.subset_diagnostics["failure_reason"] is None
+    assert result.subset_diagnostics["n_samples"] == diagnostics["n_samples"]
+
+
+def test_fit_raises_when_no_reliable_candidate_can_be_evaluated():
+    rng = np.random.default_rng(123)
+    y = rng.normal(size=10)
+
+    with pytest.raises(ValueError, match="No reliable time-series candidate subset"):
+        TimeSeries(
+            window_size=5,
+            models=["moving_average"],
+            n_bins=4,
+        ).fit(y)
