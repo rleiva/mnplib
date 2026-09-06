@@ -12,7 +12,7 @@ The library is based on the [*Minimum Nescience Principle*](https://www.amazon.c
 
 > **Development status**
 >
-> `mnplib 2.0.0a1` is an alpha release. The API, documentation, examples, and automated searchers are still under active development. The package is suitable for experimentation and testing, but it should not yet be considered production-ready.
+> `mnplib 2` is an alpha release. The API, documentation, examples, and automated searchers are still under active development. The package is suitable for experimentation and testing, but it should not yet be considered production-ready.
 
 ## Installation
 
