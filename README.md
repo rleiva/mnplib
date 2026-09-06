@@ -266,7 +266,7 @@ print(mnplib.__version__)
 
 ## Project Status
 
-`mnplib 2.0.0a1` is the first alpha release of the redesigned library. The package is being actively revised, and several parts of the API may still change.
+`mnplib 2` is in alpha release, and is being redesigned. The package is being actively revised, and several parts of the API may still change.
 
 The current priority is to stabilize:
 
