@@ -12,7 +12,7 @@ The library is based on the [*Minimum Nescience Principle*](https://www.amazon.c
 
 > **Development status**
 >
-> `mnplib 2.0.0a1` is an alpha release. The API, documentation, examples, and automated searchers are still under active development. The package is suitable for experimentation and testing, but it should not yet be considered production-ready.
+> `mnplib 2` is an alpha release. The API, documentation, examples, and automated searchers are still under active development. The package is suitable for experimentation and testing, but it should not yet be considered production-ready.
 
 ## Installation
 
@@ -266,7 +266,7 @@ print(mnplib.__version__)
 
 ## Project Status
 
-`mnplib 2.0.0a1` is the first alpha release of the redesigned library. The package is being actively revised, and several parts of the API may still change.
+`mnplib 2` is in alpha release, and is being redesigned. The package is being actively revised, and several parts of the API may still change.
 
 The current priority is to stabilize:
 
