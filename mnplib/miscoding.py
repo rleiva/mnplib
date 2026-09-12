@@ -274,7 +274,7 @@ class Miscoding(BaseEstimator):
                 "feature_index": np.arange(self.n_features_in_),
                 "feature_name": self.feature_names_in_,
                 "is_numeric": self.X_isnumeric_,
-                "code_length": self.feature_code_lengths_,
+                # "code_length": self.feature_code_lengths_,
                 "deficiency": self.deficiency_,
                 "surplus": self.surplus_,
                 "miscoding": self.miscoding_,

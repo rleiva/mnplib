@@ -73,7 +73,33 @@ class CandidateEvaluator:
             subset_mapping=subset_mapping,
             model_string_prefix=model_string_prefix,
         )
+        public_model = model if result_model is None else result_model
 
+        return self.evaluate_artifacts(
+            name=name,
+            family=family,
+            model=public_model,
+            artifacts=artifacts,
+            hyperparameters=hyperparameters,
+            score_X=X_for_adapter,
+        )
+
+    def evaluate_artifacts(
+        self,
+        *,
+        name: str,
+        family: str,
+        model,
+        artifacts: ModelArtifacts,
+        hyperparameters: Mapping[str, Any] | None = None,
+        estimator_score: float | None = None,
+        score_X=None,
+        metadata: Mapping[str, Any] | None = None,
+        result_factory=None,
+    ) -> CandidateResult:
+        """
+        Return a structured result from explicit model artifacts.
+        """
         subset_diagnostics = self.nescience.miscoding_.subset_analysis(
             artifacts.subset
         )
@@ -92,19 +118,31 @@ class CandidateEvaluator:
             ),
         }
         value = self.nescience.aggregate_components(**components)
-        public_model = model if result_model is None else result_model
+        native_score = (
+            float(estimator_score)
+            if estimator_score is not None
+            else self._native_score(model, self.X if score_X is None else score_X)
+        )
 
-        return CandidateResult(
-            name            = str(name),
-            family          = str(family),
-            model           = public_model,
-            nescience       = float(value),
-            components      = dict(components),
-            artifacts       = artifacts,
-            estimator_score = self._native_score(public_model, X_for_adapter),
-            n_selected_features = int(len(artifacts.subset)),
-            hyperparameters = dict(hyperparameters or {}),
-            subset_diagnostics = dict(subset_diagnostics),
+        result_kwargs = {
+            "name": str(name),
+            "family": str(family),
+            "model": model,
+            "nescience": float(value),
+            "components": dict(components),
+            "artifacts": artifacts,
+            "estimator_score": native_score,
+            "n_selected_features": int(len(artifacts.subset)),
+            "hyperparameters": dict(hyperparameters or {}),
+            "subset_diagnostics": dict(subset_diagnostics),
+        }
+
+        if result_factory is None:
+            return CandidateResult(**result_kwargs)
+
+        return result_factory(
+            **result_kwargs,
+            metadata=dict(metadata or {}),
         )
 
     def _remap_artifacts(

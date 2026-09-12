@@ -1,4 +1,4 @@
-"""Tests for the redesigned TimeSeries package."""
+"""Tests for the TimeSeries package."""
 
 import numpy as np
 import pandas as pd
@@ -114,6 +114,7 @@ def test_results_dataframe_is_sorted_and_has_expected_columns():
     assert bool(df.iloc[0]["is_reliable"])
     assert np.isfinite(float(df.iloc[0]["nescience"]))
     assert df.iloc[0]["model_name"] == ts.model_name_
+    assert {"arima", "state_space"}.issubset(set(df["model_family"]))
 
 
 def test_components_nescience_and_model_string():
@@ -122,12 +123,16 @@ def test_components_nescience_and_model_string():
 
     components = ts.components()
     model_string = ts.model_string()
+    description = ts.candidate_model_description()
 
     assert set(components) == {"deficiency", "surplus", "inaccuracy", "surfeit"}
     assert ts.nescience_score() == pytest.approx(ts.best_result_.nescience)
     assert model_string.startswith("SCHEMA canonical_nescience_time_series_model_v1")
     assert "TASK forecasting" in model_string
     assert "RULE" in model_string
+    assert description["candidate"] == ts.best_result_.name
+    assert description["model_string"] == model_string
+    assert description["surfeit"] == pytest.approx(components["surfeit"])
 
 
 def test_explain_contains_time_series_details():
@@ -178,7 +183,7 @@ def test_model_family_filtering():
     y = make_series()
     ts = TimeSeries(window_size=4, models=["moving_average"], n_bins=3).fit(y)
 
-    assert set(result.model_family for result in ts.candidate_results_) == {"moving_average"}
+    assert set(result.family for result in ts.candidate_results_) == {"moving_average"}
     assert ts.model_name_.startswith("moving_average")
 
 
@@ -192,7 +197,7 @@ def test_moving_average_and_smoothing_configuration():
         n_bins=3,
     ).fit(y)
 
-    names = {result.model_name for result in ts.candidate_results_}
+    names = {result.name for result in ts.candidate_results_}
 
     assert "moving_average_2" in names
     assert "moving_average_5" in names
@@ -222,6 +227,15 @@ def test_invalid_configuration_errors():
 
     with pytest.raises(ValueError, match="alphas"):
         TimeSeries(models=["exponential_smoothing"], smoothing_alphas=[1.5]).fit(y)
+
+    with pytest.raises(ValueError, match="ARIMA order"):
+        TimeSeries(models=["arima"], arima_orders=[(1, 0)]).fit(y)
+
+    with pytest.raises(ValueError, match="state-space"):
+        TimeSeries(models=["state_space"], state_space_models=["bad"]).fit(y)
+
+    with pytest.raises(ValueError, match="statsmodels_maxiter"):
+        TimeSeries(models=["arima"], statsmodels_maxiter=0).fit(y)
 
 
 def test_unfitted_methods_raise_not_fitted_error():
@@ -279,10 +293,10 @@ def test_candidate_components_are_computed_from_explicit_artifacts():
     result = ts.best_result_
 
     direct_components = {
-        "deficiency": ts.miscoding_.miscoding_subset(result.subset, mode="deficiency"),
-        "surplus": ts.miscoding_.miscoding_subset(result.subset, mode="surplus"),
-        "inaccuracy": ts.inaccuracy_.inaccuracy_predictions(result.predictions),
-        "surfeit": ts.surfeit_.surfeit_string(result.model_string),
+        "deficiency": ts.miscoding_.miscoding_subset(result.artifacts.subset, mode="deficiency"),
+        "surplus": ts.miscoding_.miscoding_subset(result.artifacts.subset, mode="surplus"),
+        "inaccuracy": ts.inaccuracy_.inaccuracy_predictions(result.artifacts.predictions),
+        "surfeit": ts.surfeit_.surfeit_string(result.artifacts.model_string),
     }
 
     assert result.components == pytest.approx(direct_components)
@@ -293,12 +307,72 @@ def test_candidate_results_include_subset_reliability_diagnostics():
     y = make_series()
     ts = TimeSeries(window_size=4, models=["autoregressive"], n_bins=3).fit(y)
     result = ts.best_result_
-    diagnostics = ts.miscoding_.subset_analysis(result.subset)
+    diagnostics = ts.miscoding_.subset_analysis(result.artifacts.subset)
 
     assert result.is_reliable is True
     assert result.subset_diagnostics["is_reliable"] is True
     assert result.subset_diagnostics["failure_reason"] is None
     assert result.subset_diagnostics["n_samples"] == diagnostics["n_samples"]
+
+
+def test_arima_candidate_uses_shared_artifacts_and_forecasts():
+    y = make_series(n=90)
+    ts = TimeSeries(
+        window_size=5,
+        models=["arima"],
+        arima_orders=[(1, 0, 0)],
+        n_bins=3,
+        statsmodels_maxiter=20,
+    ).fit(y)
+
+    result = ts.best_result_
+    forecast = ts.forecast(steps=3)
+    predictions = ts.predict(ts.X_supervised_)
+    df = ts.results_dataframe()
+
+    assert result.family == "arima"
+    assert result.artifacts.model_string.startswith("SCHEMA canonical_nescience_time_series_model_v1")
+    assert "MODEL arima" in result.artifacts.model_string
+    assert result.artifacts.subset
+    assert np.all(np.isfinite(result.artifacts.predictions))
+    assert predictions.shape == ts.y_supervised_.shape
+    assert ts.score(y) == pytest.approx(result.estimator_score)
+    with pytest.raises(ValueError, match="fitted lagged representation"):
+        ts.predict(ts.X_supervised_[:5])
+    assert forecast.shape == (3,)
+    assert np.all(np.isfinite(forecast))
+    assert set(df["model_family"]) == {"arima"}
+    assert "SARIMAX" in df.iloc[0]["model_type"]
+
+
+def test_state_space_candidate_uses_shared_artifacts_and_forecasts():
+    y = make_series(n=90)
+    ts = TimeSeries(
+        window_size=5,
+        models=["state_space"],
+        state_space_models=["local_level"],
+        n_bins=3,
+        statsmodels_maxiter=20,
+    ).fit(y)
+
+    result = ts.best_result_
+    forecast = ts.forecast(steps=3)
+    predictions = ts.predict(ts.X_supervised_)
+    df = ts.results_dataframe()
+
+    assert result.family == "state_space"
+    assert result.artifacts.model_string.startswith("SCHEMA canonical_nescience_time_series_model_v1")
+    assert "MODEL state_space" in result.artifacts.model_string
+    assert result.artifacts.subset
+    assert np.all(np.isfinite(result.artifacts.predictions))
+    assert predictions.shape == ts.y_supervised_.shape
+    assert ts.score(y) == pytest.approx(result.estimator_score)
+    with pytest.raises(ValueError, match="fitted lagged representation"):
+        ts.predict(ts.X_supervised_[:5])
+    assert forecast.shape == (3,)
+    assert np.all(np.isfinite(forecast))
+    assert set(df["model_family"]) == {"state_space"}
+    assert "UnobservedComponents" in df.iloc[0]["model_type"]
 
 
 def test_fit_raises_when_no_reliable_candidate_can_be_evaluated():

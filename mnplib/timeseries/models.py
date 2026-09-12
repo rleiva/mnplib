@@ -8,20 +8,19 @@ ordinary Python ``repr`` of a fitted estimator.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Literal
-
 import numpy as np
 
 from sklearn.base import BaseEstimator, RegressorMixin
-from sklearn.linear_model import LinearRegression
 from sklearn.utils import check_array
 from sklearn.utils.validation import check_is_fitted
 
-
-TIME_SERIES_SCHEMA = "canonical_nescience_time_series_model_v1"
-ModelFamily = Literal["autoregressive", "moving_average", "exponential_smoothing"]
-
+from mnplib.models.serializers.time_series import (
+    TIME_SERIES_SCHEMA,
+    canonical_arima_model_string,
+    canonical_fixed_model_string,
+    canonical_linear_model_string,
+    canonical_state_space_model_string,
+)
 
 class FixedLinearForecaster(BaseEstimator, RegressorMixin):
     """Linear forecaster with fixed user-supplied coefficients.
@@ -69,16 +68,54 @@ class FixedLinearForecaster(BaseEstimator, RegressorMixin):
         return f"FixedLinearForecaster(name={self.name!r}, weights={weights})"
 
 
-@dataclass(frozen=True)
-class TimeSeriesCandidateSpec:
-    """Fitted candidate model ready for nescience evaluation."""
+class StatsmodelsForecastModel:
+    """Forecasting facade around a fitted statsmodels result object."""
 
-    model_name: str
-    model_family: ModelFamily
-    model: object
-    subset: np.ndarray
-    window_size: int
-    model_string: str
+    def __init__(
+        self,
+        result,
+        *,
+        name: str,
+        family: str,
+        training_predictions,
+    ):
+        self.result_ = result
+        self.name = str(name)
+        self.family = str(family)
+        self.training_predictions_ = np.asarray(training_predictions, dtype=float).ravel()
+        self.n_features_in_ = 1
+        self.is_fitted_ = True
+
+    def predict(self, X):
+        X_checked = check_array(X, dtype=float, ensure_2d=True)
+        n_rows = X_checked.shape[0]
+        if n_rows > self.training_predictions_.shape[0]:
+            raise ValueError(
+                "predict requires no more rows than the fitted one-step prediction path."
+            )
+        return self.training_predictions_[:n_rows].copy()
+
+    def score(self, X, y):
+        y_array = np.asarray(y, dtype=float).ravel()
+        prediction = self.predict(X)
+        if prediction.shape[0] != y_array.shape[0]:
+            raise ValueError("X and y have inconsistent lengths.")
+        denominator = float(np.sum((y_array - np.mean(y_array)) ** 2))
+        if denominator == 0.0:
+            return 0.0
+        numerator = float(np.sum((y_array - prediction) ** 2))
+        return 1.0 - numerator / denominator
+
+    def forecast(self, steps: int = 1, X_future=None) -> np.ndarray:
+        if X_future is not None:
+            raise ValueError("This forecasting model does not use future exogenous values.")
+        steps = int(steps)
+        if steps < 1:
+            raise ValueError("steps must be positive.")
+        return np.asarray(self.result_.forecast(steps=steps), dtype=float).ravel()
+
+    def __repr__(self):
+        return f"StatsmodelsForecastModel(name={self.name!r}, family={self.family!r})"
 
 
 def moving_average_weights(window: int) -> np.ndarray:
@@ -98,93 +135,3 @@ def exponential_smoothing_weights(window: int, alpha: float) -> np.ndarray:
         raise ValueError("alpha must lie in the open interval (0, 1).")
     weights = alpha * (1.0 - alpha) ** np.arange(window)
     return weights / np.sum(weights)
-
-
-def canonical_linear_model_string(
-    *,
-    model: LinearRegression,
-    model_name: str,
-    feature_names: list[str] | tuple[str, ...],
-    precision: int = 6,
-) -> str:
-    """Serialize a fitted linear autoregressive model."""
-    check_is_fitted(model)
-    coefficients = np.asarray(model.coef_, dtype=float).ravel()
-    intercept = float(np.asarray(model.intercept_).ravel()[0])
-    return canonical_weighted_model_string(
-        model_type="autoregressive_linear",
-        model_name=model_name,
-        feature_names=feature_names,
-        weights=coefficients,
-        intercept=intercept,
-        precision=precision,
-        learned=True,
-    )
-
-
-def canonical_fixed_model_string(
-    *,
-    model_type: str,
-    model_name: str,
-    feature_names: list[str] | tuple[str, ...],
-    weights: np.ndarray,
-    intercept: float = 0.0,
-    precision: int = 6,
-) -> str:
-    """Serialize a fixed-coefficient forecasting model."""
-    return canonical_weighted_model_string(
-        model_type=model_type,
-        model_name=model_name,
-        feature_names=feature_names,
-        weights=np.asarray(weights, dtype=float),
-        intercept=float(intercept),
-        precision=precision,
-        learned=False,
-    )
-
-
-def canonical_weighted_model_string(
-    *,
-    model_type: str,
-    model_name: str,
-    feature_names: list[str] | tuple[str, ...],
-    weights: np.ndarray,
-    intercept: float,
-    precision: int,
-    learned: bool,
-) -> str:
-    """Serialize a weighted one-step forecasting rule."""
-    feature_names = [str(name) for name in feature_names]
-    weights = np.asarray(weights, dtype=float).ravel()
-    if len(feature_names) != len(weights):
-        raise ValueError("feature_names and weights must have the same length.")
-
-    lines = [
-        f"SCHEMA {TIME_SERIES_SCHEMA}",
-        f"MODEL {model_type}",
-        "TASK forecasting",
-        f"NAME {model_name}",
-        f"INPUTS {', '.join(feature_names) if feature_names else '<none>'}",
-        "PARAMETERS",
-        f"    n_features = {len(feature_names)}",
-        f"    learned_coefficients = {str(bool(learned)).lower()}",
-        "RULE",
-        f"    y_hat = {format_number(intercept, precision)}",
-    ]
-
-    for weight, name in zip(weights, feature_names):
-        lines.append(f"    y_hat += {format_number(float(weight), precision)} * {name}")
-
-    lines.append("    return y_hat")
-    return "\n".join(lines) + "\n"
-
-
-def format_number(value: float, precision: int) -> str:
-    """Format numbers in canonical model descriptions."""
-    if not np.isfinite(value):
-        raise ValueError("Model descriptions require finite numeric coefficients.")
-    rounded = f"{float(value):.{int(precision)}f}"
-    # Keep at least one decimal place to make numeric constants visually clear.
-    if "." in rounded:
-        rounded = rounded.rstrip("0").rstrip(".")
-    return rounded if "." in rounded else f"{rounded}.0"
