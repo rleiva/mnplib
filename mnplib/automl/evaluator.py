@@ -5,6 +5,7 @@ Reusable candidate evaluator for minimum-nescience AutoML search.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from typing import Any
 
 from mnplib.models import ModelArtifacts, sklearn_model_artifacts
@@ -68,11 +69,9 @@ class CandidateEvaluator:
             feature_names=adapter_feature_names,
             feature_indices=subset_mapping,
         )
-        artifacts = self._remap_artifacts(
-            adapter_artifacts,
-            subset_mapping=subset_mapping,
-            model_string_prefix=model_string_prefix,
-        )
+        artifacts = adapter_artifacts
+        if model_string_prefix:
+            artifacts = replace(artifacts, model_string=model_string_prefix.rstrip() + "\n" + artifacts.model_string)
         public_model = model if result_model is None else result_model
 
         return self.evaluate_artifacts(
@@ -143,32 +142,6 @@ class CandidateEvaluator:
         return result_factory(
             **result_kwargs,
             metadata=dict(metadata or {}),
-        )
-
-    def _remap_artifacts(
-        self,
-        artifacts: ModelArtifacts,
-        *,
-        subset_mapping: Sequence[int] | None,
-        model_string_prefix: str | None,
-    ) -> ModelArtifacts:
-        """
-        Map adapter-local feature indices back to the original representation.
-        """
-        subset = list(artifacts.subset)
-
-        if subset_mapping is not None:
-            subset = [int(subset_mapping[index]) for index in subset]
-
-        model_string = artifacts.model_string
-        if model_string_prefix:
-            model_string = model_string_prefix.rstrip() + "\n" + model_string
-
-        return ModelArtifacts(
-            subset=subset,
-            predictions=artifacts.predictions,
-            model_string=model_string,
-            model_type=artifacts.model_type,
         )
 
     def _native_score(self, public_model, X_for_adapter) -> float:

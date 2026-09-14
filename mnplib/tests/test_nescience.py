@@ -1,31 +1,21 @@
 """
-Tests for the simplified Nescience class.
-
-These tests target the explicit-input API:
-
-    - Nescience(...).fit(X, y)
-    - components(subset=..., predictions=..., model_string=...)
-    - nescience(subset=..., predictions=..., model_string=...)
-    - explain(subset=..., predictions=..., model_string=...)
-    - score(subset=..., predictions=..., model_string=...)
-    - aggregate_components(...)
-    - nescience_score(...)
-    - nescience_components(...)
-
-The class deliberately does not inspect fitted model objects. The caller must
-provide the selected feature subset, prediction vector, and model description
-string explicitly.
+Tests for fitted-model metrics, explicit artifacts, and nescience aggregation.
 """
 
 import math
+import warnings
 
 import numpy as np
 import pandas as pd
 import pytest
 
 from sklearn.exceptions import NotFittedError
+from sklearn.datasets import load_iris
+from sklearn.linear_model import LinearRegression
+from sklearn.tree import DecisionTreeClassifier
 
-from mnplib.nescience import Nescience, nescience_score, nescience_components
+from mnplib.automl import CandidateEvaluator
+from mnplib.nescience import Nescience, nescience, nescience_components, nescience_model
 
 
 def make_simple_data():
@@ -65,11 +55,86 @@ def test_constructor_defaults():
     assert metric.y_type == "auto"
     assert metric.aggregation == "euclidean"
     assert metric.weights is None
-    assert metric.n_bins == "auto"
-    assert metric.threshold_fraction == pytest.approx(0.01)
-    assert metric.surplus_penalty == pytest.approx(1.0)
+    assert metric.n_bins == "adaptive"
     assert metric.zlib_level == 9
     assert metric.zlib_overhead == 6
+
+
+def test_default_model_nescience_is_finite_for_iris_tree():
+    X, y = load_iris(return_X_y=True)
+    model = DecisionTreeClassifier(min_samples_leaf=5, random_state=42).fit(X, y)
+    metric = Nescience().fit(X, y)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        value = metric.nescience_model(model)
+        details = metric.model_analysis(model)
+        functional = nescience_model(model, X=X, y=y)
+
+    assert not caught
+    assert np.isfinite(value)
+    assert value == pytest.approx(details["nescience"])
+    assert functional == pytest.approx(value)
+    assert details["selected_features"] == [0, 2, 3]
+    assert details["resolved_n_bins"] == 5
+    assert details["is_reliable"] is True
+    assert details["n_observed_joint_states"] == 29
+
+
+@pytest.mark.parametrize("functional", [False, True])
+def test_auto_model_nescience_warns_with_sparse_joint_diagnostics(functional):
+    X, y = load_iris(return_X_y=True)
+    model = DecisionTreeClassifier(min_samples_leaf=5, random_state=42).fit(X, y)
+    metric = Nescience(n_bins="auto").fit(X, y)
+
+    with pytest.warns(RuntimeWarning, match="joint_distribution_too_sparse") as caught:
+        value = (nescience_model(model, X=X, y=y, n_bins="auto") if functional
+                 else metric.nescience_model(model))
+
+    assert np.isnan(value)
+    assert len(caught) == 1
+    message = str(caught[0].message)
+    for field in ("n_samples=150", "n_selected_features=3", "resolved_n_bins=10",
+                  "mean_joint_occupancy=2.206", "singleton_fraction=0.529",
+                  "coarser discretization", "model_analysis(model)"):
+        assert field in message
+
+
+def test_sparse_adaptive_model_nescience_warns_and_returns_nan():
+    rng = np.random.default_rng(1)
+    X = rng.normal(size=(30, 20))
+    y = rng.normal(size=30)
+    model = LinearRegression().fit(X, y)
+    metric = Nescience().fit(X, y)
+
+    with pytest.warns(RuntimeWarning, match="resolved_n_bins=2"):
+        assert np.isnan(metric.nescience_model(model))
+
+    details = metric.model_analysis(model)
+    assert details["is_reliable"] is False
+    assert details["failure_reason"] == "joint_distribution_too_sparse"
+    assert all(np.isnan(details[key]) for key in ("deficiency", "surplus", "miscoding"))
+
+
+def test_sparse_diagnostics_and_candidate_evaluation_are_quiet():
+    X, y = load_iris(return_X_y=True)
+    model = DecisionTreeClassifier(min_samples_leaf=5, random_state=42).fit(X, y)
+    metric = Nescience(n_bins="auto").fit(X, y)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        details = metric.model_analysis(model)
+        result = CandidateEvaluator(X=X, y=y, nescience=metric,
+                                    feature_names=metric.feature_names_in_).evaluate(
+            name="tree", family="decision_tree", model=model)
+        primitive = metric.nescience(**result.artifacts.to_nescience_kwargs())
+
+    assert not caught
+    assert np.isnan(details["nescience"])
+    assert np.isnan(result.nescience)
+    assert np.isnan(primitive)
+    assert result.is_reliable is False
+    assert result.subset_diagnostics["resolved_n_bins"] == 10
 
 
 @pytest.mark.parametrize(
@@ -79,8 +144,6 @@ def test_constructor_defaults():
         ({"X_type": "invalid"}, "X_type"),
         ({"y_type": "invalid"}, "y_type"),
         ({"aggregation": "invalid"}, "aggregation"),
-        ({"threshold_fraction": -0.1}, "threshold_fraction"),
-        ({"surplus_penalty": -0.1}, "surplus_penalty"),
         ({"zlib_level": -1}, "zlib_level"),
         ({"zlib_level": 10}, "zlib_level"),
         ({"zlib_overhead": -1}, "zlib_overhead"),
@@ -159,7 +222,7 @@ def test_nescience_matches_aggregate_components():
     ) == pytest.approx(metric.aggregate_components(**values))
 
 
-def test_score_is_one_minus_nescience():
+def test_explanation_and_scalar_nescience_agree():
     metric, _, y = fitted_metric()
 
     value = metric.nescience(
@@ -168,11 +231,11 @@ def test_score_is_one_minus_nescience():
         model_string=make_model_string(),
     )
 
-    assert metric.score(
+    assert metric.explain(
         subset=[0],
         predictions=y.copy(),
         model_string=make_model_string(),
-    ) == pytest.approx(1.0 - value)
+    )["nescience"] == pytest.approx(value)
 
 
 def test_explain_returns_expected_keys():
@@ -184,18 +247,18 @@ def test_explain_returns_expected_keys():
         model_string=make_model_string(),
     )
 
-    assert set(explanation.keys()) == {
+    assert set(explanation.keys()) >= {
         "nescience",
         "aggregation",
         "weights",
-        "components",
+        *metric.component_names_,
         "dominant_component",
         "profile",
         "profile_explanation",
         "recommendation",
     }
     assert explanation["dominant_component"] in metric.component_names_
-    assert set(explanation["components"]) == set(metric.component_names_)
+    assert set(metric.component_names_).issubset(explanation)
     assert isinstance(explanation["recommendation"], str)
     assert len(explanation["recommendation"]) > 0
 
@@ -203,9 +266,9 @@ def test_explain_returns_expected_keys():
 def test_functional_nescience_score_matches_estimator():
     X, y = make_simple_data()
 
-    direct = nescience_score(
-        X,
-        y,
+    direct = nescience(
+        X=X,
+        y=y,
         subset=[0],
         predictions=y.copy(),
         model_string=make_model_string(),
@@ -227,8 +290,8 @@ def test_functional_nescience_components_matches_estimator():
     X, y = make_simple_data()
 
     direct = nescience_components(
-        X,
-        y,
+        X=X,
+        y=y,
         subset=[0],
         predictions=y.copy(),
         model_string=make_model_string(),
@@ -255,7 +318,7 @@ def test_components_accepts_binary_mask_subset():
         model_string=make_model_string(),
     )
     from_mask = metric.components(
-        subset=[1, 0],
+        subset=[True, False],
         predictions=y.copy(),
         model_string=make_model_string(),
     )
@@ -273,7 +336,6 @@ def test_invalid_subset_is_rejected():
             model_string=make_model_string(),
         )
 
-    # [0, 0] would be a valid two-feature binary mask, so use length 3.
     with pytest.raises(ValueError, match="duplicate"):
         metric.components(
             subset=[0, 0, 0],
@@ -313,7 +375,7 @@ def test_invalid_model_string_is_rejected():
 
 @pytest.mark.parametrize(
     "method_name",
-    ["components", "nescience", "explain", "score"],
+    ["components", "nescience", "explain"],
 )
 def test_methods_requiring_fit_raise_not_fitted_error(method_name):
     metric = Nescience()

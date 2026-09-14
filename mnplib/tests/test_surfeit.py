@@ -19,9 +19,9 @@ from sklearn.linear_model import LinearRegression
 from mnplib.regressor import NescienceRegressor
 from mnplib.surfeit import (
     Surfeit,
-    model_description,
-    surfeit_model_score,
-    surfeit_score,
+    model_analysis,
+    surfeit_model,
+    surfeit_string,
 )
 
 
@@ -112,7 +112,7 @@ def test_surfeit_score_matches_estimator_usage():
     y = np.array([0, 0, 1, 1, 0, 1])
     model_string = "def model(x):\n    return int(x > 0)\n"
 
-    direct = surfeit_score(model_string, y, y_type="categorical")
+    direct = surfeit_string(model_string, y_type='categorical', y=y)
 
     metric = Surfeit(y_type="categorical").fit_y(y)
     via_estimator = metric.surfeit_string(model_string)
@@ -130,22 +130,22 @@ def test_surfeit_model_works_for_fitted_linear_regression():
     assert 0.0 <= value <= 1.0
 
 
-def test_model_description_returns_lengths_and_surfeit():
+def test_model_analysis_returns_lengths_and_surfeit():
     X, y, model = _linear_regression_problem()
 
     metric = Surfeit(y_type="numeric").fit(X, y)
-    description = metric.model_description(model)
+    description = metric.model_analysis(model)
 
     assert {
         "model_string",
-        "model_length",
-        "model_compressed_length",
+        "model_code_length_bits",
+        "compressed_code_length_bits",
         "surfeit",
     }.issubset(description)
     assert description["model_type"] == "LinearRegression"
     assert description["selected_features"] == [0, 1, 2]
     assert description["n_selected_features"] == 3
-    assert description["model_length"] == len(
+    assert description["model_code_length_bits"] == 8 * len(
         description["model_string"].encode("utf-8")
     )
     assert description["surfeit"] == pytest.approx(metric.surfeit_model(model))
@@ -155,7 +155,7 @@ def test_surfeit_model_matches_serializer_string_result():
     X, y, model = _linear_regression_problem()
 
     metric = Surfeit(y_type="numeric").fit(X, y)
-    model_string = metric.model_description(model)["model_string"]
+    model_string = metric.model_analysis(model)["model_string"]
 
     assert metric.surfeit_model(model) == pytest.approx(
         metric.surfeit_string(model_string)
@@ -168,7 +168,7 @@ def test_fit_preserves_dataframe_feature_names_for_model_api():
     model = LinearRegression().fit(X_df, y)
 
     metric = Surfeit(y_type="numeric").fit(X_df, y)
-    description = metric.model_description(model)
+    description = metric.model_analysis(model)
 
     assert metric.feature_names_in_.tolist() == ["a", "b", "c"]
     assert "model_string" in description
@@ -215,7 +215,7 @@ def test_surfeit_model_rejects_unfitted_supported_estimator():
 def test_surfeit_model_score_matches_estimator_usage():
     X, y, model = _linear_regression_problem()
 
-    functional = surfeit_model_score(model, X, y, y_type="numeric")
+    functional = surfeit_model(model, y_type='numeric', X=X, y=y)
     metric = Surfeit(y_type="numeric").fit(X, y)
 
     assert functional == pytest.approx(metric.surfeit_model(model))
@@ -226,13 +226,7 @@ def test_surfeit_model_score_slices_full_X_with_feature_indices():
     selected = [0, 2]
     model = LinearRegression().fit(X[:, selected], y)
 
-    functional = surfeit_model_score(
-        model,
-        X,
-        y,
-        feature_indices=selected,
-        y_type="numeric",
-    )
+    functional = surfeit_model(model, feature_indices=selected, y_type='numeric', X=X, y=y)
     metric = Surfeit(y_type="numeric").fit(X, y)
     direct = metric.surfeit_model(
         model,
@@ -243,12 +237,12 @@ def test_surfeit_model_score_slices_full_X_with_feature_indices():
     assert functional == pytest.approx(direct)
 
 
-def test_functional_model_description_matches_estimator_usage():
+def test_functional_model_analysis_matches_estimator_usage():
     X, y, model = _linear_regression_problem()
 
-    direct = model_description(model, X, y, y_type="numeric")
+    direct = model_analysis(model, y_type='numeric', X=X, y=y)
     metric = Surfeit(y_type="numeric").fit(X, y)
-    via_estimator = metric.model_description(model)
+    via_estimator = metric.model_analysis(model)
 
     assert direct["model_string"] == via_estimator["model_string"]
     assert direct["surfeit"] == pytest.approx(via_estimator["surfeit"])
@@ -366,17 +360,19 @@ def test_compress_bytes_returns_bytes():
     assert len(compressed) > 0
 
 
-def test_surfeit_from_lengths_is_clipped_to_unit_interval():
+def test_description_measures_use_bits_for_the_target_reference():
     y = np.array([0, 0, 1, 1])
     metric = Surfeit(y_type="categorical").fit_y(y)
 
-    value = metric._surfeit_from_lengths(
+    report = metric._description_measures(
         model_length=10,
         compressed_length=1000,
     )
 
-    assert isinstance(value, float)
-    assert 0.0 <= value <= 1.0
+    assert report["model_code_length_bits"] == 80
+    assert report["target_code_length_bits"] == 4
+    assert report["reference_code_length_bits"] == 4
+    assert report["surfeit"] == pytest.approx(0.95)
 
 
 def test_target_code_length_constant_target_is_zero():
@@ -454,4 +450,4 @@ def test_surfeit_score_rejects_invalid_model_string():
     y = np.array([0, 0, 1, 1])
 
     with pytest.raises(ValueError, match="must not be empty"):
-        surfeit_score("", y, y_type="categorical")
+        surfeit_string('', y_type='categorical', y=y)

@@ -18,12 +18,15 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 
-from sklearn.base import BaseEstimator, RegressorMixin
+from sklearn.base import BaseEstimator
+from sklearn.metrics import r2_score
 from sklearn.utils import check_array
 from sklearn.utils.validation import check_is_fitted
 
 from mnplib.automl import CandidateEvaluator
 from mnplib.automl.descriptions import describe_candidate_model
+from mnplib.automl.configuration import validated_search_options
+from mnplib.automl.results import candidate_results_dataframe
 
 from ..inaccuracy import Inaccuracy
 from ..miscoding import Miscoding
@@ -40,12 +43,10 @@ from .searchers import (
 )
 from .selection import (
     TimeSeriesCandidateResult,
-    candidate_results_dataframe,
 )
 
 
 XType = Literal["auto", "numeric", "categorical"]
-YType = Literal["auto", "numeric"]
 BinSpec = int | Literal["auto", "adaptive"]
 Aggregation = Literal[
     "euclidean",
@@ -65,7 +66,7 @@ ModelName = Literal[
 ]
 
 
-class TimeSeries(BaseEstimator, RegressorMixin):
+class TimeSeries(BaseEstimator):
     """
     Forecast a numeric time series using nescience-based model selection.
 
@@ -75,9 +76,6 @@ class TimeSeries(BaseEstimator, RegressorMixin):
 
     Parameters
     ----------
-    y_type : {"auto", "numeric"}, default="numeric"
-        Target encoding used by inaccuracy, surfeit, and miscoding.
-
     X_type : {"auto", "numeric", "categorical"}, default="numeric"
         Feature encoding used by miscoding. Lagged time-series features are
         numeric by construction; ``"numeric"`` is the recommended setting.
@@ -87,47 +85,31 @@ class TimeSeries(BaseEstimator, RegressorMixin):
         ``"auto"``, the window size is ``floor(sqrt(n_samples))`` with a lower
         bound of one.
 
-    max_lag : int, optional
-        Maximum lag used by diagnostic lag-analysis methods. If omitted, the
-        resolved window size is used.
-
     models : sequence of {"autoregressive", "moving_average", "exponential_smoothing", "arima", "state_space"}, optional
         Candidate model families to evaluate. If omitted, all supported families
         are evaluated.
 
-    moving_average_windows : sequence of int, optional
-        Windows evaluated for moving-average candidates. If omitted, all
-        windows from one to ``window_size`` are evaluated.
-
-    smoothing_alphas : sequence of float, optional
-        Alpha values in ``(0, 1)`` evaluated for finite-window exponential
-        smoothing.
-
-    arima_orders : sequence of tuple, optional
-        ARIMA ``(p, d, q)`` orders evaluated through statsmodels SARIMAX.
-
-    state_space_models : sequence of str, optional
-        Structural state-space specifications to evaluate. Supported values are
-        ``"local_level"`` and ``"local_linear_trend"``.
-
-    statsmodels_maxiter : int, default=50
-        Maximum optimizer iterations for statsmodels-backed candidates.
+    search_options : mapping, optional
+        Per-family search settings. Autoregressive accepts ``min_improvement``;
+        moving_average accepts ``windows``; exponential_smoothing accepts
+        ``windows`` and ``alphas``; arima accepts ``orders`` and ``max_iter``;
+        state_space accepts ``models`` and ``max_iter``. Structural model names
+        are ``"local_level"`` and ``"local_linear_trend"``.
 
     aggregation, weights, n_bins, zlib_level, zlib_overhead :
         Parameters forwarded to the current nescience component API.
 
-    min_improvement : float, default=0.0
-        Minimum greedy feature-selection improvement used by ``Miscoding`` for
-        the autoregressive candidate.
-
-    description_precision : int, default=6
-        Number of decimal places used in canonical model descriptions.
-
     random_state : int or None, default=None
         Stored for estimator reproducibility and future candidate families.
+
+    Attributes
+    ----------
+    fitted_values_ : ndarray of shape (n_samples,)
+        Training predictions aligned with the supplied series. Initial positions
+        lacking a complete lag window contain NaN. Forecasts are produced by
+        ``forecast()``; ``score()`` evaluates subsequent observed values.
     """
 
-    _VALID_Y_TYPES = ("auto", "numeric")
     _VALID_X_TYPES = ("auto", "numeric", "categorical")
     _VALID_MODELS = (
         "autoregressive",
@@ -142,43 +124,27 @@ class TimeSeries(BaseEstimator, RegressorMixin):
     def __init__(
         self,
         *,
-        y_type: YType = "numeric",
         X_type: XType = "numeric",
         window_size: int | Literal["auto"] = "auto",
-        max_lag: int | None = None,
         models: Sequence[ModelName] | None = None,
-        moving_average_windows: Sequence[int] | None = None,
-        smoothing_alphas: Sequence[float] | None = None,
-        arima_orders: Sequence[tuple[int, int, int]] | None = None,
-        state_space_models: Sequence[str] | None = None,
-        statsmodels_maxiter: int = 50,
+        search_options: Mapping[str, Mapping[str, object]] | None = None,
         aggregation: Aggregation = "euclidean",
         weights: Mapping[str, float] | Sequence[float] | None = None,
-        n_bins: BinSpec = "auto",
-        min_improvement: float = 0.0,
+        n_bins: BinSpec = "adaptive",
         zlib_level: int = 9,
         zlib_overhead: int = 6,
-        description_precision: int = 6,
         random_state: int | None = None,
         verbose: int = 0,
     ):
-        self.y_type = y_type
         self.X_type = X_type
         self.window_size = window_size
-        self.max_lag = max_lag
         self.models = models
-        self.moving_average_windows = moving_average_windows
-        self.smoothing_alphas = smoothing_alphas
-        self.arima_orders = arima_orders
-        self.state_space_models = state_space_models
-        self.statsmodels_maxiter = statsmodels_maxiter
+        self.search_options = search_options
         self.aggregation = aggregation
         self.weights = weights
         self.n_bins = n_bins
-        self.min_improvement = min_improvement
         self.zlib_level = zlib_level
         self.zlib_overhead = zlib_overhead
-        self.description_precision = description_precision
         self.random_state = random_state
         self.verbose = verbose
 
@@ -193,7 +159,6 @@ class TimeSeries(BaseEstimator, RegressorMixin):
         self.X_exogenous_ = X_exogenous
         self.exogenous_feature_names_ = exogenous_names
         self.window_size_ = builder.resolve_window_size(len(self.y_))
-        self.max_lag_ = self.window_size_ if self.max_lag is None else int(self.max_lag)
         self.X_supervised_ = representation.X
         self.y_supervised_ = representation.y
         self.feature_names_in_ = np.asarray(representation.feature_names, dtype=object)
@@ -230,7 +195,7 @@ class TimeSeries(BaseEstimator, RegressorMixin):
         results.sort(key=self._candidate_sort_key)
 
         self.candidate_results_ = results
-        self.results_ = candidate_results_dataframe(results)
+        self.results_ = candidate_results_dataframe(results, self.feature_names_in_)
         self._set_selected_result(results[0])
 
         if self.verbose:
@@ -243,29 +208,12 @@ class TimeSeries(BaseEstimator, RegressorMixin):
         self.is_fitted_ = True
         return self
 
-    def predict(self, X):
-        """Predict from an already-built lagged feature matrix."""
-        check_is_fitted(self)
-        X_checked = check_array(X, dtype=float, ensure_2d=True)
-        if self.best_result_.family in {"arima", "state_space"}:
-            if (
-                X_checked.shape != self.X_supervised_.shape
-                or not np.allclose(X_checked, self.X_supervised_)
-            ):
-                raise ValueError(
-                    "predict for statsmodels-backed candidates requires the fitted lagged representation."
-                )
-            return np.asarray(self.best_result_.artifacts.predictions, dtype=float).copy()
 
-        selected = np.flatnonzero(self.subset_)
-        return self.model_.predict(X_checked[:, selected])
-
-    def forecast(self, steps: int = 1, X_future=None) -> np.ndarray:
+    def forecast(self, steps: int = 1, *, X_future=None) -> np.ndarray:
         """Produce recursive forecasts for a positive number of future steps."""
         check_is_fitted(self)
-        steps = int(steps)
-        if steps < 1:
-            raise ValueError("steps must be positive.")
+        if isinstance(steps, (bool, np.bool_)) or not isinstance(steps, (int, np.integer)) or steps < 1:
+            raise ValueError("steps must be a positive integer.")
 
         if self.best_result_.family in {"arima", "state_space"}:
             return self.model_.forecast(steps=steps, X_future=X_future)
@@ -290,33 +238,16 @@ class TimeSeries(BaseEstimator, RegressorMixin):
 
         return np.asarray(forecasts, dtype=float)
 
-    def score(self, y, X=None) -> float:
-        """Return the native score of the selected forecaster on a series."""
+    def score(self, y_future, *, X_future=None) -> float:
+        """Return forecast R-squared for observations immediately after training."""
         check_is_fitted(self)
-        y_array = LaggedRepresentationBuilder.validate_y(y)
-        if self.best_result_.family in {"arima", "state_space"}:
-            if len(y_array) != len(self.y_) or not np.allclose(y_array, self.y_):
-                raise ValueError(
-                    "score for statsmodels-backed candidates requires the fitted training series."
-                )
-            return float(self.best_result_.estimator_score)
+        values = np.asarray(y_future, dtype=float)
+        if values.ndim != 1 or len(values) < 2 or not np.all(np.isfinite(values)):
+            raise ValueError("y_future must contain at least two finite observations.")
+        return float(r2_score(values, self.forecast(len(values), X_future=X_future)))
 
-        X_array, exogenous_names = LaggedRepresentationBuilder.validate_exogenous_X(X, n_samples=len(y_array))
-        representation = LaggedRepresentationBuilder.to_supervised(
-            y=y_array,
-            X=X_array,
-            window_size=self.window_size_,
-            exogenous_feature_names=exogenous_names,
-        )
-        selected = np.flatnonzero(self.subset_)
-        return float(self.model_.score(representation.X[:, selected], representation.y))
 
-    def get_model(self):
-        """Return the selected fitted forecasting model."""
-        check_is_fitted(self)
-        return self.model_
-
-    def nescience_score(self) -> float:
+    def nescience(self) -> float:
         """Return the selected candidate's nescience value."""
         check_is_fitted(self)
         return float(self.best_result_.nescience)
@@ -326,12 +257,8 @@ class TimeSeries(BaseEstimator, RegressorMixin):
         check_is_fitted(self)
         return dict(self.best_result_.components)
 
-    def model_string(self) -> str:
-        """Return the selected candidate's canonical model description."""
-        check_is_fitted(self)
-        return str(self.best_result_.artifacts.model_string)
 
-    def candidate_model_description(
+    def model_description(
         self,
         candidate: str | None = None,
     ) -> dict[str, object]:
@@ -350,35 +277,39 @@ class TimeSeries(BaseEstimator, RegressorMixin):
         return self.results_.copy()
 
     def explain(self) -> dict[str, object]:
-        """Return a structured explanation of the selected forecasting model."""
+        """Return a structured explanation of the selected forecasting model.
+
+        The native estimator score is R-squared recorded on the lagged training
+        representation. It is not future-forecast performance; use ``score()``
+        with subsequent observations to evaluate forecasts.
+        """
         check_is_fitted(self)
-        components = self.components()
-        dominant = max(components, key=components.get)
-        return {
-            "nescience": self.nescience_score(),
-            "aggregation": self.aggregation,
-            "components": components,
-            "miscoding": max(components["deficiency"], components["surplus"]),
-            "dominant_component": dominant,
-            "profile": self._profile_from_components(components),
-            "recommendation": self._recommendation_from_dominant_component(dominant, components),
-            "time_series_model": self.model_name_,
-            "model_family": self.best_result_.family,
+        explanation = self.nescience_.explain(**self.best_artifacts_.to_nescience_kwargs())
+        explanation.update({
+            "candidate": self.model_name_,
+            "family": self.best_result_.family,
+            "model_type": self.best_artifacts_.model_type,
+            "hyperparameters": dict(self.best_result_.hyperparameters),
+            "task": "forecasting",
+            "native_estimator_score": float(self.best_result_.estimator_score),
+            "evaluation_context": "lagged_training",
             "window_size": self.window_size_,
             "selected_lags": self.selected_lags_,
-            "selected_feature_indices": self.selected_feature_indices_,
+            "selected_features": self.selected_feature_indices_,
             "selected_feature_names": self.selected_feature_names_,
             "n_selected_features": self.best_result_.n_selected_features,
-            "model_metadata": self.best_result_.metadata,
-        }
+        })
+        explanation["metadata"] = {key: value for key, value in self.best_result_.metadata.items()
+                                   if key not in explanation and key != "model_name"}
+        return explanation
 
-    def auto_lag_analysis(self, *, min_lag: int = 1, max_lag: int | None = None) -> pd.DataFrame:
+    def _auto_lag_analysis(self, *, min_lag: int = 1, max_lag: int | None = None) -> pd.DataFrame:
         """Analyze target autocoding diagnostics by lag."""
         check_is_fitted(self)
         values = np.asarray(self.y_, dtype=float)
         return self._lag_analysis(values=values, target=values, prefix="y", min_lag=min_lag, max_lag=max_lag)
 
-    def cross_lag_analysis(
+    def _cross_lag_analysis(
         self,
         attribute: int | str,
         *,
@@ -388,7 +319,7 @@ class TimeSeries(BaseEstimator, RegressorMixin):
         """Analyze lag diagnostics between an exogenous attribute and the target."""
         check_is_fitted(self)
         if self.X_exogenous_ is None:
-            raise ValueError("cross_lag_analysis requires exogenous X data.")
+            raise ValueError("Exogenous lag analysis requires X data.")
         index = self._resolve_attribute(attribute)
         name = self.exogenous_feature_names_[index]
         return self._lag_analysis(
@@ -403,10 +334,10 @@ class TimeSeries(BaseEstimator, RegressorMixin):
     def lag_analysis(self, *, max_lag: int | None = None) -> pd.DataFrame:
         """Return target and exogenous lag diagnostics in one table."""
         check_is_fitted(self)
-        tables = [self.auto_lag_analysis(max_lag=max_lag)]
+        tables = [self._auto_lag_analysis(max_lag=max_lag)]
         if self.X_exogenous_ is not None:
             tables.extend(
-                self.cross_lag_analysis(name, max_lag=max_lag)
+                self._cross_lag_analysis(name, max_lag=max_lag)
                 for name in self.exogenous_feature_names_
             )
         return pd.concat(tables, ignore_index=True)
@@ -443,7 +374,7 @@ class TimeSeries(BaseEstimator, RegressorMixin):
             feature_names=tuple(str(name) for name in self.feature_names_in_),
             evaluator=self.evaluator_,
             window_size=self.window_size_,
-            description_precision=self.description_precision,
+            description_precision=6,
             moving_average_windows=(
                 tuple(self._moving_average_windows())
                 if model_names & {"moving_average", "exponential_smoothing"}
@@ -464,7 +395,10 @@ class TimeSeries(BaseEstimator, RegressorMixin):
                 if "state_space" in model_names
                 else tuple()
             ),
-            statsmodels_maxiter=int(self.statsmodels_maxiter),
+            arima_max_iter=int(self._search_options_["arima"].get("max_iter", 50)),
+            state_space_max_iter=int(self._search_options_["state_space"].get("max_iter", 50)),
+            min_improvement=float(self._search_options_["autoregressive"].get("min_improvement", 0.0)),
+            smoothing_windows=tuple(self._moving_average_windows("exponential_smoothing")),
             verbose=self.verbose,
         )
 
@@ -489,7 +423,9 @@ class TimeSeries(BaseEstimator, RegressorMixin):
     ) -> pd.DataFrame:
         if int(min_lag) < 1:
             raise ValueError("min_lag must be positive.")
-        effective_max_lag = self.max_lag_ if max_lag is None else int(max_lag)
+        if max_lag is not None and (isinstance(max_lag, bool) or not isinstance(max_lag, (int, np.integer)) or max_lag < 1):
+            raise ValueError("max_lag must be a positive integer.")
+        effective_max_lag = self.window_size_ if max_lag is None else int(max_lag)
         effective_max_lag = min(effective_max_lag, len(target) - 1)
 
         rows = []
@@ -526,7 +462,7 @@ class TimeSeries(BaseEstimator, RegressorMixin):
         """Return an unfitted Nescience instance used only for aggregation."""
         return Nescience(
             X_type=self.X_type,
-            y_type=self.y_type,
+            y_type="numeric",
             aggregation=self.aggregation,
             weights=self.weights,
             n_bins=self.n_bins,
@@ -538,6 +474,8 @@ class TimeSeries(BaseEstimator, RegressorMixin):
         """Return an aggregation object with fitted component metrics attached."""
         metric = self._make_aggregator()
         metric.X_ = self.X_supervised_
+        metric._model_X_ = self.X_supervised_
+        metric.feature_names_in_ = self.feature_names_in_.copy()
         metric.y_ = self.y_supervised_
         metric.n_samples_in_, metric.n_features_in_ = self.X_supervised_.shape
         metric.weights_ = metric._resolve_weights()
@@ -548,22 +486,21 @@ class TimeSeries(BaseEstimator, RegressorMixin):
         return metric
 
     def _make_miscoding(self) -> Miscoding:
-        """Return a Miscoding instance configured with the latest API."""
+        """Return the miscoding metric for the lagged representation."""
         return Miscoding(
             X_type=self.X_type,
-            y_type=self.y_type,
+            y_type="numeric",
             n_bins=self.n_bins,
-            min_improvement=self.min_improvement,
         )
 
     def _make_inaccuracy(self) -> Inaccuracy:
         """Return an Inaccuracy instance configured for the target series."""
-        return Inaccuracy(y_type=self.y_type, n_bins=self.n_bins)
+        return Inaccuracy(y_type="numeric", n_bins=self.n_bins)
 
     def _make_surfeit(self) -> Surfeit:
         """Return a Surfeit instance configured for canonical model strings."""
         return Surfeit(
-            y_type=self.y_type,
+            y_type="numeric",
             n_bins=self.n_bins,
             zlib_level=self.zlib_level,
             zlib_overhead=self.zlib_overhead,
@@ -578,38 +515,42 @@ class TimeSeries(BaseEstimator, RegressorMixin):
             return self._VALID_MODELS
         return tuple(str(name) for name in self.models)
 
-    def _moving_average_windows(self) -> list[int]:
-        if self.moving_average_windows is None:
+    def _moving_average_windows(self, family="moving_average") -> list[int]:
+        configured = self._search_options_[family].get("windows")
+        if configured is None:
             values = range(1, self.window_size_ + 1)
         else:
-            values = (int(value) for value in self.moving_average_windows)
+            values = (int(value) for value in configured)
         windows = sorted({value for value in values if 1 <= value <= self.window_size_})
         if not windows:
             raise ValueError("No valid moving-average windows to evaluate.")
         return windows
 
     def _smoothing_alphas(self) -> list[float]:
-        if self.smoothing_alphas is None:
+        configured = self._search_options_["exponential_smoothing"].get("alphas")
+        if configured is None:
             alphas = [0.1, 0.2, 0.3, 0.5, 0.8]
         else:
-            alphas = [float(value) for value in self.smoothing_alphas]
+            alphas = [float(value) for value in configured]
         if any(alpha <= 0.0 or alpha >= 1.0 for alpha in alphas):
             raise ValueError("All smoothing alphas must lie in the open interval (0, 1).")
         return alphas
 
     def _arima_orders(self) -> list[tuple[int, int, int]]:
-        if self.arima_orders is None:
+        configured = self._search_options_["arima"].get("orders")
+        if configured is None:
             orders = list(self._DEFAULT_ARIMA_ORDERS)
         else:
-            orders = [tuple(int(value) for value in order) for order in self.arima_orders]
+            orders = [tuple(int(value) for value in order) for order in configured]
         if not orders:
             raise ValueError("At least one ARIMA order must be configured.")
         return orders
 
     def _state_space_models(self) -> list[str]:
-        if self.state_space_models is None:
+        configured = self._search_options_["state_space"].get("models")
+        if configured is None:
             return list(self._VALID_STATE_SPACE_MODELS)
-        models = [str(name) for name in self.state_space_models]
+        models = [str(name) for name in configured]
         if not models:
             raise ValueError("At least one state-space model must be configured.")
         return models
@@ -652,6 +593,9 @@ class TimeSeries(BaseEstimator, RegressorMixin):
 
     def _set_selected_result(self, result: TimeSeriesCandidateResult) -> None:
         self.best_result_ = result
+        self.best_artifacts_ = result.artifacts
+        self.fitted_values_ = np.full(len(self.y_), np.nan)
+        self.fitted_values_[self.window_size_:] = result.artifacts.predictions
         self.model_ = result.model
         self.subset_ = self._subset_mask(result.artifacts.subset)
         self.model_name_ = result.name
@@ -679,87 +623,54 @@ class TimeSeries(BaseEstimator, RegressorMixin):
         return mask
 
     def _validate_configuration(self) -> None:
-        if self.y_type not in self._VALID_Y_TYPES:
-            raise ValueError(f"Valid options for y_type are {self._VALID_Y_TYPES}. Got {self.y_type!r}.")
+        self._search_options_ = validated_search_options(self.search_options, {
+            "autoregressive": {"min_improvement"},
+            "moving_average": {"windows"},
+            "exponential_smoothing": {"windows", "alphas"},
+            "arima": {"orders", "max_iter"},
+            "state_space": {"models", "max_iter"},
+        })
         if self.X_type not in self._VALID_X_TYPES:
             raise ValueError(f"Valid options for X_type are {self._VALID_X_TYPES}. Got {self.X_type!r}.")
         if self.window_size != "auto" and int(self.window_size) < 1:
             raise ValueError("window_size must be a positive integer or 'auto'.")
-        if self.max_lag is not None and int(self.max_lag) < 1:
-            raise ValueError("max_lag must be positive when provided.")
         if self.models is not None:
+            if isinstance(self.models, str) or len(self.models) == 0:
+                raise ValueError("models must be a non-empty sequence of model-family names.")
             unknown = set(map(str, self.models)) - set(self._VALID_MODELS)
             if unknown:
                 raise ValueError(f"Unknown model names {sorted(unknown)}.")
-        if self.arima_orders is not None:
-            for order in self.arima_orders:
+        arima_orders = self._search_options_["arima"].get("orders")
+        if arima_orders is not None:
+            for order in arima_orders:
                 try:
                     values = tuple(int(value) for value in order)
                 except (TypeError, ValueError) as exc:
                     raise ValueError("Each ARIMA order must be a three-integer tuple.") from exc
                 if len(values) != 3:
                     raise ValueError("Each ARIMA order must be a three-integer tuple.")
+                if any(isinstance(value, bool) or not isinstance(value, (int, np.integer)) for value in order):
+                    raise ValueError("ARIMA order values must be integers.")
                 if any(value < 0 for value in values):
                     raise ValueError("ARIMA order values must be non-negative.")
-        if self.state_space_models is not None:
+        state_space_models = self._search_options_["state_space"].get("models")
+        if state_space_models is not None:
             unknown_state_models = (
-                set(map(str, self.state_space_models))
+                set(map(str, state_space_models))
                 - set(self._VALID_STATE_SPACE_MODELS)
             )
             if unknown_state_models:
                 raise ValueError(
                     f"Unknown state-space model names {sorted(unknown_state_models)}."
                 )
-        if int(self.statsmodels_maxiter) < 1:
-            raise ValueError("statsmodels_maxiter must be positive.")
-        if self.min_improvement < 0:
-            raise ValueError("min_improvement must be non-negative.")
+        for family in ("arima", "state_space"):
+            iterations = self._search_options_[family].get("max_iter", 50)
+            if isinstance(iterations, bool) or not isinstance(iterations, (int, np.integer)) or iterations < 1:
+                raise ValueError(f"{family} max_iter must be a positive integer.")
+        improvement = self._search_options_["autoregressive"].get("min_improvement", 0.0)
+        if not np.isfinite(improvement) or improvement < 0:
+            raise ValueError("min_improvement must be finite and non-negative.")
         if int(self.zlib_level) < 0 or int(self.zlib_level) > 9:
             raise ValueError("zlib_level must be an integer between 0 and 9.")
         if int(self.zlib_overhead) < 0:
             raise ValueError("zlib_overhead must be non-negative.")
-        if int(self.description_precision) < 0:
-            raise ValueError("description_precision must be non-negative.")
-
-    @staticmethod
-    def _profile_from_components(components: Mapping[str, float]) -> str:
-        """Return a compact qualitative profile for the selected candidate."""
-        dominant = max(components, key=components.get)
-        return {
-            "deficiency": "under_informed_forecaster",
-            "surplus": "over_fed_forecaster",
-            "inaccuracy": "inaccurate_forecaster",
-            "surfeit": "over_complex_forecaster",
-        }.get(dominant, "mixed_nescience_profile")
-
-    @staticmethod
-    def _recommendation_from_dominant_component(
-        dominant_component: str,
-        components: Mapping[str, float],
-    ) -> str:
-        """Return a practical recommendation from the dominant component."""
-        value = float(components[dominant_component])
-        if dominant_component == "deficiency":
-            return (
-                f"Dominant source of nescience: deficiency ({value:.4f}). "
-                "Increase the information available to the forecaster by adding relevant "
-                "lags, exogenous variables, or more informative transformations."
-            )
-        if dominant_component == "surplus":
-            return (
-                f"Dominant source of nescience: surplus ({value:.4f}). "
-                "Reduce target-irrelevant lagged information by limiting the window, "
-                "removing weak exogenous variables, or increasing feature-selection strictness."
-            )
-        if dominant_component == "inaccuracy":
-            return (
-                f"Dominant source of nescience: inaccuracy ({value:.4f}). "
-                "Try a richer forecasting family, a different lag window, or additional "
-                "predictive variables."
-            )
-        if dominant_component == "surfeit":
-            return (
-                f"Dominant source of nescience: surfeit ({value:.4f}). "
-                "Prefer a simpler forecasting rule, fewer lags, or a more compact model family."
-            )
-        return "Inspect the four nescience components to identify the limiting factor."

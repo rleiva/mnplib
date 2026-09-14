@@ -1,16 +1,5 @@
 """
-Tests for the Inaccuracy class.
-
-These tests target the simplified Inaccuracy API:
-
-    - Inaccuracy(y_type="auto", n_bins="auto")
-    - fit(X, y)
-    - fit_y(y)
-    - inaccuracy_model(model)
-    - inaccuracy_predictions(predictions)
-    - score(model)
-    - inaccuracy_score(y_true, y_pred)
-
+Tests for prediction-vector and fitted-model inaccuracy computation.
 """
 
 import numpy as np
@@ -20,7 +9,7 @@ from sklearn.tree       import DecisionTreeClassifier, DecisionTreeRegressor
 from sklearn.exceptions import NotFittedError
 from sklearn.datasets   import load_breast_cancer
 
-from mnplib.inaccuracy import Inaccuracy, inaccuracy_score
+from mnplib.inaccuracy import Inaccuracy, inaccuracy_predictions
 
 
 def test_constructor_defaults():
@@ -145,21 +134,21 @@ def test_inaccuracy_model_with_regressor():
     assert 0.0 <= value <= 1.0
 
 
-def test_score_is_one_minus_model_inaccuracy():
+def test_model_and_prediction_inaccuracy_agree():
     X = np.array([[0.0], [0.1], [1.0], [1.1]])
     y = np.array([0, 0, 1, 1])
 
     model = DecisionTreeClassifier(random_state=0).fit(X, y)
     metric = Inaccuracy(n_bins=2).fit(X, y)
 
-    assert metric.score(model) == pytest.approx(1.0 - metric.inaccuracy_model(model))
+    assert metric.inaccuracy_predictions(model.predict(X)) == pytest.approx(metric.inaccuracy_model(model))
 
 
 def test_inaccuracy_score_matches_estimator_usage():
     y = np.array([0, 0, 1, 1, 0, 1])
     pred = np.array([0, 1, 1, 0, 0, 1])
 
-    direct = inaccuracy_score(y, pred, n_bins=2)
+    direct = inaccuracy_predictions(pred, n_bins=2, y=y)
 
     metric = Inaccuracy(n_bins=2).fit_y(y)
     via_estimator = metric.inaccuracy_predictions(pred)
@@ -207,7 +196,7 @@ def test_fit_y_then_inaccuracy_model_raises_value_error():
 
     model = DecisionTreeClassifier(random_state=0)
 
-    with pytest.raises(ValueError, match="no feature matrix is available"):
+    with pytest.raises(ValueError, match="Provide X"):
         metric.inaccuracy_model(model)
 
 
@@ -327,4 +316,4 @@ def test_all_errors_model():
     inacc.fit(X, y)
     inaccuracy = inacc.inaccuracy_model(tree)
 
-    assert inaccuracy == 1    
+    assert inaccuracy == 1

@@ -44,6 +44,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 import numpy as np
+from ._validation import validate_n_bins
 import pandas as pd
 from sklearn.utils.validation import (
     check_array,
@@ -357,21 +358,9 @@ def _resolve_bins(
     if n_samples <= 0:
         raise ValueError("n_samples must be positive.")
 
-    if n_bins in ("auto", "adaptive"):
+    bins = validate_n_bins(n_bins)
+    if isinstance(bins, str):
         return _auto_n_bins(n_samples)
-
-    if isinstance(n_bins, str):
-        raise ValueError("n_bins must be an integer >= 2, 'auto', or 'adaptive'.")
-
-    try:
-        bins = int(n_bins)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(
-            "n_bins must be an integer >= 2, 'auto', or 'adaptive'."
-        ) from exc
-
-    if bins < 2:
-        raise ValueError("n_bins must be an integer >= 2, 'auto', or 'adaptive'.")
     return bins
 
 

@@ -22,6 +22,8 @@ from sklearn.utils.validation import check_is_fitted
 
 from .automl import CandidateEvaluator, CandidateResult
 from .automl.descriptions import describe_candidate_model
+from .automl.configuration import validated_search_options
+from .automl.results import candidate_results_dataframe
 from .automl.searchers import (
     DecisionTreePruningSearcher,
     LogisticRegressionPrefixSearcher,
@@ -52,7 +54,7 @@ SUPPORTED_MODELS = (
     "mlp",
 )
 
-class NescienceClassifier(BaseEstimator, ClassifierMixin):
+class NescienceClassifier(ClassifierMixin, BaseEstimator):
     """
     Construct and select classifiers by the minimum-nescience principle.
 
@@ -70,14 +72,11 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
     aggregation : {"euclidean", "arithmetic", "geometric", "harmonic", \
             "maximum", "addition", "product"}, default="euclidean"
         Aggregation rule used by the underlying ``Nescience`` object.
-    n_bins : int, "auto", or "adaptive", default="auto"
+    n_bins : int, "auto", or "adaptive", default="adaptive"
         Discretization rule for numerical variables where required by the
         nescience components.
-    threshold_fraction : float, default=0.01
-        Threshold parameter forwarded to the underlying nescience machinery.
-    surplus_penalty : float, default=1.0
-        Surplus penalty parameter forwarded to the underlying nescience
-        machinery.
+    weights : mapping, optional
+        Named deficiency, surplus, inaccuracy, and surfeit weights.
     feature_ranking_criterion : {"deficiency", "miscoding"}, default="deficiency"
         Criterion used to rank features for model-family prefix search.
     max_feature_prefixes : int or None, default=None
@@ -88,10 +87,12 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
 
     random_state : int, RandomState instance, or None, default=None
         Random state forwarded to stochastic searchers and estimators.
-    logistic_max_iter : int, default=1000
-        Maximum iterations for logistic-regression candidates.
-    mlp_search_options : mapping or None, default=None
-        Additional options forwarded to the MLP architecture-growth searcher.
+    search_options : mapping, optional
+        Options keyed by model family, for example
+        ``{"logistic_regression": {"max_iter": 1000}, "mlp": {"max_candidates": 5}}``.
+        Unknown families and option names raise ValueError.
+    zlib_level, zlib_overhead : int, default=9, 6
+        Compression settings forwarded to Surfeit.
     verbose : int, default=0
         If nonzero, print evaluated candidate summaries during fitting.
     """
@@ -99,31 +100,29 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
     def __init__(
         self,
         models               : Sequence[str] | None = None,
-        candidates           = None,
         X_type               : XType = "numeric",
         aggregation          : Aggregation = "euclidean",
-        n_bins               : BinSpec = "auto",
-        threshold_fraction   : float = 0.01,
-        surplus_penalty      : float = 1.0,
+        n_bins               : BinSpec = "adaptive",
+        weights              : Mapping[str, float] | None = None,
         feature_ranking_criterion : str = "deficiency",
         max_feature_prefixes : int | None = None,
         random_state         = None,
-        logistic_max_iter    : int = 1000,
-        mlp_search_options   : Mapping[str, object] | None = None,
+        search_options      : Mapping[str, Mapping[str, object]] | None = None,
+        zlib_level          : int = 9,
+        zlib_overhead       : int = 6,
         verbose              : int = 0,
     ):
         self.models                     = models
-        self.candidates                 = candidates
         self.X_type                     = X_type
         self.aggregation                = aggregation
         self.n_bins                     = n_bins
-        self.threshold_fraction         = threshold_fraction
-        self.surplus_penalty            = surplus_penalty
+        self.weights                    = weights
         self.feature_ranking_criterion  = feature_ranking_criterion
         self.max_feature_prefixes       = max_feature_prefixes
         self.random_state               = random_state
-        self.logistic_max_iter          = logistic_max_iter
-        self.mlp_search_options         = mlp_search_options
+        self.search_options            = search_options
+        self.zlib_level                 = zlib_level
+        self.zlib_overhead              = zlib_overhead
         self.verbose                    = verbose
 
         # Addtional private attributes
@@ -183,8 +182,9 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
             y_type             = "categorical",
             aggregation        = self.aggregation,
             n_bins             = self.n_bins,
-            threshold_fraction = self.threshold_fraction,
-            surplus_penalty    = self.surplus_penalty
+            weights            = self.weights,
+            zlib_level         = self.zlib_level,
+            zlib_overhead      = self.zlib_overhead,
         )
         self.nescience_.fit(self.X_, self.y_)
 
@@ -255,7 +255,7 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
         X_checked, y_checked = check_X_y(X, y, dtype=None, ensure_2d=True)
         return self.model_.score(X_checked, y_checked)
 
-    def nescience_score(self) -> float:
+    def nescience(self) -> float:
         """
         Return the nescience value of the selected classifier.
         """
@@ -272,25 +272,25 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
     def explain(self) -> dict[str, object]:
         """
         Return a structured nescience explanation for the selected classifier.
+
+        The native estimator score is classification accuracy recorded during
+        candidate evaluation on the training data, not a held-out score.
         """
         check_is_fitted(self)
 
         explanation = self.nescience_.explain(
             **self.best_artifacts_.to_nescience_kwargs()
         )
-        explanation["candidate_name"] = self.best_candidate_name_
+        explanation["candidate"] = self.best_candidate_name_
         explanation["model_type"]     = self.best_artifacts_.model_type
-        explanation["model_family"]   = self.best_result_.family
+        explanation["family"] = self.best_result_.family
         explanation["hyperparameters"] = dict(self.best_result_.hyperparameters)
+        explanation["task"] = "classification"
+        explanation["native_estimator_score"] = float(self.best_result_.estimator_score)
+        explanation["evaluation_context"] = "training"
 
         return explanation
 
-    def get_model(self):
-        """
-        Return the selected fitted estimator.
-        """
-        check_is_fitted(self)
-        return self.model_
 
     def results_dataframe(self) -> pd.DataFrame:
         """
@@ -298,25 +298,10 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
         """
         check_is_fitted(self)
 
-        rows = [self._result_row(result) for result in self.results_]
-        return (
-            pd.DataFrame(rows)
-            .sort_values(
-                ["is_reliable", "nescience"],
-                ascending=[False, True],
-                na_position="last",
-            )
-            .reset_index(drop=True)
-        )
+        return candidate_results_dataframe(self.results_, self.feature_names_in_)
 
-    def model_string(self) -> str:
-        """
-        Return the canonical description string of the selected classifier.
-        """
-        check_is_fitted(self)
-        return str(self.best_artifacts_.model_string)
 
-    def candidate_model_description(
+    def model_description(
         self,
         candidate: str | None = None,
     ) -> dict[str, object]:
@@ -335,13 +320,6 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
         """
         Validate and normalize selected internal model-family names.
         """
-        if self.candidates is not None:
-            raise ValueError(
-                "NescienceClassifier does not accept arbitrary candidate "
-                "estimators; use the models parameter to select supported "
-                "internal model families."
-            )
-
         if self.models is None:
             return list(SUPPORTED_MODELS)
 
@@ -389,39 +367,42 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
         Build searchers in the selected model-family order.
         """
         names = self._resolve_model_names() if model_names is None else list(model_names)
+        self._search_options_ = validated_search_options(self.search_options, {
+            "decision_tree": DecisionTreePruningSearcher,
+            "logistic_regression": LogisticRegressionPrefixSearcher,
+            "linear_svc": LinearSVCSearcher,
+            "naive_bayes": NaiveBayesSearcher,
+            "mlp": MLPClassifierSearch,
+        })
         return [self._make_searcher(name) for name in names]
 
     def _make_searcher(self, name: str):
         """
         Instantiate the searcher for one supported model-family name.
         """
+        options = dict(self._search_options_[name])
+        if name != "naive_bayes":
+            options.setdefault("random_state", self.random_state)
         if name == "decision_tree":
             return DecisionTreePruningSearcher(
                 DecisionTreeClassifier,
-                random_state = self.random_state,
+                **options,
             )
 
         if name == "logistic_regression":
             return LogisticRegressionPrefixSearcher(
-                max_iter          = self.logistic_max_iter,
-                random_state      = self.random_state,
+                **options,
             )
 
         if name == "linear_svc":
             return LinearSVCSearcher(
-                random_state=self.random_state
+                **options
             )
 
         if name == "naive_bayes":
-            return NaiveBayesSearcher()
+            return NaiveBayesSearcher(**options)
 
         if name == "mlp":
-            options = (
-                {}
-                if self.mlp_search_options is None
-                else dict(self.mlp_search_options)
-            )
-            options.setdefault("random_state", self.random_state)
             return MLPClassifierSearch(**options)
 
         raise RuntimeError(f"Validated unsupported model family {name!r}.")
@@ -450,42 +431,6 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
                 for result in report.results:
                     self._print_result(result)
 
-    def _result_row(self, result: CandidateResult) -> dict[str, object]:
-        """
-        Convert one candidate result into a diagnostics-table row.
-        """
-        description_length = int(
-            len(result.artifacts.model_string.encode("utf-8"))
-        )
-        n_selected_features = (
-            int(result.n_selected_features)
-            if result.n_selected_features is not None
-            else int(len(result.artifacts.subset))
-        )
-        row = {
-            "candidate"                : result.name,
-            "family"                  : result.family,
-            "model_type"               : result.artifacts.model_type,
-            "hyperparameters"          : dict(result.hyperparameters),
-            "nescience"                : float(result.nescience),
-            "deficiency"               : float(result.components["deficiency"]),
-            "surplus"                  : float(result.components["surplus"]),
-            "inaccuracy"               : float(result.components["inaccuracy"]),
-            "surfeit"                  : float(result.components["surfeit"]),
-            "native_estimator_score"   : result.estimator_score,
-            "selected_features"        : list(result.artifacts.subset),
-            "n_selected_features"      : n_selected_features,
-            "description_length"       : description_length,
-            "is_reliable"              : bool(result.subset_diagnostics.get("is_reliable", True)),
-            "failure_reason"           : result.subset_diagnostics.get("failure_reason"),
-            "n_samples"                : result.subset_diagnostics.get("n_samples"),
-            "n_observed_joint_states"  : result.subset_diagnostics.get("n_observed_joint_states"),
-            "mean_joint_occupancy"     : result.subset_diagnostics.get("mean_joint_occupancy"),
-            "n_singleton_joint_states" : result.subset_diagnostics.get("n_singleton_joint_states"),
-            "singleton_fraction"       : result.subset_diagnostics.get("singleton_fraction"),
-        }
-
-        return row
 
     @staticmethod
     def _print_result(result: CandidateResult) -> None:
@@ -507,6 +452,3 @@ class NescienceClassifier(BaseEstimator, ClassifierMixin):
 
         n_features = int(getattr(X, "shape")[1])
         return [f"X{i}" for i in range(n_features)]
-
-
-Classifier = NescienceClassifier

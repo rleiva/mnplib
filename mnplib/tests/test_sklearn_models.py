@@ -23,10 +23,6 @@ from mnplib.automl import CandidateEvaluator
 from mnplib.automl.results import CandidateResult
 from mnplib.models import (
     ModelArtifacts,
-    components_model,
-    explain_model,
-    nescience_model,
-    score_model,
     sklearn_model_artifacts,
 )
 from mnplib.models.serializers.base import format_number
@@ -97,38 +93,19 @@ def test_supported_regression_models_produce_artifacts_and_nescience():
         assert len(artifacts.predictions) == len(y)
         _assert_explicit_model_string(artifacts.model_string, feature_names)
 
-        value = nescience_model(
-            metric,
-            model,
-            X,
-            feature_names=feature_names,
-        )
+        value = metric.nescience_model(model, feature_names=feature_names, X=X)
         assert isinstance(value, float)
         assert value >= 0.0
 
-        components = components_model(
-            metric,
-            model,
-            X,
-            feature_names=feature_names,
-        )
+        report = metric.model_analysis(model, feature_names=feature_names, X=X)
+        components = {name: report[name] for name in metric.component_names_}
         assert set(components) == {"deficiency", "surplus", "inaccuracy", "surfeit"}
 
-        explanation = explain_model(
-            metric,
-            model,
-            X,
-            feature_names=feature_names,
-        )
+        explanation = metric.model_analysis(model, feature_names=feature_names, X=X)
         assert explanation["model_type"] == type(model).__name__
         assert "model_metadata" not in explanation
 
-        assert score_model(
-            metric,
-            model,
-            X,
-            feature_names=feature_names,
-        ) == pytest.approx(1.0 - value)
+        assert metric.nescience(**artifacts.to_nescience_kwargs()) == pytest.approx(value)
 
 
 @pytest.mark.parametrize(
@@ -170,7 +147,7 @@ def test_supported_classification_models_produce_artifacts_and_nescience(
     assert len(artifacts.predictions) == len(y)
     _assert_explicit_model_string(artifacts.model_string)
 
-    value = nescience_model(metric, model, X)
+    value = metric.nescience_model(model, X=X)
     assert isinstance(value, float)
     assert value >= 0.0
 
@@ -268,10 +245,8 @@ def test_no_public_dynamic_registration_or_serialization_config_api_remains():
 
     for function in (
         sklearn_model_artifacts,
-        nescience_model,
-        components_model,
-        explain_model,
-        score_model,
+        Nescience.nescience_model,
+        Nescience.model_analysis,
     ):
         assert "config" not in inspect.signature(function).parameters
         assert "serialization_config" not in inspect.signature(function).parameters

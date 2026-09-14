@@ -25,7 +25,7 @@ from typing import Any, Literal
 import numpy as np
 import pandas as pd
 
-from sklearn.base import BaseEstimator, clone
+from sklearn.base import BaseEstimator
 from sklearn.utils import check_X_y
 from sklearn.utils.multiclass import type_of_target
 from sklearn.utils.validation import check_is_fitted
@@ -33,13 +33,13 @@ from sklearn.utils.validation import check_is_fitted
 from .classifier import NescienceClassifier
 from .miscoding import Miscoding
 from .regressor import NescienceRegressor
+from .utils import _auto_n_bins
 
 
 Task = Literal["auto", "classification", "regression"]
 ResolvedTask = Literal["classification", "regression"]
 XType = Literal["auto", "numeric", "categorical"]
-YType = Literal["auto", "numeric", "categorical"]
-BinSpec = int | Literal["auto"]
+BinSpec = int | Literal["auto", "adaptive"]
 AnomalyKind = Literal["all", "misclassified", "under_predicted", "over_predicted"]
 
 
@@ -56,18 +56,11 @@ class AnomalyDetector(BaseEstimator):
         Feature encoding strategy passed to the nescience-based auto estimators
         and to ``Miscoding`` during anomaly explanation.
 
-    y_type : {"auto", "numeric", "categorical"}, default="auto"
-        Target encoding strategy passed to the nescience-based auto estimators.
-
-    n_bins : int or "auto", default="auto"
+    n_bins : int, "auto", or "adaptive", default="adaptive"
         Number of bins used for regression anomaly detection and by ``Miscoding``
-        when numeric attributes are analyzed. ``"auto"`` uses Rice's rule,
-        ``ceil(2 * n_samples**(1/3))``.
-
-    fit_model : bool, default=False
-        If ``True`` and a model is supplied to ``fit``, clone and fit that model
-        on ``(X, y)`` before producing predictions. If ``False``, the supplied
-        model is assumed to be already fitted.
+        when numeric attributes are analyzed. ``"auto"`` uses
+        ``max(2, floor(2 * n_samples**(1/3)))``. ``"adaptive"`` uses that rule
+        for detection and subset-size adaptation for feature explanation.
 
     auto_model_kwargs : mapping, optional
         Additional keyword arguments passed to ``NescienceClassifier`` or
@@ -90,24 +83,19 @@ class AnomalyDetector(BaseEstimator):
 
     _VALID_TASKS = ("auto", "classification", "regression")
     _VALID_X_TYPES = ("auto", "numeric", "categorical")
-    _VALID_Y_TYPES = ("auto", "numeric", "categorical")
     _VALID_KINDS = ("all", "misclassified", "under_predicted", "over_predicted")
 
     def __init__(
         self,
         task: Task = "auto",
         X_type: XType = "auto",
-        y_type: YType = "auto",
-        n_bins: BinSpec = "auto",
-        fit_model: bool = False,
+        n_bins: BinSpec = "adaptive",
         auto_model_kwargs: Mapping[str, Any] | None = None,
         random_state: int | None = None,
     ):
         self.task = task
         self.X_type = X_type
-        self.y_type = y_type
         self.n_bins = n_bins
-        self.fit_model = fit_model
         self.auto_model_kwargs = auto_model_kwargs
         self.random_state = random_state
 
@@ -152,7 +140,7 @@ class AnomalyDetector(BaseEstimator):
         self.model_ = None
 
         self.y_pred_ = self._resolve_predictions(
-            X=self.X_,
+            X=self.X_frame_,
             y=self.y_,
             model=model,
             predictions=predictions,
@@ -165,9 +153,6 @@ class AnomalyDetector(BaseEstimator):
 
         return self
 
-    def fit_predictions(self, X, y, predictions):
-        """Fit the detector directly from a prediction vector."""
-        return self.fit(X, y, predictions=predictions)
 
     def _resolve_predictions(self, *, X, y, model, predictions) -> np.ndarray:
         """Return validated predictions and store a fitted model when present."""
@@ -179,9 +164,6 @@ class AnomalyDetector(BaseEstimator):
 
         if model is None:
             model = self._fit_auto_model(X, y)
-        elif self.fit_model:
-            model = clone(model)
-            model.fit(X, y)
 
         if not hasattr(model, "predict"):
             raise TypeError("model must implement a predict(X) method.")
@@ -224,7 +206,7 @@ class AnomalyDetector(BaseEstimator):
         check_is_fitted(self)
         return np.flatnonzero(self._mask_for_kind(kind)).astype(int)
 
-    def anomaly_table(self, *, only_anomalies: bool = True) -> pd.DataFrame:
+    def results_dataframe(self, *, only_anomalies: bool = True) -> pd.DataFrame:
         """
         Return row-level anomaly diagnostics.
 
@@ -268,7 +250,7 @@ class AnomalyDetector(BaseEstimator):
 
         return table.reset_index(drop=True)
 
-    def summary(self) -> dict[str, object]:
+    def _summary(self) -> dict[str, object]:
         """Return compact summary statistics for the fitted detector."""
         check_is_fitted(self)
 
@@ -299,8 +281,8 @@ class AnomalyDetector(BaseEstimator):
             ),
         }
 
-        if hasattr(self.model_, "nescience_score"):
-            result["model_nescience"] = float(self.model_.nescience_score())
+        if hasattr(self.model_, "nescience"):
+            result["model_nescience"] = float(self.model_.nescience())
 
         if self.task_ == "classification":
             result["n_misclassified"] = int(np.sum(self.anomaly_mask_))
@@ -324,7 +306,17 @@ class AnomalyDetector(BaseEstimator):
     # Miscoding-based anomaly explanation
     # ------------------------------------------------------------------
 
-    def explain_anomalies(
+    def explain(self, *, kind: AnomalyKind = "all", max_features: int | None = None) -> dict[str, object]:
+        """Return summary, correction-pattern analysis, and compressibility.
+
+        Detection is model-relative. Information diagnostics characterize
+        mismatches without introducing a separate anomaly threshold.
+        """
+        return {**self._summary(),
+                "compressibility": dict(self.anomaly_compressibility_),
+                **self._explain_features(kind=kind, max_features=max_features)}
+
+    def _explain_features(
         self,
         *,
         kind: AnomalyKind = "all",
@@ -410,44 +402,12 @@ class AnomalyDetector(BaseEstimator):
             **base,
             "status": "ok",
             "feature_analysis": features,
-            "selected_features": list(selection["selected_feature_names"]),
-            "selected_feature_indices": list(selection["selected_feature_indices"]),
+            "selected_feature_names": list(selection["selected_feature_names"]),
+            "selected_features": list(selection["selected_features"]),
             "selection_path": selection["path"],
             "subset_analysis": selection["subset"],
         }
 
-    def anomaly_compressibility(self) -> dict[str, object]:
-        """
-        Return compressibility of predicted target states for anomalous samples.
-
-        The predicted states of the anomalous observations are encoded in two
-        ways. The optimal code uses their empirical state probabilities, while
-        the reference code assigns equal probability to every state in the
-        encoded target alphabet.
-
-        If ``L_opt`` and ``L_uniform`` are the corresponding ideal code lengths,
-        the compression ratio is
-
-        ``L_opt / L_uniform``
-
-        and anomaly compressibility is
-
-        ``1 - L_opt / L_uniform``.
-
-        A value close to one indicates that anomalies are concentrated in a
-        small or highly unbalanced set of predicted target states. A value close
-        to zero indicates that their predicted states are approximately uniform
-        over the available target alphabet.
-
-        Returns
-        -------
-        dict
-            Number of anomalies, target alphabet size, number of distinct
-            predicted states present among anomalies, optimal code length,
-            uniform code length, compression ratio, and compressibility.
-        """
-        check_is_fitted(self)
-        return dict(self.anomaly_compressibility_)
 
     # ------------------------------------------------------------------
     # Anomaly detection
@@ -686,17 +646,11 @@ class AnomalyDetector(BaseEstimator):
     @staticmethod
     def _resolve_bins(n_bins: BinSpec, n_samples: int) -> int:
         """Resolve an explicit bin count or Rice's automatic rule."""
-        if n_bins == "auto":
-            bins = int(np.ceil(2.0 * int(n_samples) ** (1.0 / 3.0)))
-            return int(min(max(1, bins), int(n_samples)))
-
-        if isinstance(n_bins, bool):
-            raise ValueError("n_bins must be a positive integer or 'auto'.")
-
-        bins = int(n_bins)
-        if bins < 1:
-            raise ValueError("n_bins must be a positive integer or 'auto'.")
-        return bins
+        if isinstance(n_bins, str) and n_bins in {"auto", "adaptive"}:
+            return _auto_n_bins(n_samples)
+        if isinstance(n_bins, (bool, np.bool_)) or not isinstance(n_bins, (int, np.integer)) or n_bins < 1:
+            raise ValueError("n_bins must be a positive integer, 'auto', or 'adaptive'.")
+        return int(n_bins)
 
     # ------------------------------------------------------------------
     # Masks
@@ -750,12 +704,6 @@ class AnomalyDetector(BaseEstimator):
             raise ValueError(
                 f"Valid options for X_type are {self._VALID_X_TYPES}. "
                 f"Got {self.X_type!r}."
-            )
-
-        if self.y_type not in self._VALID_Y_TYPES:
-            raise ValueError(
-                f"Valid options for y_type are {self._VALID_Y_TYPES}. "
-                f"Got {self.y_type!r}."
             )
 
         self._resolve_bins(self.n_bins, 1)
@@ -853,7 +801,7 @@ class AnomalyDetector(BaseEstimator):
                 "feature_index",
                 "feature_name",
                 "is_numeric",
-                "code_length",
+                "code_length_bits",
                 "deficiency",
                 "surplus",
                 "miscoding",
@@ -870,8 +818,8 @@ class AnomalyDetector(BaseEstimator):
         return float(np.mean(values))
 
 
-def anomaly_table(X, y, predictions, *, task: Task = "auto", **kwargs) -> pd.DataFrame:
+def results_dataframe(X, y, predictions, *, task: Task = "auto", **kwargs) -> pd.DataFrame:
     """Return an anomaly table directly from a prediction vector."""
     detector = AnomalyDetector(task=task, **kwargs)
-    detector.fit_predictions(X, y, predictions)
-    return detector.anomaly_table()
+    detector.fit(X, y, predictions=predictions)
+    return detector.results_dataframe()

@@ -53,7 +53,10 @@ class TimeSeriesSearchContext:
     smoothing_alphas: tuple[float, ...]
     arima_orders: tuple[tuple[int, int, int], ...]
     state_space_models: tuple[str, ...]
-    statsmodels_maxiter: int
+    arima_max_iter: int
+    state_space_max_iter: int
+    min_improvement: float
+    smoothing_windows: tuple[int, ...]
     verbose: int = 0
 
 
@@ -66,9 +69,9 @@ class AutoregressiveSearcher(ModelFamilySearcher):
 
     def search(self, context: TimeSeriesSearchContext):
         selection = context.evaluator.nescience.miscoding_.select_features(
-            return_details=True
+            return_details=True, min_improvement=context.min_improvement
         )
-        subset = ensure_non_empty_subset(selection["selected_features"], context)
+        subset = ensure_non_empty_subset(selection["mask"], context)
         selected = np.flatnonzero(subset)
 
         model = LinearRegression().fit(context.X[:, selected], context.y)
@@ -144,12 +147,12 @@ class MovingAverageSearcher(ModelFamilySearcher):
                     model=model,
                     artifacts=artifacts,
                     estimator_score=float(model.score(context.X[:, selected], context.y)),
+                    hyperparameters={"window": int(window)},
                     metadata=candidate_metadata(
                         context,
                         family=self.family,
                         model_name=model_name,
                         selected=selected,
-                        extra={"window": int(window)},
                     ),
                     result_factory=TimeSeriesCandidateResult,
                 )
@@ -166,7 +169,7 @@ class ExponentialSmoothingSearcher(ModelFamilySearcher):
 
     def search(self, context: TimeSeriesSearchContext):
         results = []
-        for window in context.moving_average_windows:
+        for window in context.smoothing_windows:
             subset = target_lag_subset(context, window)
             selected = np.flatnonzero(subset)
             for alpha in context.smoothing_alphas:
@@ -196,12 +199,12 @@ class ExponentialSmoothingSearcher(ModelFamilySearcher):
                         model=model,
                         artifacts=artifacts,
                         estimator_score=float(model.score(context.X[:, selected], context.y)),
+                        hyperparameters={"window": int(window), "alpha": float(alpha)},
                         metadata=candidate_metadata(
                             context,
                             family=self.family,
                             model_name=model_name,
                             selected=selected,
-                            extra={"window": int(window), "alpha": float(alpha)},
                         ),
                         result_factory=TimeSeriesCandidateResult,
                     )
@@ -228,7 +231,7 @@ class ARIMASearcher(ModelFamilySearcher):
                     context.original_y,
                     order=order,
                     trend=trend,
-                    maxiter=context.statsmodels_maxiter,
+                    maxiter=context.arima_max_iter,
                 )
                 predictions = prediction_path(
                     result,
@@ -264,12 +267,12 @@ class ARIMASearcher(ModelFamilySearcher):
                         model=model,
                         artifacts=artifacts,
                         estimator_score=float(model.score(context.X[:, selected], context.y)),
+                        hyperparameters={"order": order, "trend": trend},
                         metadata=candidate_metadata(
                             context,
                             family=self.family,
                             model_name=model_name,
                             selected=selected,
-                            extra={"order": order, "trend": trend},
                         ),
                         result_factory=TimeSeriesCandidateResult,
                     )
@@ -319,7 +322,7 @@ class StateSpaceSearcher(ModelFamilySearcher):
                 result = fit_state_space_result(
                     context.original_y,
                     specification=specification,
-                    maxiter=context.statsmodels_maxiter,
+                    maxiter=context.state_space_max_iter,
                 )
                 predictions = prediction_path(
                     result,
@@ -355,12 +358,12 @@ class StateSpaceSearcher(ModelFamilySearcher):
                         model=model,
                         artifacts=artifacts,
                         estimator_score=float(model.score(context.X[:, selected], context.y)),
+                        hyperparameters={"specification": specification_name},
                         metadata=candidate_metadata(
                             context,
                             family=self.family,
                             model_name=model_name,
                             selected=selected,
-                            extra={"specification": specification_name},
                         ),
                         result_factory=TimeSeriesCandidateResult,
                     )
@@ -474,7 +477,7 @@ def candidate_metadata(
     selected = tuple(int(index) for index in selected)
     metadata: dict[str, object] = {
         "schema": TIME_SERIES_SCHEMA,
-        "model_family": str(family),
+        "family": str(family),
         "model_name": str(model_name),
         "window_size": int(context.window_size),
         "n_selected_features": int(len(selected)),

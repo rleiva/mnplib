@@ -96,7 +96,7 @@ class LogisticRegressionPrefixSearcher(ModelFamilySearcher):
                         "family"                   : self.family,
                         "reason"                   : "logistic_fit_failed",
                         "n_selected_features"      : int(n_selected_features),
-                        "selected_feature_indices" : list(selected),
+                        "selected_features" : list(selected),
                         **fit_details,
                     }
                 )
@@ -108,7 +108,7 @@ class LogisticRegressionPrefixSearcher(ModelFamilySearcher):
                         "family"                   : self.family,
                         "reason"                   : "logistic_convergence_warning",
                         "n_selected_features"      : int(n_selected_features),
-                        "selected_feature_indices" : list(selected),
+                        "selected_features" : list(selected),
                     }
                 )
 

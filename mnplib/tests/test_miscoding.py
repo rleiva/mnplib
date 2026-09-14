@@ -3,22 +3,22 @@ Tests for the Miscoding class.
 
 These tests target empirical miscoding diagnostics:
 
-    - Miscoding(X_type="auto", y_type="auto", n_bins="auto", min_improvement=0.0)
+    - Miscoding(X_type="auto", y_type="auto", n_bins="adaptive")
     - fit(X, y)
-    - feature_deficiency()
-    - feature_surplus()
-    - feature_miscoding()
-    - feature_redundancy()
+    - deficiency_feature()
+    - surplus_feature()
+    - miscoding_feature()
+    - redundancy_matrix()
     - feature_analysis()
     - subset_analysis(subset)
-    - miscoding_subset(subset, mode=...)
+    - miscoding_subset(subset)
     - select_features(...)
     - rank_features(...)
-    - feature_analysis(X, y, **kwargs)
-    - feature_redundancy(X, y, **kwargs)
-    - miscoding_subset(X, y, subset, **kwargs)
-    - select_features(X, y, **kwargs)
-    - rank_features(X, y, **kwargs)
+    - feature_analysis(X=X, y=y)
+    - redundancy_matrix(X=X, y=y)
+    - miscoding_subset(subset, X=X, y=y)
+    - select_features(X=X, y=y)
+    - rank_features(X=X, y=y)
 """
 
 import numpy as np
@@ -35,7 +35,7 @@ from mnplib.miscoding import (
     _adaptive_n_bins,
     _auto_n_bins,
     feature_analysis,
-    feature_redundancy,
+    redundancy_matrix,
     miscoding_subset,
     rank_features,
     select_features,
@@ -46,6 +46,7 @@ from mnplib.utils import empirical_distribution
 RELIABILITY_FIELDS = {
     "is_reliable",
     "failure_reason",
+    "resolved_n_bins",
     "n_samples",
     "n_observed_joint_states",
     "mean_joint_occupancy",
@@ -131,8 +132,7 @@ def test_constructor_defaults():
 
     assert metric.X_type == "auto"
     assert metric.y_type == "auto"
-    assert metric.n_bins == "auto"
-    assert metric.min_improvement == pytest.approx(0.0)
+    assert metric.n_bins == "adaptive"
 
 
 @pytest.mark.parametrize(
@@ -142,7 +142,6 @@ def test_constructor_defaults():
         ({"y_type": "invalid"}, "y_type"),
         ({"n_bins": "invalid"}, "n_bins"),
         ({"n_bins": 1}, "n_bins"),
-        ({"min_improvement": -0.1}, "min_improvement"),
     ],
 )
 def test_constructor_rejects_invalid_configuration(kwargs, message):
@@ -220,9 +219,9 @@ def test_perfect_feature_has_zero_deficiency_and_zero_surplus():
 
     metric = Miscoding(X_type="categorical", y_type="categorical").fit(X, y)
 
-    assert metric.feature_deficiency()[0] == pytest.approx(0.0)
-    assert metric.feature_surplus()[0] == pytest.approx(0.0)
-    assert metric.feature_miscoding()[0] == pytest.approx(0.0)
+    assert metric.deficiency_feature()[0] == pytest.approx(0.0)
+    assert metric.surplus_feature()[0] == pytest.approx(0.0)
+    assert metric.miscoding_feature()[0] == pytest.approx(0.0)
 
 
 def test_feature_diagnostics_have_expected_shape_and_range():
@@ -230,9 +229,9 @@ def test_feature_diagnostics_have_expected_shape_and_range():
 
     metric = Miscoding(X_type="categorical", y_type="categorical").fit(X, y)
 
-    deficiency = metric.feature_deficiency()
-    surplus = metric.feature_surplus()
-    miscoding = metric.feature_miscoding()
+    deficiency = metric.deficiency_feature()
+    surplus = metric.surplus_feature()
+    miscoding = metric.miscoding_feature()
 
     assert deficiency.shape == (X.shape[1],)
     assert surplus.shape == (X.shape[1],)
@@ -249,10 +248,10 @@ def test_feature_diagnostic_methods_return_copies():
 
     metric = Miscoding(X_type="categorical", y_type="categorical").fit(X, y)
 
-    deficiency = metric.feature_deficiency()
+    deficiency = metric.deficiency_feature()
     deficiency[:] = 999.0
 
-    assert not np.all(metric.feature_deficiency() == 999.0)
+    assert not np.all(metric.deficiency_feature() == 999.0)
 
 
 def test_feature_analysis_returns_expected_columns_and_sorted_rows():
@@ -265,7 +264,7 @@ def test_feature_analysis_returns_expected_columns_and_sorted_rows():
         "feature_index",
         "feature_name",
         "is_numeric",
-        "code_length",
+        "code_length_bits",
         "deficiency",
         "surplus",
         "miscoding",
@@ -279,7 +278,7 @@ def test_feature_redundancy_returns_symmetric_dataframe():
     X, y = make_simple_classification_data()
 
     metric = Miscoding(X_type="categorical", y_type="categorical").fit(X, y)
-    redundancy = metric.feature_redundancy()
+    redundancy = metric.redundancy_matrix()
 
     assert isinstance(redundancy, pd.DataFrame)
     assert list(redundancy.index) == ["x0", "x1", "x2"]
@@ -293,7 +292,7 @@ def test_identical_features_have_high_pairwise_redundancy():
     X, y = make_redundant_noisy_data()
 
     metric = Miscoding(X_type="categorical", y_type="categorical").fit(X, y)
-    redundancy = metric.feature_redundancy()
+    redundancy = metric.redundancy_matrix()
 
     assert redundancy.loc["x0", "x1"] == pytest.approx(1.0)
 
@@ -303,7 +302,7 @@ def test_miscoding_subset_accepts_valid_modes(mode):
     X, y = make_simple_classification_data()
 
     metric = Miscoding(X_type="categorical", y_type="categorical").fit(X, y)
-    value = metric.miscoding_subset([0], mode=mode)
+    value = metric.subset_analysis([0])[mode]
 
     assert isinstance(value, float)
     assert 0.0 <= value <= 1.0
@@ -314,9 +313,9 @@ def test_miscoding_subset_for_perfect_feature_is_zero():
 
     metric = Miscoding(X_type="categorical", y_type="categorical").fit(X, y)
 
-    assert metric.miscoding_subset([0], mode="deficiency") == pytest.approx(0.0)
-    assert metric.miscoding_subset([0], mode="surplus") == pytest.approx(0.0)
-    assert metric.miscoding_subset([0], mode="miscoding") == pytest.approx(0.0)
+    assert metric.deficiency_subset([0]) == pytest.approx(0.0)
+    assert metric.surplus_subset([0]) == pytest.approx(0.0)
+    assert metric.miscoding_subset([0]) == pytest.approx(0.0)
 
 
 def test_miscoding_subset_accepts_binary_mask():
@@ -324,7 +323,7 @@ def test_miscoding_subset_accepts_binary_mask():
 
     metric = Miscoding(X_type="categorical", y_type="categorical").fit(X, y)
 
-    assert metric.miscoding_subset([1, 0, 0]) == pytest.approx(
+    assert metric.miscoding_subset([True, False, False]) == pytest.approx(
         metric.miscoding_subset([0])
     )
 
@@ -346,6 +345,7 @@ def test_empty_subset_has_full_deficiency_and_zero_surplus():
     assert details["n_singleton_joint_states"] is None
     assert details["singleton_fraction"] is None
     assert details["n_selected_features"] == 0
+    assert details["resolved_n_bins"] is None
 
 
 def test_empty_subset_has_zero_deficiency_for_constant_target():
@@ -360,6 +360,33 @@ def test_empty_subset_has_zero_deficiency_for_constant_target():
     assert details["miscoding"] == pytest.approx(0.0)
     assert details["is_reliable"] is True
     assert details["failure_reason"] is None
+    assert details["resolved_n_bins"] is None
+
+
+@pytest.mark.parametrize("n_bins", [4, "auto", "adaptive"])
+@pytest.mark.parametrize("sparse", [False, True])
+def test_resolved_bins_are_reported_for_reliable_and_sparse_subsets(n_bins, sparse):
+    X, y = make_sparse_subset_data() if sparse else make_reliable_low_dimensional_data()
+    metric = Miscoding(n_bins=n_bins).fit(X, y)
+    subset = list(range(X.shape[1]))
+    details = metric.subset_analysis(subset)
+    expected = (n_bins if isinstance(n_bins, int) else
+                _auto_n_bins(len(y)) if n_bins == "auto" else
+                _adaptive_n_bins(len(y), len(subset)))
+
+    assert details["resolved_n_bins"] == expected
+    assert details["is_reliable"] is (not sparse)
+
+
+@pytest.mark.parametrize("operation", ["select_features", "rank_features"])
+def test_feature_paths_report_resolved_bins(operation):
+    X, y = make_reliable_low_dimensional_data()
+    metric = Miscoding().fit(X, y)
+    details = getattr(metric, operation)(return_details=True)
+
+    assert not details["path"].empty
+    for row in details["path"].itertuples():
+        assert row.resolved_n_bins == _adaptive_n_bins(len(y), len(row.selected_features))
 
 
 def test_empirical_subset_deficiency_is_clipped_to_unit_interval(monkeypatch):
@@ -379,7 +406,7 @@ def test_empirical_subset_deficiency_is_clipped_to_unit_interval(monkeypatch):
 
     monkeypatch.setattr(metric, "_empirical_summary_for_indices", fake_summary)
 
-    assert metric.miscoding_subset([0], mode="deficiency") == pytest.approx(1.0)
+    assert metric.deficiency_subset([0]) == pytest.approx(1.0)
 
 
 def test_empirical_subset_surplus_is_clipped_to_unit_interval(monkeypatch):
@@ -399,7 +426,7 @@ def test_empirical_subset_surplus_is_clipped_to_unit_interval(monkeypatch):
 
     monkeypatch.setattr(metric, "_empirical_summary_for_indices", fake_summary)
 
-    assert metric.miscoding_subset([0], mode="surplus") == pytest.approx(1.0)
+    assert metric.surplus_subset([0]) == pytest.approx(1.0)
 
 
 @pytest.mark.parametrize("mode", ["deficiency", "surplus", "miscoding"])
@@ -413,7 +440,7 @@ def test_miscoding_subset_matches_subset_analysis_with_adaptive_bins(mode):
     ).fit(X, y)
     details = metric.subset_analysis([0, 2])
 
-    assert metric.miscoding_subset([0, 2], mode=mode) == pytest.approx(
+    assert metric.subset_analysis([0, 2])[mode] == pytest.approx(
         details[mode]
     )
     assert details["miscoding"] == pytest.approx(
@@ -500,15 +527,7 @@ def test_unreliable_high_dimensional_subset_returns_nan_values():
 def test_miscoding_subset_returns_nan_for_unreliable_subset(mode):
     X, y = make_sparse_subset_data()
 
-    value = miscoding_subset(
-        X,
-        y,
-        list(range(8)),
-        mode=mode,
-        X_type="numeric",
-        y_type="categorical",
-        n_bins=4,
-    )
+    value = miscoding_subset(list(range(8)), X_type='numeric', y_type='categorical', n_bins=4, X=X, y=y)
 
     assert np.isnan(value)
 
@@ -524,16 +543,16 @@ def test_subset_analysis_returns_expected_keys_and_shapes():
         "surplus",
         "miscoding",
         *RELIABILITY_FIELDS,
-        "features_in_use",
+        "mask",
         "n_selected_features",
-        "selected_feature_indices",
+        "selected_features",
         "selected_feature_names",
         "redundancy_weights",
         "feature_weights",
     }
-    assert details["features_in_use"].shape == (X.shape[1],)
+    assert details["mask"].shape == (X.shape[1],)
     assert details["n_selected_features"] == 2
-    assert details["selected_feature_indices"] == [0, 2]
+    assert details["selected_features"] == [0, 2]
     assert details["selected_feature_names"] == ["x0", "x2"]
     assert details["redundancy_weights"].shape == (2,)
     assert details["feature_weights"].shape == (2,)
@@ -546,7 +565,7 @@ def test_empirical_subset_counts_duplicate_information_once():
     metric = Miscoding(X_type="categorical", y_type="categorical").fit(X, y)
 
     single = metric.subset_analysis([0])
-    duplicated = metric.subset_analysis([1, 1])
+    duplicated = metric.subset_analysis([True, True])
 
     assert duplicated["redundancy_weights"] == pytest.approx([0.5, 0.5])
     assert duplicated["deficiency"] == pytest.approx(single["deficiency"])
@@ -640,9 +659,7 @@ def test_one_feature_subset_adaptive_matches_auto(mode):
         n_bins="adaptive",
     ).fit(X, y)
 
-    assert adaptive.miscoding_subset([0], mode=mode) == pytest.approx(
-        auto.miscoding_subset([0], mode=mode)
-    )
+    assert adaptive.subset_analysis([0])[mode] == pytest.approx(auto.subset_analysis([0])[mode])
 
 
 def test_reliability_diagnostics_work_with_adaptive_categorical_target():
@@ -676,13 +693,13 @@ def test_reliability_diagnostics_work_with_adaptive_numerical_target():
     assert np.isnan(details["miscoding"])
 
 
-def test_miscoding_subset_rejects_invalid_mode():
+def test_miscoding_subset_rejects_noninteger_indices():
     X, y = make_simple_classification_data()
 
     metric = Miscoding(X_type="categorical", y_type="categorical").fit(X, y)
 
-    with pytest.raises(ValueError, match="mode"):
-        metric.miscoding_subset([0], mode="invalid")
+    with pytest.raises(ValueError, match="integer"):
+        metric.miscoding_subset([0.5])
 
 
 def test_selected_indices_validation_errors():
@@ -717,7 +734,7 @@ def test_select_features_selects_a_perfect_feature_first():
     metric = Miscoding(X_type="categorical", y_type="categorical").fit(X, y)
     details = metric.select_features(max_features=2, return_details=True)
 
-    assert details["selected_feature_indices"][0] in {0, 2}
+    assert details["selected_features"][0] in {0, 2}
     assert details["path"].iloc[0]["miscoding"] == pytest.approx(0.0)
 
 
@@ -727,8 +744,8 @@ def test_select_features_stops_when_subset_miscoding_does_not_improve():
     metric = Miscoding(X_type="categorical", y_type="categorical").fit(X, y)
     details = metric.select_features(max_features=3, return_details=True)
 
-    assert len(details["selected_feature_indices"]) == 1
-    assert int(details["selected_features"].sum()) == 1
+    assert len(details["selected_features"]) == 1
+    assert int(details["mask"].sum()) == 1
     assert details["subset"]["miscoding"] == pytest.approx(0.0)
 
 
@@ -739,7 +756,7 @@ def test_rank_features_continues_after_miscoding_stops_improving():
     strict = metric.select_features(max_features=3, return_details=True)
     details = metric.rank_features(return_details=True)
 
-    assert len(strict["selected_feature_indices"]) == 1
+    assert len(strict["selected_features"]) == 1
     assert details["feature_order"] == [0, 2, 1]
     assert len(details["path"]) == X.shape[1]
     assert (
@@ -794,7 +811,7 @@ def test_rank_features_return_details_has_expected_shape():
         "deficiency_improvement",
         "surplus_change",
         "miscoding_improvement",
-        "selected_feature_indices",
+        "selected_features",
         "selected_feature_names",
     }.issubset(details["path"].columns)
 
@@ -819,9 +836,9 @@ def test_relevant_prefixes_lower_adaptive_deficiency_than_empty_subset():
         y_type="categorical",
         n_bins="adaptive",
     ).fit(X, y)
-    empty = metric.miscoding_subset([], mode="deficiency")
+    empty = metric.deficiency_subset([])
     deficiencies = [
-        metric.miscoding_subset(list(range(size)), mode="deficiency")
+        metric.deficiency_subset(list(range(size)))
         for size in range(1, 5)
     ]
 
@@ -837,7 +854,7 @@ def test_adaptive_deficiency_decreases_as_relevant_features_are_added():
         n_bins="adaptive",
     ).fit(X, y)
     deficiencies = [
-        metric.miscoding_subset(list(range(size)), mode="deficiency")
+        metric.deficiency_subset(list(range(size)))
         for size in range(1, 5)
     ]
 
@@ -863,11 +880,8 @@ def test_shuffled_target_does_not_improve_relevant_adaptive_prefixes():
         n_bins="adaptive",
     ).fit(X, shuffled)
 
-    real_deficiency = real.miscoding_subset([0, 1, 2, 3], mode="deficiency")
-    baseline_deficiency = baseline.miscoding_subset(
-        [0, 1, 2, 3],
-        mode="deficiency",
-    )
+    real_deficiency = real.deficiency_subset([0, 1, 2, 3])
+    baseline_deficiency = baseline.deficiency_subset([0, 1, 2, 3])
 
     assert real_deficiency <= baseline_deficiency
 
@@ -880,10 +894,7 @@ def test_noise_features_do_not_collapse_adaptive_deficiency():
         y_type="categorical",
         n_bins="adaptive",
     ).fit(X, y)
-    noise_deficiency = metric.miscoding_subset(
-        [4, 5],
-        mode="deficiency",
-    )
+    noise_deficiency = metric.deficiency_subset([4, 5])
     details = metric.subset_analysis([4, 5])
 
     assert np.isnan(noise_deficiency)
@@ -963,7 +974,7 @@ def test_rank_features_with_adaptive_bins_returns_full_path_details():
         "deficiency_improvement",
         "surplus_change",
         "miscoding_improvement",
-        "selected_feature_indices",
+        "selected_features",
         "selected_feature_names",
     }.issubset(details["path"].columns)
 
@@ -1009,7 +1020,7 @@ def test_rank_features_stops_when_remaining_candidates_are_unreliable():
     assert details["path"]["is_reliable"].all()
     assert all(
         metric.subset_analysis(indices)["is_reliable"]
-        for indices in details["path"]["selected_feature_indices"]
+        for indices in details["path"]["selected_features"]
     )
 
 
@@ -1019,7 +1030,7 @@ def test_select_features_stops_when_remaining_candidates_are_unreliable():
     metric = Miscoding(X_type="numeric", y_type="categorical", n_bins=4).fit(X, y)
     details = metric.select_features(return_details=True)
 
-    assert len(details["selected_feature_indices"]) == 1
+    assert len(details["selected_features"]) == 1
     assert details["subset"]["is_reliable"] is True
     assert details["path"]["is_reliable"].all()
 
@@ -1033,8 +1044,8 @@ def test_rank_and_select_stop_when_no_reliable_candidate_exists():
 
     assert rank_details["feature_order"] == []
     assert rank_details["path"].empty
-    assert select_details["selected_feature_indices"] == []
-    assert int(select_details["selected_features"].sum()) == 0
+    assert select_details["selected_features"] == []
+    assert int(select_details["mask"].sum()) == 0
     assert select_details["subset"]["is_reliable"] is True
 
 
@@ -1045,8 +1056,9 @@ def test_select_features_return_details():
     details = metric.select_features(max_features=2, return_details=True)
 
     assert set(details.keys()) == {
+        "mask",
         "selected_features",
-        "selected_feature_indices",
+        "selected_features",
         "selected_feature_names",
         "min_improvement",
         "path",
@@ -1054,7 +1066,7 @@ def test_select_features_return_details():
         "features",
         "redundancy",
     }
-    assert details["selected_features"].shape == (X.shape[1],)
+    assert details["mask"].shape == (X.shape[1],)
     assert isinstance(details["path"], pd.DataFrame)
     assert isinstance(details["subset"], dict)
     assert isinstance(details["features"], pd.DataFrame)
@@ -1086,8 +1098,9 @@ def test_select_features_with_adaptive_bins_returns_details():
     details = metric.select_features(max_features=4, return_details=True)
 
     assert set(details.keys()) == {
+        "mask",
         "selected_features",
-        "selected_feature_indices",
+        "selected_features",
         "selected_feature_names",
         "min_improvement",
         "path",
@@ -1095,12 +1108,7 @@ def test_select_features_with_adaptive_bins_returns_details():
         "features",
         "redundancy",
     }
-    assert details["subset"]["miscoding"] == pytest.approx(
-        metric.miscoding_subset(
-            details["selected_feature_indices"],
-            mode="miscoding",
-        )
-    )
+    assert details["subset"]["miscoding"] == pytest.approx(metric.miscoding_subset(details['selected_features']))
     assert details["subset"]["is_reliable"] is True
     assert np.isfinite(details["subset"]["deficiency"])
     assert np.isfinite(details["subset"]["surplus"])
@@ -1113,10 +1121,9 @@ def test_select_features_respects_min_improvement():
     metric = Miscoding(
         X_type="categorical",
         y_type="categorical",
-        min_improvement=2.0,
     ).fit(X, y)
 
-    mask = metric.select_features()
+    mask = metric.select_features(min_improvement=2.0)
 
     assert np.array_equal(mask, np.zeros(X.shape[1], dtype=int))
 
@@ -1160,16 +1167,16 @@ def test_methods_requiring_fit_raise_not_fitted_error():
     metric = Miscoding()
 
     with pytest.raises(NotFittedError):
-        metric.feature_deficiency()
+        metric.deficiency_feature()
 
     with pytest.raises(NotFittedError):
-        metric.feature_surplus()
+        metric.surplus_feature()
 
     with pytest.raises(NotFittedError):
-        metric.feature_miscoding()
+        metric.miscoding_feature()
 
     with pytest.raises(NotFittedError):
-        metric.feature_redundancy()
+        metric.redundancy_matrix()
 
     with pytest.raises(NotFittedError):
         metric.feature_analysis()
@@ -1204,8 +1211,8 @@ def test_numeric_regression_target_is_supported():
 
     assert metric.y_isnumeric_ is True
     assert metric.X_isnumeric_ == [True, True]
-    assert metric.feature_miscoding().shape == (2,)
-    assert metric.feature_redundancy().shape == (2, 2)
+    assert metric.miscoding_feature().shape == (2,)
+    assert metric.redundancy_matrix().shape == (2, 2)
 
 
 def test_categorical_dataframe_values_are_supported():
@@ -1221,13 +1228,13 @@ def test_categorical_dataframe_values_are_supported():
 
     assert metric.X_isnumeric_ == [False, False]
     assert metric.y_isnumeric_ is False
-    assert metric.feature_miscoding().shape == (2,)
+    assert metric.miscoding_feature().shape == (2,)
 
 
 def test_functional_feature_analysis_matches_estimator():
     X, y = make_simple_classification_data()
 
-    direct = feature_analysis(X, y, X_type="categorical", y_type="categorical")
+    direct = feature_analysis(X=X, y=y, X_type="categorical", y_type="categorical")
     estimator = Miscoding(X_type="categorical", y_type="categorical").fit(X, y)
 
     pd.testing.assert_frame_equal(direct, estimator.feature_analysis())
@@ -1236,22 +1243,16 @@ def test_functional_feature_analysis_matches_estimator():
 def test_functional_feature_redundancy_matches_estimator():
     X, y = make_simple_classification_data()
 
-    direct = feature_redundancy(X, y, X_type="categorical", y_type="categorical")
+    direct = redundancy_matrix(X=X, y=y, X_type="categorical", y_type="categorical")
     estimator = Miscoding(X_type="categorical", y_type="categorical").fit(X, y)
 
-    pd.testing.assert_frame_equal(direct, estimator.feature_redundancy())
+    pd.testing.assert_frame_equal(direct, estimator.redundancy_matrix())
 
 
 def test_functional_miscoding_subset_matches_estimator():
     X, y = make_simple_classification_data()
 
-    direct = miscoding_subset(
-        X,
-        y,
-        [0, 2],
-        X_type="categorical",
-        y_type="categorical",
-    )
+    direct = miscoding_subset([0, 2], X_type='categorical', y_type='categorical', X=X, y=y)
     estimator = Miscoding(X_type="categorical", y_type="categorical").fit(X, y)
 
     assert direct == pytest.approx(estimator.miscoding_subset([0, 2]))
@@ -1261,8 +1262,8 @@ def test_functional_select_features_matches_estimator():
     X, y = make_simple_classification_data()
 
     direct = select_features(
-        X,
-        y,
+        X=X,
+        y=y,
         X_type="categorical",
         y_type="categorical",
         max_features=1,
@@ -1277,8 +1278,8 @@ def test_functional_rank_features_matches_estimator():
     X, y = make_simple_classification_data()
 
     direct = rank_features(
-        X,
-        y,
+        X=X,
+        y=y,
         X_type="categorical",
         y_type="categorical",
         max_features=2,
@@ -1293,15 +1294,7 @@ def test_functional_rank_features_matches_estimator():
 def test_functional_miscoding_subset_accepts_adaptive_bins(mode):
     X, y = make_distributed_signal_data()
 
-    value = miscoding_subset(
-        X,
-        y,
-        [0, 1],
-        mode=mode,
-        X_type="numeric",
-        y_type="categorical",
-        n_bins="adaptive",
-    )
+    value = miscoding_subset([0, 1], X_type='numeric', y_type='categorical', n_bins='adaptive', X=X, y=y)
 
     assert isinstance(value, float)
     assert 0.0 <= value <= 1.0
@@ -1310,14 +1303,7 @@ def test_functional_miscoding_subset_accepts_adaptive_bins(mode):
 def test_functional_miscoding_subset_returns_nan_for_unreliable_subset():
     X, y = make_sparse_subset_data()
 
-    value = miscoding_subset(
-        X,
-        y,
-        list(range(8)),
-        X_type="numeric",
-        y_type="categorical",
-        n_bins=4,
-    )
+    value = miscoding_subset(list(range(8)), X_type='numeric', y_type='categorical', n_bins=4, X=X, y=y)
 
     assert np.isnan(value)
 
@@ -1326,8 +1312,8 @@ def test_functional_rank_features_accepts_adaptive_bins():
     X, y = make_distributed_signal_data()
 
     order = rank_features(
-        X,
-        y,
+        X=X,
+        y=y,
         X_type="numeric",
         y_type="categorical",
         n_bins="adaptive",
@@ -1342,8 +1328,8 @@ def test_functional_rank_features_details_include_reliability_metadata():
     X, y = make_sparse_subset_data()
 
     details = rank_features(
-        X,
-        y,
+        X=X,
+        y=y,
         X_type="numeric",
         y_type="categorical",
         n_bins=4,
@@ -1360,8 +1346,8 @@ def test_functional_select_features_accepts_adaptive_bins():
     X, y = make_distributed_signal_data()
 
     mask = select_features(
-        X,
-        y,
+        X=X,
+        y=y,
         X_type="numeric",
         y_type="categorical",
         n_bins="adaptive",
@@ -1376,8 +1362,8 @@ def test_functional_select_features_details_include_reliable_subset():
     X, y = make_sparse_subset_data()
 
     details = select_features(
-        X,
-        y,
+        X=X,
+        y=y,
         X_type="numeric",
         y_type="categorical",
         n_bins=4,

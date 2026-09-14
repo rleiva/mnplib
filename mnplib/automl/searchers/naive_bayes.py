@@ -94,7 +94,7 @@ class NaiveBayesSearcher(ModelFamilySearcher):
                         "family": self.family,
                         "reason": "fit_failed",
                         "n_selected_features": int(n_selected_features),
-                        "selected_feature_indices": list(selected),
+                        "selected_features": list(selected),
                         "error_type": type(exc).__name__,
                         "error_message": str(exc),
                     }

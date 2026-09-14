@@ -59,7 +59,7 @@ class SklearnSerializer(ABC):
         )
         tokens = [feature_token(index) for index in indices]
 
-        subset       = self.subset(model)
+        subset       = [indices[index] for index in self.subset(model)]
         predictions  = np.asarray(model.predict(X))
         model_string = self.serialize(model, feature_names=tokens)
 

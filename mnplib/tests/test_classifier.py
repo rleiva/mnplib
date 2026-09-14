@@ -21,7 +21,6 @@ from sklearn.tree import DecisionTreeClassifier
 from mnplib.classifier import (
     SUPPORTED_MODELS,
     CandidateResult,
-    Classifier,
     NescienceClassifier,
 )
 
@@ -137,11 +136,7 @@ def test_default_behavior_uses_all_supported_internal_model_families(
 ):
     X, y = binary_classification_data
 
-    clf = NescienceClassifier(
-        n_bins=3,
-        random_state=42,
-        mlp_search_options=FAST_MLP,
-    ).fit(X, y)
+    clf = NescienceClassifier(n_bins=3, random_state=42, search_options={'mlp': FAST_MLP}).fit(X, y)
 
     assert clf.model_names_ == SUPPORTED_MODELS
     assert [searcher.family for searcher in clf.searchers_] == [
@@ -207,7 +202,7 @@ def test_invalid_model_name_raises_clear_value_error(binary_classification_data)
 def test_arbitrary_candidate_mapping_is_rejected(binary_classification_data):
     X, y = binary_classification_data
 
-    with pytest.raises(ValueError, match="does not accept arbitrary candidate"):
+    with pytest.raises(TypeError, match="candidates"):
         NescienceClassifier(
             candidates={
                 "my_model": DecisionTreeClassifier(max_depth=2, random_state=42)
@@ -219,7 +214,7 @@ def test_arbitrary_candidate_mapping_is_rejected(binary_classification_data):
 def test_arbitrary_candidate_sequence_is_rejected(binary_classification_data):
     X, y = binary_classification_data
 
-    with pytest.raises(ValueError, match="does not accept arbitrary candidate"):
+    with pytest.raises(TypeError, match="candidates"):
         NescienceClassifier(
             candidates=[DecisionTreeClassifier(max_depth=2, random_state=42)],
             n_bins=3,
@@ -229,11 +224,7 @@ def test_arbitrary_candidate_sequence_is_rejected(binary_classification_data):
 def test_fit_selects_minimum_nescience_candidate(binary_classification_data):
     X, y = binary_classification_data
 
-    clf = NescienceClassifier(
-        n_bins=3,
-        random_state=42,
-        mlp_search_options=FAST_MLP,
-    ).fit(X, y)
+    clf = NescienceClassifier(n_bins=3, random_state=42, search_options={'mlp': FAST_MLP}).fit(X, y)
 
     assert clf.is_fitted_
     assert clf.n_samples_in_ == X.shape[0]
@@ -250,11 +241,7 @@ def test_fit_selects_minimum_nescience_candidate(binary_classification_data):
 def test_predict_predict_proba_and_score(binary_classification_data):
     X, y = binary_classification_data
 
-    clf = NescienceClassifier(
-        n_bins=3,
-        random_state=42,
-        mlp_search_options=FAST_MLP,
-    ).fit(X, y)
+    clf = NescienceClassifier(n_bins=3, random_state=42, search_options={'mlp': FAST_MLP}).fit(X, y)
 
     predictions = clf.predict(X[:9])
     assert predictions.shape == (9,)
@@ -271,18 +258,14 @@ def test_predict_predict_proba_and_score(binary_classification_data):
             clf.predict_proba(X[:11])
 
 
-def test_nescience_components_explain_model_string_and_get_model(
+def test_nescience_components_explain_and_model_description(
     binary_classification_data,
 ):
     X, y = binary_classification_data
 
-    clf = NescienceClassifier(
-        n_bins=3,
-        random_state=42,
-        mlp_search_options=FAST_MLP,
-    ).fit(X, y)
+    clf = NescienceClassifier(n_bins=3, random_state=42, search_options={'mlp': FAST_MLP}).fit(X, y)
 
-    assert clf.nescience_score() == pytest.approx(clf.best_result_.nescience)
+    assert clf.nescience() == pytest.approx(clf.best_result_.nescience)
     assert set(clf.components()) == {
         "deficiency",
         "surplus",
@@ -290,15 +273,18 @@ def test_nescience_components_explain_model_string_and_get_model(
         "surfeit",
     }
     explanation = clf.explain()
-    assert explanation["candidate_name"] == clf.best_candidate_name_
+    assert explanation["candidate"] == clf.best_candidate_name_
+    assert explanation["task"] == "classification"
+    assert explanation["evaluation_context"] == "training"
+    assert explanation["native_estimator_score"] == pytest.approx(clf.best_result_.estimator_score)
     assert "candidate_source" not in explanation
     assert "hyperparameters" in explanation
     assert "metadata" not in explanation
     assert "model_metadata" not in explanation
     assert "n_input_features" not in explanation
     assert "n_features_in_use" not in explanation
-    assert clf.get_model() is clf.model_
-    model_string = clf.model_string()
+    assert clf.model_ is clf.model_
+    model_string = clf.model_description()["model_string"]
 
     assert model_string.strip()
     assert "SCHEMA" not in model_string
@@ -320,29 +306,25 @@ def test_candidate_model_description_for_best_and_named_candidate(
         random_state=42,
     ).fit(X, y)
 
-    best_description = clf.candidate_model_description()
+    best_description = clf.model_description()
     _assert_candidate_model_description(best_description, clf.best_result_)
-    assert clf.model_string() == best_description["model_string"]
+    assert clf.model_description()["model_string"] == best_description["model_string"]
 
     named_result = _non_best_result(clf)
-    named_description = clf.candidate_model_description(named_result.name)
+    named_description = clf.model_description(named_result.name)
     _assert_candidate_model_description(named_description, named_result)
 
     assert _result_by_name(clf, named_description["candidate"]) is named_result
     assert "model_string" not in clf.results_dataframe().columns
 
     with pytest.raises(KeyError, match="missing_candidate"):
-        clf.candidate_model_description("missing_candidate")
+        clf.model_description("missing_candidate")
 
 
 def test_results_dataframe_has_expected_columns(binary_classification_data):
     X, y = binary_classification_data
 
-    clf = NescienceClassifier(
-        n_bins=3,
-        random_state=42,
-        mlp_search_options=FAST_MLP,
-    ).fit(X, y)
+    clf = NescienceClassifier(n_bins=3, random_state=42, search_options={'mlp': FAST_MLP}).fit(X, y)
     df = clf.results_dataframe()
 
     _assert_common_result_frame(df)
@@ -369,20 +351,15 @@ def test_dataframe_feature_names_are_preserved(binary_classification_data):
     ).fit(X_df, y)
 
     assert list(clf.feature_names_in_) == list(X_df.columns)
-    assert "feature_" not in clf.model_string()
+    assert "feature_" not in clf.model_description()["model_string"]
     assert not hasattr(clf.best_artifacts_, "metadata")
 
 
-def test_no_weights_parameter_and_sklearn_clone_support(binary_classification_data):
-    assert "weights" not in inspect.signature(NescienceClassifier).parameters
+def test_component_weights_and_sklearn_clone_support(binary_classification_data):
+    assert "weights" in inspect.signature(NescienceClassifier).parameters
     assert "serialization_config" not in inspect.signature(NescienceClassifier).parameters
 
-    clf = NescienceClassifier(
-        n_bins=3,
-        random_state=42,
-        verbose=0,
-        mlp_search_options=FAST_MLP,
-    )
+    clf = NescienceClassifier(n_bins=3, random_state=42, verbose=0, search_options={'mlp': FAST_MLP})
     cloned = clone(clf)
 
     assert isinstance(cloned, NescienceClassifier)
@@ -415,28 +392,23 @@ def test_classifier_does_not_use_clone_for_external_candidates():
         ("predict", (np.zeros((3, 2)),)),
         ("predict_proba", (np.zeros((3, 2)),)),
         ("score", (np.zeros((3, 2)), np.zeros(3))),
-        ("nescience_score", ()),
+        ("nescience", ()),
         ("components", ()),
         ("explain", ()),
-        ("get_model", ()),
         ("results_dataframe", ()),
-        ("model_string", ()),
-        ("candidate_model_description", ()),
+        ("model_description", ()),
     ],
 )
 def test_unfitted_methods_raise_not_fitted_error(method_name, args):
-    clf = NescienceClassifier(mlp_search_options=FAST_MLP)
+    clf = NescienceClassifier(search_options={'mlp': FAST_MLP})
 
     with pytest.raises(NotFittedError):
         getattr(clf, method_name)(*args)
 
 
-def test_classifier_alias(binary_classification_data):
+def test_classifier_public_import(binary_classification_data):
     X, y = binary_classification_data
 
-    clf = Classifier(
-        n_bins=3,
-        mlp_search_options=FAST_MLP,
-    ).fit(X, y)
+    clf = NescienceClassifier(n_bins=3, search_options={'mlp': FAST_MLP}).fit(X, y)
 
     assert isinstance(clf, NescienceClassifier)

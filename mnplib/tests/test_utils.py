@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from utils import (
+from mnplib.utils import (
     EmpiricalSummary,
     code_length_from_counts,
     discretize_vector,

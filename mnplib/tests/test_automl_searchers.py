@@ -61,6 +61,7 @@ COMMON_RESULT_COLUMNS = {
     "description_length",
     "is_reliable",
     "failure_reason",
+    "resolved_n_bins",
     "n_samples",
     "n_observed_joint_states",
     "mean_joint_occupancy",
@@ -157,11 +158,7 @@ def test_classifier_default_uses_all_supported_internal_model_families():
         random_state=42,
     )
 
-    clf = NescienceClassifier(
-        n_bins=3,
-        random_state=42,
-        mlp_search_options=FAST_MLP,
-    ).fit(X, y)
+    clf = NescienceClassifier(n_bins=3, random_state=42, search_options={'mlp': FAST_MLP}).fit(X, y)
 
     assert clf.model_names_ == CLASSIFIER_SUPPORTED_MODELS
 
@@ -174,18 +171,14 @@ def test_regressor_default_uses_all_supported_internal_model_families():
         random_state=42,
     )
 
-    reg = NescienceRegressor(
-        n_bins=3,
-        random_state=42,
-        mlp_search_options=FAST_MLP,
-    ).fit(X, y)
+    reg = NescienceRegressor(n_bins=3, random_state=42, search_options={'mlp': FAST_MLP}).fit(X, y)
 
     assert reg.model_names_ == REGRESSOR_SUPPORTED_MODELS
 
 
-def test_weights_parameter_is_removed_from_automl_constructors():
-    assert "weights" not in inspect.signature(NescienceClassifier).parameters
-    assert "weights" not in inspect.signature(NescienceRegressor).parameters
+def test_component_weights_are_available_on_both_automl_classes():
+    assert "weights" in inspect.signature(NescienceClassifier).parameters
+    assert "weights" in inspect.signature(NescienceRegressor).parameters
 
 
 def test_regressor_exposes_classifier_parallel_public_methods():
@@ -193,12 +186,10 @@ def test_regressor_exposes_classifier_parallel_public_methods():
         "fit",
         "predict",
         "score",
-        "nescience_score",
+        "nescience",
         "components",
         "explain",
-        "get_model",
-        "model_string",
-        "candidate_model_description",
+        "model_description",
         "results_dataframe",
     }
 
@@ -210,7 +201,7 @@ def test_regressor_exposes_classifier_parallel_public_methods():
 
 
 def test_internal_classifier_searchers_are_nescience_guided_and_include_mlp():
-    clf = NescienceClassifier(mlp_search_options=FAST_MLP)
+    clf = NescienceClassifier(search_options={'mlp': FAST_MLP})
 
     assert [searcher.family for searcher in clf._resolve_searchers()] == [
         "decision_tree_classifier",
@@ -222,7 +213,7 @@ def test_internal_classifier_searchers_are_nescience_guided_and_include_mlp():
 
 
 def test_internal_regressor_searchers_are_nescience_guided_and_include_mlp():
-    reg = NescienceRegressor(mlp_search_options=FAST_MLP)
+    reg = NescienceRegressor(search_options={'mlp': FAST_MLP})
 
     assert [searcher.family for searcher in reg._resolve_searchers()] == [
         "linear_regression",
@@ -235,15 +226,11 @@ def test_internal_regressor_searchers_are_nescience_guided_and_include_mlp():
 def test_no_ensembles_in_internal_automl_search():
     clf_families = {
         searcher.family
-        for searcher in NescienceClassifier(
-            mlp_search_options=FAST_MLP,
-        )._resolve_searchers()
+        for searcher in NescienceClassifier(search_options={'mlp': FAST_MLP})._resolve_searchers()
     }
     reg_families = {
         searcher.family
-        for searcher in NescienceRegressor(
-            mlp_search_options=FAST_MLP,
-        )._resolve_searchers()
+        for searcher in NescienceRegressor(search_options={'mlp': FAST_MLP})._resolve_searchers()
     }
 
     forbidden_fragments = {
@@ -293,7 +280,7 @@ def test_classifier_invalid_model_name_raises_value_error():
 
 
 def test_classifier_candidate_mapping_is_rejected():
-    with pytest.raises(ValueError, match="arbitrary candidate"):
+    with pytest.raises(TypeError, match="candidates"):
         NescienceClassifier(
             candidates={
                 "tree": DecisionTreeClassifier(max_depth=2, random_state=42),
@@ -302,7 +289,7 @@ def test_classifier_candidate_mapping_is_rejected():
 
 
 def test_classifier_candidate_sequence_is_rejected():
-    with pytest.raises(ValueError, match="arbitrary candidate"):
+    with pytest.raises(TypeError, match="candidates"):
         NescienceClassifier(
             candidates=[DecisionTreeClassifier(max_depth=2, random_state=42)],
         )._resolve_searchers()
@@ -338,7 +325,7 @@ def test_regressor_invalid_model_name_raises_value_error():
 
 
 def test_regressor_candidate_mapping_is_rejected():
-    with pytest.raises(ValueError, match="arbitrary candidate"):
+    with pytest.raises(TypeError, match="candidates"):
         NescienceRegressor(
             candidates={
                 "tree": DecisionTreeClassifier(max_depth=2, random_state=42),
@@ -347,7 +334,7 @@ def test_regressor_candidate_mapping_is_rejected():
 
 
 def test_regressor_candidate_sequence_is_rejected():
-    with pytest.raises(ValueError, match="arbitrary candidate"):
+    with pytest.raises(TypeError, match="candidates"):
         NescienceRegressor(
             candidates=[DecisionTreeClassifier(max_depth=2, random_state=42)],
         )._resolve_searchers()
@@ -388,11 +375,7 @@ def test_linear_regression_feature_prefix_search_evaluates_reliable_prefixes():
         random_state=42,
     )
 
-    reg = NescienceRegressor(
-        n_bins=3,
-        random_state=42,
-        mlp_search_options=FAST_MLP,
-    ).fit(X, y)
+    reg = NescienceRegressor(n_bins=3, random_state=42, search_options={'mlp': FAST_MLP}).fit(X, y)
 
     linear_results = [
         result
@@ -489,6 +472,7 @@ def test_automl_estimators_fit_with_adaptive_miscoding():
         assert estimator.best_result_.is_reliable is True
 
 
+@pytest.mark.filterwarnings("error:nescience_model.*:RuntimeWarning")
 def test_automl_keeps_unreliable_candidates_sorted_last():
     X, y = make_classification(
         n_samples=60,
@@ -512,6 +496,8 @@ def test_automl_keeps_unreliable_candidates_sorted_last():
     assert bool(df.iloc[-1]["is_reliable"]) is False
     assert np.isnan(df.iloc[-1]["nescience"])
     assert df.iloc[-1]["failure_reason"] == "joint_distribution_too_sparse"
+    assert df["resolved_n_bins"].eq(3).all()
+    assert clf.explain()["resolved_n_bins"] == 3
 
 
 def test_automl_raises_when_no_reliable_candidate_exists():
@@ -557,9 +543,9 @@ def test_automl_evaluates_prefixes_beyond_strict_selection():
         if result.family == "logistic_regression"
     ]
 
-    assert len(strict_class["selected_feature_indices"]) == 1
+    assert len(strict_class["selected_features"]) == 1
     assert max(classifier_prefix_lengths) > len(
-        strict_class["selected_feature_indices"]
+        strict_class["selected_features"]
     )
     assert clf.best_result_.nescience == pytest.approx(
         min(result.nescience for result in clf.results_)
@@ -591,8 +577,8 @@ def test_automl_evaluates_prefixes_beyond_strict_selection():
         if result.family == "linear_regression"
     ]
 
-    assert len(strict_reg["selected_feature_indices"]) == 1
-    assert max(regressor_prefix_lengths) > len(strict_reg["selected_feature_indices"])
+    assert len(strict_reg["selected_features"]) == 1
+    assert max(regressor_prefix_lengths) > len(strict_reg["selected_features"])
     assert reg.best_result_.nescience == pytest.approx(
         min(result.nescience for result in reg.results_)
     )
@@ -709,12 +695,7 @@ def test_linear_svm_searchers_remain_internal_candidates():
         noise=0.1,
         random_state=42,
     )
-    reg = NescienceRegressor(
-        models=["linear_svr"],
-        n_bins=3,
-        random_state=42,
-        mlp_search_options=FAST_MLP,
-    ).fit(Xr, yr)
+    reg = NescienceRegressor(models=['linear_svr'], n_bins=3, random_state=42, search_options={'mlp': FAST_MLP}).fit(Xr, yr)
 
     svc_results = [
         result
@@ -818,12 +799,7 @@ def test_mlp_search_is_internal_bounded_and_serializes_executable_predictor():
         random_state=42,
     )
 
-    clf = NescienceClassifier(
-        models=["mlp"],
-        n_bins=3,
-        random_state=42,
-        mlp_search_options=FAST_MLP,
-    ).fit(X, y)
+    clf = NescienceClassifier(models=['mlp'], n_bins=3, random_state=42, search_options={'mlp': FAST_MLP}).fit(X, y)
 
     mlp_results = [
         result
@@ -867,15 +843,11 @@ def test_classifier_and_regressor_public_workflows_and_results_columns():
         noise=0.1,
         random_state=42,
     )
-    reg = NescienceRegressor(
-        n_bins=3,
-        random_state=42,
-        mlp_search_options=FAST_MLP,
-    ).fit(Xr, yr)
+    reg = NescienceRegressor(n_bins=3, random_state=42, search_options={'mlp': FAST_MLP}).fit(Xr, yr)
 
     for estimator, X in [(clf, Xc), (reg, Xr)]:
         assert estimator.predict(X[:5]).shape == (5,)
-        assert estimator.nescience_score() >= 0.0
+        assert estimator.nescience() >= 0.0
         assert set(estimator.components()) == {
             "deficiency",
             "surplus",
@@ -883,10 +855,10 @@ def test_classifier_and_regressor_public_workflows_and_results_columns():
             "surfeit",
         }
         explanation = estimator.explain()
-        assert explanation["candidate_name"] == estimator.best_candidate_name_
+        assert explanation["candidate"] == estimator.best_candidate_name_
         assert "n_input_features" not in explanation
         assert "n_features_in_use" not in explanation
-        assert estimator.get_model() is estimator.model_
+        assert estimator.model_ is estimator.model_
 
         df = estimator.results_dataframe()
 

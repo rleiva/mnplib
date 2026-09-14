@@ -141,7 +141,7 @@ class LinearSVRSearcher(ModelFamilySearcher):
                         "family": self.family,
                         "reason": "fit_failed",
                         "n_selected_features": int(n_selected_features),
-                        "selected_feature_indices": list(selected),
+                        "selected_features": list(selected),
                         "error": str(exc),
                     }
                 )
@@ -153,7 +153,7 @@ class LinearSVRSearcher(ModelFamilySearcher):
                         "family": self.family,
                         "reason": "linear_svr_convergence_warning",
                         "n_selected_features": int(n_selected_features),
-                        "selected_feature_indices": list(selected),
+                        "selected_features": list(selected),
                     }
                 )
 

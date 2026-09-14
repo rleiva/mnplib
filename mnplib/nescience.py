@@ -1,5 +1,5 @@
 """
-Nescience aggregation for explicit model descriptions.
+Nescience aggregation for fitted models and explicit model descriptions.
 
 This module implements the nescience component of the library as a small
 coordinator around three independent metrics:
@@ -15,15 +15,14 @@ coordinator around three independent metrics:
 ``Surfeit``
     Computes the redundancy of an explicit model description string.
 
-The class deliberately does not inspect fitted model objects. The caller must
-provide the three practical objects needed to evaluate a model:
+Fitted models are evaluated through canonical serializers. Explicit evaluation
+uses three artifacts:
 
     * ``subset``: the features used by the model;
     * ``predictions``: the predictions produced by the model;
     * ``model_string``: a string description of the model.
 
-This explicit design keeps model inspection and model serialization outside the
-nescience metric, making the code easier to understand, test, and maintain.
+Both interfaces share the same empirical metrics and aggregation policy.
 
 @author:    Rafael Garcia Leiva
 @mail:      rgarcialeiva@gmail.com
@@ -45,6 +44,9 @@ from sklearn.utils.validation import check_is_fitted
 from .miscoding import Miscoding
 from .inaccuracy import Inaccuracy
 from .surfeit import Surfeit
+from .models.inputs import model_artifacts
+from ._diagnostics import warn_nan_model
+from ._validation import validate_n_bins, validate_vector
 
 
 XType = Literal["auto", "numeric", "categorical"]
@@ -70,7 +72,7 @@ class Nescience(BaseEstimator):
     artifacts:
 
     ``subset``
-        Binary feature mask or list of feature indices used by the model.
+        Boolean feature mask or list of feature indices used by the model.
 
     ``predictions``
         Prediction vector produced by the model.
@@ -95,19 +97,11 @@ class Nescience(BaseEstimator):
         ``inaccuracy``, and ``surfeit``. If a mapping is supplied, valid keys
         are those component names. Missing mapping keys default to 1.0.
 
-    n_bins : int, "auto", or "adaptive", default="auto"
+    n_bins : int, "auto", or "adaptive", default="adaptive"
         Number of uniform bins used for numeric variables. ``"auto"`` uses
         ``max(2, floor(2 * n_samples**(1/3)))``. ``"adaptive"`` applies the
         subset-size rule inside ``Miscoding`` and matches ``"auto"`` for
         target-only quantities.
-
-    threshold_fraction : float, default=0.01
-        Minimum relative target-code-length reduction used by the internal
-        ``Miscoding`` estimator when it performs greedy feature selection.
-
-    surplus_penalty : float, default=1.0
-        Penalty applied by the internal ``Miscoding`` estimator during greedy
-        feature selection.
 
     zlib_level : int, default=9
         Compression level used by ``Surfeit``.
@@ -136,9 +130,7 @@ class Nescience(BaseEstimator):
         y_type: YType = "auto",
         aggregation: Aggregation = "euclidean",
         weights: Mapping[str, float] | Sequence[float] | None = None,
-        n_bins: BinSpec = "auto",
-        threshold_fraction: float = 0.01,
-        surplus_penalty: float = 1.0,
+        n_bins: BinSpec = "adaptive",
         zlib_level: int = 9,
         zlib_overhead: int = 6,
     ):
@@ -147,19 +139,16 @@ class Nescience(BaseEstimator):
             X_type=X_type,
             y_type=y_type,
             aggregation=aggregation,
-            threshold_fraction=threshold_fraction,
-            surplus_penalty=surplus_penalty,
             zlib_level=zlib_level,
             zlib_overhead=zlib_overhead,
         )
 
+        validate_n_bins(n_bins)
         self.X_type = X_type
         self.y_type = y_type
         self.aggregation = aggregation
         self.weights = weights
         self.n_bins = n_bins
-        self.threshold_fraction = threshold_fraction
-        self.surplus_penalty = surplus_penalty
         self.zlib_level = int(zlib_level)
         self.zlib_overhead = int(zlib_overhead)
 
@@ -181,9 +170,12 @@ class Nescience(BaseEstimator):
         self : Nescience
             Fitted estimator.
         """
+        validate_n_bins(self.n_bins)
+        y = validate_vector(y, name="y")
         X_checked, y_checked = check_X_y(X, y, dtype=None, ensure_2d=True)
 
         self.X_ = X_checked
+        self._model_X_ = X
         self.y_ = y_checked
         self.n_samples_in_, self.n_features_in_ = X_checked.shape
         self.weights_ = self._resolve_weights()
@@ -194,6 +186,7 @@ class Nescience(BaseEstimator):
             n_bins=self.n_bins,
         )
         self.miscoding_.fit(X, y_checked)
+        self.feature_names_in_ = self.miscoding_.feature_names_in_.copy()
 
         self.inaccuracy_ = Inaccuracy(
             y_type=self.y_type,
@@ -212,6 +205,37 @@ class Nescience(BaseEstimator):
         self.is_fitted_ = True
         return self
 
+    def nescience_model(self, model, *, X=None, feature_names=None, feature_indices=None) -> float:
+        """Compute nescience through canonical artifacts on fitted evaluation data.
+
+        Explicit X contains estimator input columns in fitted-target row order.
+        feature_indices maps local input columns to the original feature space.
+        Unsupported or unfitted estimators raise a serializer validation error.
+        Unreliable subset estimates return NaN with a RuntimeWarning describing
+        the sparsity diagnostics. ``model_analysis`` reports diagnostics without
+        issuing this warning.
+        """
+        artifacts = model_artifacts(self, model, X=X, feature_names=feature_names,
+                                    feature_indices=feature_indices)
+        value = self.nescience(**artifacts.to_nescience_kwargs())
+        if np.isnan(value):
+            diagnostics = self.miscoding_.subset_analysis(artifacts.subset)
+            warn_nan_model("nescience_model", diagnostics)
+        return value
+
+    def model_analysis(self, model, *, X=None, feature_names=None, feature_indices=None) -> dict[str, object]:
+        """Return flat metric fields, reliability diagnostics, and canonical text.
+
+        The deficiency, surplus, inaccuracy, and surfeit fields accompany the
+        aggregated nescience value. Unreliable subsets produce NaN subset
+        quantities without issuing a warning.
+        """
+        artifacts = model_artifacts(self, model, X=X, feature_names=feature_names,
+                                    feature_indices=feature_indices)
+        return {**self.explain(**artifacts.to_nescience_kwargs()),
+                "model_type": artifacts.model_type,
+                "model_string": artifacts.model_string}
+
     def components(
         self,
         *,
@@ -225,7 +249,7 @@ class Nescience(BaseEstimator):
         Parameters
         ----------
         subset : array-like
-            Binary feature mask or list of selected feature indices.
+            Boolean feature mask or list of selected feature indices.
 
         predictions : array-like of shape (n_samples,)
             Prediction vector produced by the model.
@@ -243,10 +267,10 @@ class Nescience(BaseEstimator):
 
         return {
             "deficiency": float(
-                self.miscoding_.miscoding_subset(subset, mode="deficiency")
+                self.miscoding_.deficiency_subset(subset)
             ),
             "surplus": float(
-                self.miscoding_.miscoding_subset(subset, mode="surplus")
+                self.miscoding_.surplus_subset(subset)
             ),
             "inaccuracy": float(
                 self.inaccuracy_.inaccuracy_predictions(predictions)
@@ -269,7 +293,7 @@ class Nescience(BaseEstimator):
         Parameters
         ----------
         subset : array-like
-            Binary feature mask or list of selected feature indices.
+            Boolean feature mask or list of selected feature indices.
 
         predictions : array-like of shape (n_samples,)
             Prediction vector produced by the model.
@@ -305,7 +329,7 @@ class Nescience(BaseEstimator):
         Parameters
         ----------
         subset : array-like
-            Binary feature mask or list of selected feature indices.
+            Boolean feature mask or list of selected feature indices.
 
         predictions : array-like of shape (n_samples,)
             Prediction vector produced by the model.
@@ -316,9 +340,9 @@ class Nescience(BaseEstimator):
         Returns
         -------
         dict
-            Explanation dictionary containing the scalar nescience value,
-            component values, dominant component, qualitative profile, and
-            recommendation.
+            Flat dictionary containing nescience, deficiency, surplus,
+            inaccuracy, surfeit, subset diagnostics, the dominant component,
+            qualitative profile, and recommendation.
         """
         component_values = self.components(
             subset=subset,
@@ -326,42 +350,29 @@ class Nescience(BaseEstimator):
             model_string=model_string,
         )
         nescience_value = self.aggregate_components(**component_values)
-        dominant_component = max(component_values, key=component_values.get)
-        profile, profile_explanation = self._profile_from_components(component_values)
+        diagnostics = self.miscoding_.subset_analysis(subset)
+        reliable = bool(diagnostics["is_reliable"]) and np.isfinite(nescience_value)
+        dominant_component = max(component_values, key=component_values.get) if reliable else None
+        profile, profile_explanation = (
+            self._profile_from_components(component_values) if reliable
+            else ("unreliable_subset", "Joint counts are too sparse for a reliable estimate.")
+        )
 
         return {
+            **diagnostics,
             "nescience": float(nescience_value),
             "aggregation": self.aggregation,
             "weights": dict(zip(self.component_names_, self.weights_)),
-            "components": component_values,
+            **component_values,
             "dominant_component": dominant_component,
             "profile": profile,
             "profile_explanation": profile_explanation,
             "recommendation": self._recommendation_from_dominant_component(
                 dominant_component,
                 component_values,
-            ),
+            ) if reliable else "Use more samples or a coarser discretization.",
         }
 
-    def score(
-        self,
-        *,
-        subset,
-        predictions,
-        model_string: str,
-    ) -> float:
-        """
-        Return a higher-is-better score for supplied model artifacts.
-
-        Since lower nescience is better, the score is defined as
-        ``1 - nescience``. This method is not intended to inspect or evaluate a
-        scikit-learn model object directly.
-        """
-        return 1.0 - self.nescience(
-            subset=subset,
-            predictions=predictions,
-            model_string=model_string,
-        )
 
     def aggregate_components(
         self,
@@ -385,6 +396,8 @@ class Nescience(BaseEstimator):
             [deficiency, surplus, inaccuracy, surfeit],
             dtype=float,
         )
+        if not np.all(np.isfinite(values)):
+            return float("nan")
         values = np.clip(values, 0.0, None)
 
         weights = getattr(self, "weights_", self._resolve_weights())
@@ -613,8 +626,6 @@ class Nescience(BaseEstimator):
         X_type,
         y_type,
         aggregation,
-        threshold_fraction,
-        surplus_penalty,
         zlib_level,
         zlib_overhead,
     ) -> None:
@@ -639,12 +650,6 @@ class Nescience(BaseEstimator):
                 .format(cls._VALID_AGGREGATIONS, aggregation)
             )
 
-        if threshold_fraction < 0:
-            raise ValueError("threshold_fraction must be non-negative.")
-
-        if surplus_penalty < 0:
-            raise ValueError("surplus_penalty must be non-negative.")
-
         zlib_level = int(zlib_level)
         if zlib_level < 0 or zlib_level > 9:
             raise ValueError(
@@ -657,14 +662,20 @@ class Nescience(BaseEstimator):
             raise ValueError("zlib_overhead must be non-negative.")
 
 
-def nescience_score(
+def nescience(
+    *,
     X,
     y,
-    *,
     subset,
     predictions,
     model_string: str,
-    **kwargs,
+    X_type: XType = "auto",
+    y_type: YType = "auto",
+    aggregation: Aggregation = "euclidean",
+    weights: Mapping[str, float] | Sequence[float] | None = None,
+    n_bins: BinSpec = "adaptive",
+    zlib_level: int = 9,
+    zlib_overhead: int = 6,
 ) -> float:
     """
     Compute scalar nescience using a functional interface.
@@ -678,7 +689,7 @@ def nescience_score(
         Target vector.
 
     subset : array-like
-        Binary feature mask or list of selected feature indices.
+        Boolean feature mask or list of selected feature indices.
 
     predictions : array-like of shape (n_samples,)
         Prediction vector produced by the model.
@@ -686,15 +697,17 @@ def nescience_score(
     model_string : str
         String description of the model.
 
-    **kwargs
-        Additional keyword arguments passed to ``Nescience``.
+    X_type, y_type, aggregation, weights, n_bins, zlib_level, zlib_overhead
+        Configuration with the same meaning as in ``Nescience``.
 
     Returns
     -------
     float
         Aggregated nescience value.
     """
-    metric = Nescience(**kwargs).fit(X, y)
+    metric = Nescience(X_type=X_type, y_type=y_type, aggregation=aggregation,
+                       weights=weights, n_bins=n_bins, zlib_level=zlib_level,
+                       zlib_overhead=zlib_overhead).fit(X, y)
     return metric.nescience(
         subset=subset,
         predictions=predictions,
@@ -703,20 +716,58 @@ def nescience_score(
 
 
 def nescience_components(
+    *,
     X,
     y,
-    *,
     subset,
     predictions,
     model_string: str,
-    **kwargs,
+    X_type: XType = "auto",
+    y_type: YType = "auto",
+    aggregation: Aggregation = "euclidean",
+    weights: Mapping[str, float] | Sequence[float] | None = None,
+    n_bins: BinSpec = "adaptive",
+    zlib_level: int = 9,
+    zlib_overhead: int = 6,
 ) -> dict[str, float]:
     """
     Compute the four scalar nescience components using a functional interface.
     """
-    metric = Nescience(**kwargs).fit(X, y)
+    metric = Nescience(X_type=X_type, y_type=y_type, aggregation=aggregation,
+                       weights=weights, n_bins=n_bins, zlib_level=zlib_level,
+                       zlib_overhead=zlib_overhead).fit(X, y)
     return metric.components(
         subset=subset,
         predictions=predictions,
         model_string=model_string,
     )
+
+
+def nescience_model(
+    model, *, X, y, feature_names=None, feature_indices=None,
+    X_type: XType = "auto", y_type: YType = "auto",
+    aggregation: Aggregation = "euclidean",
+    weights: Mapping[str, float] | Sequence[float] | None = None,
+    n_bins: BinSpec = "adaptive", zlib_level: int = 9, zlib_overhead: int = 6,
+) -> float:
+    """Compute fitted-model nescience on evaluation data."""
+    metric = Nescience(X_type=X_type, y_type=y_type, aggregation=aggregation,
+                       weights=weights, n_bins=n_bins, zlib_level=zlib_level,
+                       zlib_overhead=zlib_overhead).fit(X, y)
+    return metric.nescience_model(
+        model, feature_names=feature_names, feature_indices=feature_indices)
+
+
+def model_analysis(
+    model, *, X, y, feature_names=None, feature_indices=None,
+    X_type: XType = "auto", y_type: YType = "auto",
+    aggregation: Aggregation = "euclidean",
+    weights: Mapping[str, float] | Sequence[float] | None = None,
+    n_bins: BinSpec = "adaptive", zlib_level: int = 9, zlib_overhead: int = 6,
+) -> dict[str, object]:
+    """Explain fitted-model nescience, including subset reliability."""
+    metric = Nescience(X_type=X_type, y_type=y_type, aggregation=aggregation,
+                       weights=weights, n_bins=n_bins, zlib_level=zlib_level,
+                       zlib_overhead=zlib_overhead).fit(X, y)
+    return metric.model_analysis(
+        model, feature_names=feature_names, feature_indices=feature_indices)

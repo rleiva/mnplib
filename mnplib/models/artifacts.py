@@ -1,8 +1,7 @@
 """
 Shared artifacts and internal serialization policy for model adapters.
 
-The nescience metrics require explicit artifacts rather than fitted model
-objects. Model strings affect surfeit, so the serialization policy is fixed by
+Model metrics share canonical artifacts. Model strings affect surfeit, so the serialization policy is fixed by
 the library and is not exposed as a user preference.
 """
 
