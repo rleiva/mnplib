@@ -24,6 +24,7 @@ from .automl import CandidateEvaluator, CandidateResult
 from .automl.descriptions import describe_candidate_model
 from .automl.configuration import validated_search_options
 from .automl.results import candidate_results_dataframe
+from .automl.wrappers import export_sklearn_model
 from .automl.searchers import (
     DecisionTreePruningSearcher,
     LinearRegressionPrefixSearcher,
@@ -196,6 +197,29 @@ class NescienceRegressor(RegressorMixin, BaseEstimator):
         check_is_fitted(self)
         X_checked = check_array(X, dtype=None, ensure_2d=True)
         return self.model_.score(X_checked, y)
+
+    def get_model(self, *, as_pipeline: bool = False) -> BaseEstimator:
+        """
+        Return an independent copy of the selected fitted regressor.
+
+        Parameters
+        ----------
+        as_pipeline : bool, default=False
+            If False, return the scikit-learn estimator itself. Its inputs must
+            have the selected columns in training order, with any fitted
+            preprocessing already applied. If True, return a fitted
+            scikit-learn Pipeline containing column selection, preprocessing,
+            and the estimator. The pipeline accepts the full feature matrix
+            with columns in their original training order.
+
+        Returns
+        -------
+        model : sklearn.base.BaseEstimator or sklearn.pipeline.Pipeline
+            A fitted copy that can be used without refitting or importing
+            mnplib. Changing it does not affect this regressor.
+        """
+        check_is_fitted(self, "is_fitted_")
+        return export_sklearn_model(self.model_, as_pipeline=as_pipeline)
 
     def nescience(self) -> float:
         """

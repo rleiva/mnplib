@@ -4,9 +4,13 @@ Small fitted-estimator wrappers used by feature-prefix searchers.
 
 from __future__ import annotations
 
+from copy import deepcopy
+
 import numpy as np
 
+from sklearn.compose import ColumnTransformer
 from sklearn.metrics import accuracy_score, r2_score
+from sklearn.pipeline import Pipeline
 from sklearn.utils import check_array
 
 
@@ -73,3 +77,28 @@ class SelectedFeaturesEstimator:
         if hasattr(self, "classes_"):
             return accuracy_score(y, predictions)
         return r2_score(y, predictions)
+
+
+def export_sklearn_model(model, *, as_pipeline: bool = False):
+    """Copy a fitted candidate using only scikit-learn prediction components."""
+    if not isinstance(as_pipeline, (bool, np.bool_)):
+        raise ValueError("as_pipeline must be a boolean.")
+
+    wrapped = isinstance(model, SelectedFeaturesEstimator)
+    estimator = deepcopy(model.estimator if wrapped else model)
+    if not as_pipeline:
+        return estimator
+
+    selected = model.selected_features if wrapped else range(model.n_features_in_)
+    selector = ColumnTransformer(
+        [("features", "passthrough", list(selected))],
+        remainder="drop",
+        verbose_feature_names_out=False,
+    )
+    # Column selection needs only the input schema, not training observations.
+    selector.fit(np.zeros((1, model.n_features_in_)))
+    steps = [("select_features", selector)]
+    if wrapped and model.transformer is not None:
+        steps.append(("preprocessing", deepcopy(model.transformer)))
+    steps.append(("estimator", estimator))
+    return Pipeline(steps)

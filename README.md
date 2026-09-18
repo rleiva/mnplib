@@ -280,7 +280,8 @@ AutoML uses feature ordering because the final objective is total nescience, not
 The automated searchers are still experimental and may change substantially before a stable release.
 
 The classification and regression interfaces share `nescience()`, `components()`,
-`explain()`, `results_dataframe()`, and `model_description(candidate=None)`.
+`explain()`, `results_dataframe()`, `model_description(candidate=None)`, and
+`get_model(as_pipeline=False)`.
 `nescience()` returns the selected candidate's search metric; `score(X, y)`
 returns predictive accuracy or R-squared. The selected fitted model is `model_`.
 Result tables place reliable candidates first and sort by increasing nescience.
@@ -303,6 +304,36 @@ for estimator in (classifier, regressor):
     print(estimator.results_dataframe())
     print(estimator.model_description()["model_string"])
 ```
+
+Use `get_model()` to retrieve an independent copy of the selected fitted
+scikit-learn estimator, such as a `DecisionTreeClassifier` or `LinearRegression`:
+
+```python
+best_classifier = classifier.get_model()
+best_regressor = regressor.get_model()
+```
+
+The bare estimator expects its selected input columns in training order, with
+any fitted preprocessing already applied. For prediction on the full input
+matrix or deployment, use `as_pipeline=True` to include column selection and
+preprocessing, such as neural-network scaling:
+
+```python
+import joblib
+
+pipeline = classifier.get_model(as_pipeline=True)
+predictions = pipeline.predict(X)
+joblib.dump(pipeline, "classifier.joblib")
+
+loaded = joblib.load("classifier.joblib")
+predictions = loaded.predict(X)
+```
+
+Both forms retain their trained state without refitting. The exported pipeline
+uses standard scikit-learn components and does not require mnplib for prediction.
+Pass arrays or DataFrames with the original input columns in training order.
+Use compatible dependency versions when loading serialized models, and only
+load files from trusted sources. The same workflow applies to regressors.
 
 The same text formatter summarizes the selected AutoML candidate:
 
