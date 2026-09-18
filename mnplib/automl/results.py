@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import pandas as pd
+from mnplib.mismodel import mismodel
 
 
 def candidate_result_row(result, feature_names=None):
@@ -23,6 +24,8 @@ def candidate_result_row(result, feature_names=None):
         "hyperparameters": dict(result.hyperparameters),
         "nescience": float(result.nescience),
         **result.components,
+        "mismodel": mismodel(inaccuracy=result.components["inaccuracy"],
+                             surfeit=result.components["surfeit"]),
         "native_estimator_score": result.estimator_score,
         "selected_features": features,
         "selected_feature_names": names,

@@ -276,15 +276,15 @@ class TimeSeries(BaseEstimator):
         check_is_fitted(self)
         return self.results_.copy()
 
-    def explain(self) -> dict[str, object]:
-        """Return a structured explanation of the selected forecasting model.
+    def analysis(self) -> dict[str, object]:
+        """Return a numerical analysis of the selected forecasting model.
 
         The native estimator score is R-squared recorded on the lagged training
         representation. It is not future-forecast performance; use ``score()``
         with subsequent observations to evaluate forecasts.
         """
         check_is_fitted(self)
-        explanation = self.nescience_.explain(**self.best_artifacts_.to_nescience_kwargs())
+        explanation = self.nescience_.analysis(**self.best_artifacts_.to_nescience_kwargs())
         explanation.update({
             "candidate": self.model_name_,
             "family": self.best_result_.family,

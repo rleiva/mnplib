@@ -16,13 +16,17 @@ The library is based on the [*Minimum Nescience Principle*](https://www.amazon.c
 
 ### Installation
 
-Install the current alpha release from PyPI:
+Install the development API from this checkout:
 
 ```bash
-pip install mnplib==2.0.0a6
+pip install -e .
 ```
 
-Because this is a pre-release, installing the explicit version is recommended.
+The library returns numerical metrics and factual diagnostics. Applications own interpretation thresholds, qualitative labels, recommendations, and explanatory wording. Reliability decisions and machine-readable failure codes remain part of the numerical API.
+
+Use `Nescience.analysis(subset=..., predictions=..., model_string=...)` for explicit artifacts, `model_analysis(model)` for fitted estimators, and `analysis()` on `NescienceClassifier`, `NescienceRegressor`, `TimeSeries`, or `AnomalyDetector`. These reports do not assign qualitative profiles. Canonical model descriptions remain in mnplib because their compressed lengths determine surfeit.
+
+`from mnplib.mismodel import mismodel` provides `mismodel(inaccuracy=..., surfeit=...)`, the root-mean-square of the two components. It is also included in nescience analysis reports and AutoML result dataframes; it does not change minimum-nescience model selection.
 
 ### Core Concepts
 
@@ -63,7 +67,7 @@ miscoding.feature_analysis()
 from sklearn.datasets import load_iris
 from sklearn.tree import DecisionTreeClassifier
 from mnplib.inaccuracy import Inaccuracy
-from mnplib.reporting import format_analysis
+from pprint import pprint
 
 X, y = load_iris(return_X_y=True)
 
@@ -74,23 +78,7 @@ inaccuracy = Inaccuracy()
 inaccuracy.fit(X, y)
 
 report = inaccuracy.model_analysis(model)
-print(format_analysis(report))
-```
-
-```text
-Inaccuracy Analysis
-========================================
-Samples                              150
-Target type                  categorical
-
-Inaccuracy                        0.0991
-Accuracy                          97.33%
-
-Code lengths (bits)
-----------------------------------------
-Target                           237.744
-Predictions                      237.629
-Joint                            261.189
+pprint(report)
 ```
 
 #### Surfeit
@@ -101,7 +89,7 @@ Joint                            261.189
 from sklearn.datasets import load_iris
 from sklearn.tree import DecisionTreeClassifier
 from mnplib.surfeit import Surfeit
-from mnplib.reporting import format_analysis
+from pprint import pprint
 
 X, y = load_iris(return_X_y=True)
 
@@ -112,28 +100,7 @@ surfeit = Surfeit()
 surfeit.fit(X, y)
 
 report = surfeit.model_analysis(model)
-print(format_analysis(report))
-```
-
-```text
-Surfeit Analysis
-============================================
-Model type            DecisionTreeClassifier
-Selected count                             3
-Selected features                    0, 2, 3
-
-Surfeit                               0.8578
-Compression ratio                     0.4498
-Reference source                      target
-
-Code lengths (bits)
---------------------------------------------
-Model                               1672.000
-Compressed                           752.000
-Effective compressed                 704.000
-Target                               237.744
-Reference                            237.744
-============================================
+pprint(report)
 ```
 
 #### Nescience
@@ -144,7 +111,7 @@ Reference                            237.744
 from sklearn.datasets import load_iris
 from sklearn.tree import DecisionTreeClassifier
 from mnplib.nescience import Nescience
-from mnplib.reporting import format_analysis
+from pprint import pprint
 
 X, y = load_iris(return_X_y=True)
 
@@ -155,30 +122,7 @@ nescience = Nescience()
 nescience.fit(X, y)
 
 report = nescience.model_analysis(model)
-print(format_analysis(report))
-```
-
-```text
-Nescience Analysis
-====================================================================
-Samples                                                          150
-Model type                                    DecisionTreeClassifier
-Numeric bins                                                       5
-Selected count                                                     3
-Selected features                                         x0, x2, x3
-Subset reliability                                          Reliable
-
-Nescience                                                     0.5375
-Deficiency                                                    0.0868
-Surplus                                                       0.6345
-Inaccuracy                                                    0.0991
-Surfeit                                                       0.8578
-
-Aggregation
---------------------------------------------------------------------
-Method                                                     euclidean
-Weights             deficiency=1, surplus=1, inaccuracy=1, surfeit=1
-====================================================================
+pprint(report)
 ```
 
 ### Automated Machine Learning
@@ -209,7 +153,7 @@ The auto-classification class in `mnplib` automatically searches for a good clas
 ```python
 from sklearn.datasets import load_breast_cancer
 from mnplib.classifier import NescienceClassifier
-from mnplib.reporting import format_analysis
+from pprint import pprint
 
 X, y = load_breast_cancer(return_X_y=True)
 
@@ -218,43 +162,7 @@ model.fit(X, y)
 
 predictions = model.predict(X)
 
-print(format_analysis(model.explain()))
-```
-
-```text
-Auto-Classification Analysis
-====================================================================
-Selected candidate                      logistic_regression_prefix_2
-Model family                                     logistic_regression
-Model type                                        LogisticRegression
-Evaluated samples                                                569
-Numeric bins                                                      10
-Selected count                                                     2
-Selected features                                           x22, x27
-Subset reliability                                          Reliable
-
-Nescience                                                     0.4744
-Deficiency                                                    0.1843
-Surplus                                                       0.8402
-Inaccuracy                                                    0.3398
-Surfeit                                                       0.2121
-
-Candidate evaluation
---------------------------------------------------------------------
-Data                                                   Training data
-Accuracy                                                      94.02%
-
-Hyperparameters
---------------------------------------------------------------------
-max_iter                                                        1000
-penalty                                                         None
-solver                                                         lbfgs
-
-Aggregation
---------------------------------------------------------------------
-Method                                                     euclidean
-Weights             deficiency=1, surplus=1, inaccuracy=1, surfeit=1
-====================================================================
+pprint(model.analysis())
 ```
 
 #### Auto Regression
@@ -264,7 +172,7 @@ The auto-regressor class in `mnplib` automatically searches for a good regressio
 ```python
 from sklearn.datasets import load_diabetes
 from mnplib.regressor import NescienceRegressor
-from mnplib.reporting import format_analysis
+from pprint import pprint
 
 X, y = load_diabetes(return_X_y=True)
 
@@ -273,44 +181,7 @@ model.fit(X, y)
 
 predictions = model.predict(X)
 
-print(format_analysis(model.explain()))
-```
-
-```text
-Auto-Regression Analysis
-====================================================================
-Selected candidate                               linear_svr_prefix_3
-Model family                                              linear_svr
-Model type                                                 LinearSVR
-Evaluated samples                                                442
-Numeric bins                                                       7
-Selected count                                                     3
-Selected features                                         x2, x8, x1
-Subset reliability                                          Reliable
-
-Nescience                                                     0.6687
-Deficiency                                                    0.6510
-Surplus                                                       0.8301
-Inaccuracy                                                    0.8175
-Surfeit                                                       0.0875
-
-Candidate evaluation
---------------------------------------------------------------------
-Data                                                   Training data
-R-squared                                                    -0.2927
-
-Hyperparameters
---------------------------------------------------------------------
-C                                                                1.0
-epsilon                                                          0.0
-max_iter                                                        5000
-tol                                                           0.0001
-
-Aggregation
---------------------------------------------------------------------
-Method                                                     euclidean
-Weights             deficiency=1, surplus=1, inaccuracy=1, surfeit=1
-====================================================================
+pprint(model.analysis())
 ```
 
 ### User Guide

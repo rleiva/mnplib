@@ -306,7 +306,7 @@ class AnomalyDetector(BaseEstimator):
     # Miscoding-based anomaly explanation
     # ------------------------------------------------------------------
 
-    def explain(self, *, kind: AnomalyKind = "all", max_features: int | None = None) -> dict[str, object]:
+    def analysis(self, *, kind: AnomalyKind = "all", max_features: int | None = None) -> dict[str, object]:
         """Return summary, correction-pattern analysis, and compressibility.
 
         Detection is model-relative. Information diagnostics characterize

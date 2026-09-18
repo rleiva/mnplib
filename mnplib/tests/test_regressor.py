@@ -232,7 +232,7 @@ def test_predict_score_components_explain_and_model_string(regression_data):
         "inaccuracy",
         "surfeit",
     }
-    explanation = reg.explain()
+    explanation = reg.analysis()
     assert explanation["candidate"] == reg.best_candidate_name_
     assert explanation["task"] == "regression"
     assert explanation["evaluation_context"] == "training"
@@ -335,7 +335,7 @@ def test_serialization_config_parameter_is_not_accepted(regression_data):
         ("score", (np.zeros((3, 2)), np.zeros(3))),
         ("nescience", ()),
         ("components", ()),
-        ("explain", ()),
+        ("analysis", ()),
         ("results_dataframe", ()),
         ("model_description", ()),
     ],

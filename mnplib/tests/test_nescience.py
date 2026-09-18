@@ -96,7 +96,7 @@ def test_auto_model_nescience_warns_with_sparse_joint_diagnostics(functional):
     message = str(caught[0].message)
     for field in ("n_samples=150", "n_selected_features=3", "resolved_n_bins=10",
                   "mean_joint_occupancy=2.206", "singleton_fraction=0.529",
-                  "coarser discretization", "model_analysis(model)"):
+                  "model_analysis(model)"):
         assert field in message
 
 
@@ -222,7 +222,7 @@ def test_nescience_matches_aggregate_components():
     ) == pytest.approx(metric.aggregate_components(**values))
 
 
-def test_explanation_and_scalar_nescience_agree():
+def test_analysis_and_scalar_nescience_agree():
     metric, _, y = fitted_metric()
 
     value = metric.nescience(
@@ -231,36 +231,25 @@ def test_explanation_and_scalar_nescience_agree():
         model_string=make_model_string(),
     )
 
-    assert metric.explain(
+    assert metric.analysis(
         subset=[0],
         predictions=y.copy(),
         model_string=make_model_string(),
     )["nescience"] == pytest.approx(value)
 
 
-def test_explain_returns_expected_keys():
+def test_analysis_returns_numerical_report():
     metric, _, y = fitted_metric()
-
-    explanation = metric.explain(
-        subset=[0],
-        predictions=y.copy(),
-        model_string=make_model_string(),
-    )
-
-    assert set(explanation.keys()) >= {
-        "nescience",
-        "aggregation",
-        "weights",
-        *metric.component_names_,
-        "dominant_component",
-        "profile",
-        "profile_explanation",
-        "recommendation",
+    report = metric.analysis(subset=[0], predictions=y.copy(), model_string=make_model_string())
+    assert set(report) == set(metric.miscoding_.subset_analysis([0])) | {
+        "nescience", "aggregation", "weights", "mismodel", *metric.component_names_,
     }
-    assert explanation["dominant_component"] in metric.component_names_
-    assert set(metric.component_names_).issubset(explanation)
-    assert isinstance(explanation["recommendation"], str)
-    assert len(explanation["recommendation"]) > 0
+    assert report["mismodel"] == pytest.approx(
+        np.sqrt((report["inaccuracy"] ** 2 + report["surfeit"] ** 2) / 2)
+    )
+    assert report["nescience"] == pytest.approx(metric.aggregate_components(
+        **{key: report[key] for key in metric.component_names_}
+    ))
 
 
 def test_functional_nescience_score_matches_estimator():
@@ -375,7 +364,7 @@ def test_invalid_model_string_is_rejected():
 
 @pytest.mark.parametrize(
     "method_name",
-    ["components", "nescience", "explain"],
+    ["components", "nescience", "analysis"],
 )
 def test_methods_requiring_fit_raise_not_fitted_error(method_name):
     metric = Nescience()
@@ -563,43 +552,3 @@ def test_invalid_weights_are_rejected_during_fit():
 
     with pytest.raises(ValueError, match="positive"):
         Nescience(weights=[0.0, 0.0, 0.0, 0.0]).fit(X, y)
-
-
-def test_profile_low_nescience_model():
-    metric = Nescience()
-
-    profile, explanation = metric._profile_from_components(
-        {
-            "deficiency": 0.1,
-            "surplus": 0.1,
-            "inaccuracy": 0.1,
-            "surfeit": 0.1,
-        }
-    )
-
-    assert profile == "low_nescience_model"
-    assert isinstance(explanation, str)
-
-
-@pytest.mark.parametrize(
-    "dominant",
-    ["deficiency", "surplus", "inaccuracy", "surfeit"],
-)
-def test_recommendations_for_each_dominant_component(dominant):
-    metric = Nescience()
-    components = {
-        "deficiency": 0.1,
-        "surplus": 0.1,
-        "inaccuracy": 0.1,
-        "surfeit": 0.1,
-    }
-    components[dominant] = 0.9
-
-    recommendation = metric._recommendation_from_dominant_component(
-        dominant,
-        components,
-    )
-
-    assert dominant in recommendation
-    assert isinstance(recommendation, str)
-    assert len(recommendation) > 0

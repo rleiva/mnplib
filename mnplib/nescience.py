@@ -44,6 +44,7 @@ from sklearn.utils.validation import check_is_fitted
 from .miscoding import Miscoding
 from .inaccuracy import Inaccuracy
 from .surfeit import Surfeit
+from .mismodel import mismodel
 from .models.inputs import model_artifacts
 from ._diagnostics import warn_nan_model
 from ._validation import validate_n_bins, validate_vector
@@ -232,7 +233,7 @@ class Nescience(BaseEstimator):
         """
         artifacts = model_artifacts(self, model, X=X, feature_names=feature_names,
                                     feature_indices=feature_indices)
-        return {**self.explain(**artifacts.to_nescience_kwargs()),
+        return {**self.analysis(**artifacts.to_nescience_kwargs()),
                 "model_type": artifacts.model_type,
                 "model_string": artifacts.model_string}
 
@@ -313,7 +314,7 @@ class Nescience(BaseEstimator):
         )
         return self.aggregate_components(**values)
 
-    def explain(
+    def analysis(
         self,
         *,
         subset,
@@ -321,10 +322,7 @@ class Nescience(BaseEstimator):
         model_string: str,
     ) -> dict[str, object]:
         """
-        Explain the nescience of supplied model artifacts.
-
-        The explanation identifies the dominant component, assigns a qualitative
-        profile, and provides a practical recommendation for reducing nescience.
+        Return numerical nescience and reliability diagnostics for model artifacts.
 
         Parameters
         ----------
@@ -341,8 +339,7 @@ class Nescience(BaseEstimator):
         -------
         dict
             Flat dictionary containing nescience, deficiency, surplus,
-            inaccuracy, surfeit, subset diagnostics, the dominant component,
-            qualitative profile, and recommendation.
+            inaccuracy, surfeit, mismodel, and subset diagnostics.
         """
         component_values = self.components(
             subset=subset,
@@ -351,12 +348,6 @@ class Nescience(BaseEstimator):
         )
         nescience_value = self.aggregate_components(**component_values)
         diagnostics = self.miscoding_.subset_analysis(subset)
-        reliable = bool(diagnostics["is_reliable"]) and np.isfinite(nescience_value)
-        dominant_component = max(component_values, key=component_values.get) if reliable else None
-        profile, profile_explanation = (
-            self._profile_from_components(component_values) if reliable
-            else ("unreliable_subset", "Joint counts are too sparse for a reliable estimate.")
-        )
 
         return {
             **diagnostics,
@@ -364,13 +355,8 @@ class Nescience(BaseEstimator):
             "aggregation": self.aggregation,
             "weights": dict(zip(self.component_names_, self.weights_)),
             **component_values,
-            "dominant_component": dominant_component,
-            "profile": profile,
-            "profile_explanation": profile_explanation,
-            "recommendation": self._recommendation_from_dominant_component(
-                dominant_component,
-                component_values,
-            ) if reliable else "Use more samples or a coarser discretization.",
+            "mismodel": mismodel(inaccuracy=component_values["inaccuracy"],
+                                 surfeit=component_values["surfeit"]),
         }
 
 
@@ -444,133 +430,6 @@ class Nescience(BaseEstimator):
 
         return float(value)
 
-    def _profile_from_components(
-        self,
-        components: Mapping[str, float],
-    ) -> tuple[str, str]:
-        """
-        Return a qualitative profile from the four component values.
-        """
-        deficiency = float(components["deficiency"])
-        surplus = float(components["surplus"])
-        inaccuracy = float(components["inaccuracy"])
-        surfeit = float(components["surfeit"])
-
-        high_threshold = 0.50
-        low_threshold = 0.25
-
-        high_deficiency = deficiency >= high_threshold
-        high_surplus = surplus >= high_threshold
-        high_inaccuracy = inaccuracy >= high_threshold
-        high_surfeit = surfeit >= high_threshold
-
-        low_deficiency = deficiency <= low_threshold
-        low_surplus = surplus <= low_threshold
-        low_inaccuracy = inaccuracy <= low_threshold
-        low_surfeit = surfeit <= low_threshold
-
-        if low_deficiency and low_surplus and low_inaccuracy and low_surfeit:
-            return (
-                "low_nescience_model",
-                "The model has low deficiency, low surplus, low inaccuracy, "
-                "and low surfeit.",
-            )
-
-        if high_deficiency and not high_surplus:
-            return (
-                "under_informed_model",
-                "The selected features do not contain enough information to "
-                "describe the target.",
-            )
-
-        if high_surplus and not high_deficiency:
-            return (
-                "over_fed_model",
-                "The selected features contain substantial information that is "
-                "not explained by the target.",
-            )
-
-        if low_deficiency and low_surplus and high_inaccuracy:
-            return (
-                "bad_learner",
-                "The selected features appear adequate, but the predictions do "
-                "not match the target accurately.",
-            )
-
-        if low_deficiency and low_surplus and low_inaccuracy and high_surfeit:
-            return (
-                "over_complex_model",
-                "The model predicts well using adequate features, but its "
-                "description appears unnecessarily redundant.",
-            )
-
-        if high_deficiency and high_surplus:
-            return (
-                "poor_input_representation",
-                "The selected input representation is both insufficient for "
-                "the target and rich in target-irrelevant information.",
-            )
-
-        if high_inaccuracy and high_surfeit:
-            return (
-                "complex_but_inaccurate_model",
-                "The model is both inaccurate and apparently more complex than "
-                "its performance justifies.",
-            )
-
-        return (
-            "mixed_nescience_profile",
-            "No single qualitative profile dominates; inspect the four "
-            "component values.",
-        )
-
-    def _recommendation_from_dominant_component(
-        self,
-        dominant_component: str,
-        components: Mapping[str, float],
-    ) -> str:
-        """
-        Return a practical recommendation from the dominant component.
-        """
-        value = float(components[dominant_component])
-
-        if dominant_component == "deficiency":
-            return (
-                f"Dominant source of nescience: deficiency ({value:.4f}). "
-                "Improve the input representation: add relevant features, "
-                "collect additional data, engineer more informative variables, "
-                "or reconsider whether the current observables contain enough "
-                "information about the target."
-            )
-
-        if dominant_component == "surplus":
-            return (
-                f"Dominant source of nescience: surplus ({value:.4f}). "
-                "Reduce target-irrelevant input information: apply feature "
-                "selection, increase the surplus penalty, remove noisy variables, "
-                "or simplify the representation used by the model."
-            )
-
-        if dominant_component == "inaccuracy":
-            return (
-                f"Dominant source of nescience: inaccuracy ({value:.4f}). "
-                "Improve the learner: tune hyperparameters, change the model "
-                "class, improve training, handle imbalance, or check whether "
-                "the predictive task is well specified."
-            )
-
-        if dominant_component == "surfeit":
-            return (
-                f"Dominant source of nescience: surfeit ({value:.4f}). "
-                "Simplify the model description: prune, regularize, reduce "
-                "model size, choose a more compact model family, or remove "
-                "unnecessary parameters and rules."
-            )
-
-        return (
-            "Unable to determine a dominant source of nescience. Inspect the "
-            "component values."
-        )
 
     def _resolve_weights(self) -> np.ndarray:
         """

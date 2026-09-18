@@ -64,7 +64,7 @@ def test_automatic_model_workflow(data, task, family):
     metric = AnomalyDetector(task=task, n_bins=2,
                              auto_model_kwargs={"models": [family]}).fit(X, y)
     assert metric.model_.best_result_.is_reliable
-    assert metric.explain()["model_nescience"] == metric.model_.nescience()
+    assert metric.analysis()["model_nescience"] == metric.model_.nescience()
 
 
 @pytest.mark.parametrize("bins", [3, "auto", "adaptive"])
@@ -72,7 +72,7 @@ def test_discretization_and_consolidated_explanation(data, bins):
     X, y = data
     predictions = np.roll(y, 1)
     metric = AnomalyDetector(task="regression", n_bins=bins).fit(X, y, predictions=predictions)
-    report = metric.explain()
+    report = metric.analysis()
     assert report["n_anomalies"] == len(metric.anomalies())
     assert "compressibility" in report
     assert "feature_analysis" in report
@@ -86,7 +86,7 @@ def test_discretization_and_consolidated_explanation(data, bins):
 def test_empty_anomaly_set_has_a_clear_explanation(data):
     X, y = data
     metric = AnomalyDetector(task="regression", n_bins=3).fit(X, y, predictions=y)
-    report = metric.explain()
+    report = metric.analysis()
     assert metric.results_dataframe().empty
     assert report["n_anomalies"] == 0
     assert report["status"] == "insufficient_anomalies"
@@ -96,7 +96,7 @@ def test_single_correction_pattern_is_reported(data):
     X, y = data
     labels = np.zeros(len(y), dtype=int)
     metric = AnomalyDetector(task="classification").fit(X, labels, predictions=np.ones(len(y)))
-    assert metric.explain()["status"] == "single_correction_pattern"
+    assert metric.analysis()["status"] == "single_correction_pattern"
 
 
 def test_functional_report_matches_estimator(data):
@@ -107,7 +107,7 @@ def test_functional_report_matches_estimator(data):
                                   expected.results_dataframe())
 
 
-@pytest.mark.parametrize("method", ["anomalies", "results_dataframe", "explain"])
+@pytest.mark.parametrize("method", ["anomalies", "results_dataframe", "analysis"])
 def test_fitted_state_is_required(method):
     with pytest.raises(NotFittedError):
         getattr(AnomalyDetector(), method)()

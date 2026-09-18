@@ -188,7 +188,7 @@ def test_regressor_exposes_classifier_parallel_public_methods():
         "score",
         "nescience",
         "components",
-        "explain",
+        "analysis",
         "model_description",
         "results_dataframe",
     }
@@ -497,7 +497,7 @@ def test_automl_keeps_unreliable_candidates_sorted_last():
     assert np.isnan(df.iloc[-1]["nescience"])
     assert df.iloc[-1]["failure_reason"] == "joint_distribution_too_sparse"
     assert df["resolved_n_bins"].eq(3).all()
-    assert clf.explain()["resolved_n_bins"] == 3
+    assert clf.analysis()["resolved_n_bins"] == 3
 
 
 def test_automl_raises_when_no_reliable_candidate_exists():
@@ -854,7 +854,7 @@ def test_classifier_and_regressor_public_workflows_and_results_columns():
             "inaccuracy",
             "surfeit",
         }
-        explanation = estimator.explain()
+        explanation = estimator.analysis()
         assert explanation["candidate"] == estimator.best_candidate_name_
         assert "n_input_features" not in explanation
         assert "n_features_in_use" not in explanation

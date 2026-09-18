@@ -235,16 +235,16 @@ class NescienceRegressor(RegressorMixin, BaseEstimator):
         check_is_fitted(self)
         return dict(self.best_components_)
 
-    def explain(self) -> dict[str, object]:
+    def analysis(self) -> dict[str, object]:
         """
-        Return a nescience explanation for the selected model.
+        Return a numerical nescience analysis for the selected model.
 
         The native estimator score is R-squared recorded during candidate
         evaluation on the training data, not a held-out score.
         """
         check_is_fitted(self)
 
-        explanation = self.nescience_.explain(
+        explanation = self.nescience_.analysis(
             **self.best_artifacts_.to_nescience_kwargs()
         )
         explanation["candidate"] = self.best_candidate_name_

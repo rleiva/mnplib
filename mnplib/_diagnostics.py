@@ -12,8 +12,7 @@ def warn_nan_model(method, diagnostics):
             f"n_selected_features={diagnostics['n_selected_features']}, "
             f"resolved_n_bins={diagnostics['resolved_n_bins']}, "
             f"mean_joint_occupancy={diagnostics['mean_joint_occupancy']:.3f}, "
-            f"singleton_fraction={diagnostics['singleton_fraction']:.3f}). "
-            "Use more samples or a coarser discretization."
+            f"singleton_fraction={diagnostics['singleton_fraction']:.3f})."
         )
     else:
         reason = "One or more metric components or their aggregate are not finite."

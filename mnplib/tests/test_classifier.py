@@ -272,7 +272,7 @@ def test_nescience_components_explain_and_model_description(
         "inaccuracy",
         "surfeit",
     }
-    explanation = clf.explain()
+    explanation = clf.analysis()
     assert explanation["candidate"] == clf.best_candidate_name_
     assert explanation["task"] == "classification"
     assert explanation["evaluation_context"] == "training"
@@ -394,7 +394,7 @@ def test_classifier_does_not_use_clone_for_external_candidates():
         ("score", (np.zeros((3, 2)), np.zeros(3))),
         ("nescience", ()),
         ("components", ()),
-        ("explain", ()),
+        ("analysis", ()),
         ("results_dataframe", ()),
         ("model_description", ()),
     ],

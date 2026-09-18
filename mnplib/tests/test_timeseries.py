@@ -8,7 +8,6 @@ from sklearn.exceptions import NotFittedError
 from sklearn.metrics import r2_score
 
 from mnplib.timeseries import TimeSeries, FixedLinearForecaster
-from mnplib.reporting import format_analysis
 from mnplib.timeseries.models import (
     canonical_fixed_model_string,
     exponential_smoothing_weights,
@@ -132,11 +131,11 @@ def test_components_nescience_and_model_string():
     assert description["surfeit"] == pytest.approx(components["surfeit"])
 
 
-def test_explain_contains_time_series_details():
+def test_analysis_contains_time_series_details():
     y = make_series()
     ts = TimeSeries(window_size=4, n_bins=3).fit(y)
 
-    explanation = ts.explain()
+    explanation = ts.analysis()
 
     assert explanation["candidate"] == ts.model_name_
     assert explanation["task"] == "forecasting"
@@ -146,7 +145,7 @@ def test_explain_contains_time_series_details():
     assert explanation["window_size"] == ts.window_size_
     assert explanation["selected_feature_names"] == ts.selected_feature_names_
     assert {"deficiency", "surplus", "inaccuracy", "surfeit"}.issubset(explanation)
-    assert "dominant_component" in explanation
+    assert "mismodel" in explanation
 
 
 @pytest.mark.parametrize("family,options,parameters", [
@@ -156,18 +155,14 @@ def test_explain_contains_time_series_details():
     ("arima", {"orders": [(1, 0, 0)], "max_iter": 30}, {"order": (1, 0, 0), "trend": "c"}),
     ("state_space", {"models": ["local_level"], "max_iter": 30}, {"specification": "local_level"}),
 ])
-def test_candidate_hyperparameters_are_shared_by_reports_and_text(family, options, parameters):
+def test_candidate_hyperparameters_are_shared_by_reports(family, options, parameters):
     ts = TimeSeries(window_size=4, models=[family], search_options={family: options}, n_bins=2)
     ts.fit(make_series(120))
-    report = ts.explain()
+    report = ts.analysis()
     assert ts.best_result_.hyperparameters == parameters
     assert report["hyperparameters"] == parameters
     assert ts.results_dataframe().iloc[0]["hyperparameters"] == parameters
     assert not parameters.keys() & ts.best_result_.metadata.keys()
-    text = format_analysis(report)
-    assert ("Hyperparameters" in text) == bool(parameters)
-    for key, value in parameters.items():
-        assert key in text and str(value) in text
 
 
 def test_lag_analysis_methods_without_exogenous_data():
@@ -328,7 +323,7 @@ def test_candidate_results_include_subset_reliability_diagnostics():
     assert result.subset_diagnostics["n_samples"] == diagnostics["n_samples"]
     assert result.subset_diagnostics["resolved_n_bins"] == 3
     assert ts.results_dataframe()["resolved_n_bins"].eq(3).all()
-    assert ts.explain()["resolved_n_bins"] == 3
+    assert ts.analysis()["resolved_n_bins"] == 3
 
 
 def test_arima_candidate_uses_shared_artifacts_and_forecasts():
