@@ -1,4 +1,4 @@
-__version__ = "2.0.0a6"
+__version__ = "2.0.0b1"
 
 from .miscoding import Miscoding
 from .inaccuracy import Inaccuracy
