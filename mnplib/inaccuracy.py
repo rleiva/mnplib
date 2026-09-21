@@ -21,9 +21,13 @@ from sklearn.utils import check_X_y
 from sklearn.utils.multiclass import type_of_target
 from sklearn.utils.validation import check_is_fitted
 
-from .utils import _resolve_bins, empirical_distribution
+from .utils import (
+    _resolve_bins,
+    empirical_distribution_array,
+    empirical_distribution_vector,
+)
 from .models.inputs import model_input
-from ._validation import validate_n_bins, validate_vector
+from ._validation import validate_vector
 
 
 YType = Literal["auto", "numeric", "categorical"]
@@ -51,7 +55,9 @@ class Inaccuracy(BaseEstimator):
     n_bins : int, "auto", or "adaptive", default="auto"
         Number of uniform bins used for numeric targets. ``"auto"`` uses
         ``max(2, floor(2 * n_samples**(1/3)))``. ``"adaptive"`` is equivalent
-        for target-only quantities.
+        for target-only quantities. The target-based count is applied to the
+        target, prediction, and joint distributions to keep them consistent.
+        Integer counts must be at least two; bin settings are validated during fit.
     """
 
     _VALID_Y_TYPES = ("auto", "numeric", "categorical")
@@ -61,14 +67,13 @@ class Inaccuracy(BaseEstimator):
         y_type: YType = "auto",
         n_bins: BinSpec = "auto",
     ):
-        """Initialize the estimator and validate configuration parameters."""
+        """Initialize the estimator configuration."""
         if y_type not in self._VALID_Y_TYPES:
             raise ValueError(
                 "Valid options for 'y_type' are {}. Got y_type={!r} instead."
                 .format(self._VALID_Y_TYPES, y_type)
             )
 
-        validate_n_bins(n_bins)
         self.y_type = y_type
         self.n_bins = n_bins
 
@@ -225,7 +230,6 @@ class Inaccuracy(BaseEstimator):
 
     def _fit_target(self, y) -> None:
         """Fit target-dependent attributes."""
-        validate_n_bins(self.n_bins)
         self.y_ = validate_vector(y, name="y")
         self.y_isnumeric_ = self._infer_y_isnumeric(self.y_)
         self.len_y_ = float(self._empirical_summary(self.y_).code_length)
@@ -237,12 +241,18 @@ class Inaccuracy(BaseEstimator):
         Summarize the empirical joint distribution of target-like variables.
 
         All variables passed to this method are interpreted with the same
-        numeric/categorical type as the fitted target.
+        numeric/categorical type as the fitted target. Marginal and joint
+        distributions share the target-only bin count.
         """
-        return empirical_distribution(
-            columns=columns,
-            numeric=[self.y_isnumeric_] * len(columns),
-            n_bins=self.n_bins,
+        bins = _resolve_bins(self.n_bins, n_samples=self.y_.size)
+        if len(columns) == 1:
+            return empirical_distribution_vector(
+                columns[0], numeric=self.y_isnumeric_, n_bins=bins,
+            )
+        return empirical_distribution_array(
+            np.asarray(columns, dtype=object).T,
+            numeric=self.y_isnumeric_,
+            n_bins=bins,
         )
 
     def _inaccuracy_from_lengths(

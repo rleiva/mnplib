@@ -27,8 +27,8 @@ from sklearn.utils.multiclass import type_of_target
 from sklearn.utils.validation import check_is_fitted
 
 from .models.inputs import model_artifacts
-from .utils import empirical_distribution
-from ._validation import validate_n_bins, validate_vector
+from .utils import empirical_distribution_vector
+from ._validation import validate_vector
 
 YType = Literal["auto", "numeric", "categorical"]
 BinSpec = int | Literal["auto", "adaptive"]
@@ -57,6 +57,7 @@ class Surfeit(BaseEstimator):
         Number of uniform bins used for numeric targets. ``"auto"`` uses
         ``max(2, floor(2 * n_samples**(1/3)))``. ``"adaptive"`` is equivalent
         for target-only quantities.
+        Integer counts must be at least two; bin settings are validated during fit.
 
     zlib_level : int, default=9
         Compression level passed to ``zlib.compress``. Must be between 0 and 9.
@@ -75,14 +76,13 @@ class Surfeit(BaseEstimator):
         zlib_level: int = 9,
         zlib_overhead: int = 6,
     ):
-        """Initialize the estimator and validate configuration parameters."""
+        """Initialize the estimator configuration."""
         self._validate_init(
             y_type=y_type,
             zlib_level=zlib_level,
             zlib_overhead=zlib_overhead,
         )
 
-        validate_n_bins(n_bins)
         self.y_type = y_type
         self.n_bins = n_bins
         self.zlib_level = int(zlib_level)
@@ -340,7 +340,6 @@ class Surfeit(BaseEstimator):
 
     def _fit_target(self, y) -> None:
         """Fit target-dependent attributes."""
-        validate_n_bins(self.n_bins)
         self.y_ = validate_vector(y, name="y")
         self.y_isnumeric_ = self._infer_y_isnumeric(self.y_)
         self.len_y_ = self._target_code_length()
@@ -350,9 +349,9 @@ class Surfeit(BaseEstimator):
     def _target_code_length(self) -> float:
         """Return the empirical code length of the fitted target in bits."""
         return float(
-            empirical_distribution(
-                columns=[self.y_],
-                numeric=[self.y_isnumeric_],
+            empirical_distribution_vector(
+                self.y_,
+                numeric=self.y_isnumeric_,
                 n_bins=self.n_bins,
             ).code_length
         )

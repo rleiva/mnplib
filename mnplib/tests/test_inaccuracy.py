@@ -10,6 +10,8 @@ from sklearn.exceptions import NotFittedError
 from sklearn.datasets   import load_breast_cancer
 
 from mnplib.inaccuracy import Inaccuracy, inaccuracy_predictions
+import mnplib.inaccuracy as inaccuracy_module
+from mnplib.utils import empirical_distribution_array, empirical_distribution_vector
 
 
 def test_constructor_defaults():
@@ -22,6 +24,35 @@ def test_constructor_defaults():
 def test_constructor_rejects_invalid_y_type():
     with pytest.raises(ValueError, match="Valid options for 'y_type'"):
         Inaccuracy(y_type="invalid")
+
+
+@pytest.mark.parametrize("n_bins,expected_bins", [(4, 4), ("auto", 9), ("adaptive", 9)])
+def test_marginal_and_joint_distributions_share_target_bin_count(
+    monkeypatch, n_bins, expected_bins
+):
+    y = np.linspace(0, 1, 100)
+    predictions = np.roll(y, 7)
+    calls = []
+
+    def record_vector(x, *, numeric, n_bins):
+        calls.append((1, n_bins))
+        return empirical_distribution_vector(x, numeric=numeric, n_bins=n_bins)
+
+    def record_array(X, *, numeric, n_bins):
+        calls.append((X.shape[1], n_bins))
+        return empirical_distribution_array(X, numeric=numeric, n_bins=n_bins)
+
+    monkeypatch.setattr(inaccuracy_module, "empirical_distribution_vector", record_vector)
+    monkeypatch.setattr(inaccuracy_module, "empirical_distribution_array", record_array)
+    metric = Inaccuracy(y_type="numeric", n_bins=n_bins).fit_y(y)
+    report = metric.prediction_analysis(predictions)
+    assert calls == [(1, expected_bins), (1, expected_bins), (2, expected_bins)]
+    assert report["resolved_n_bins"] == expected_bins
+    for key, columns in [("target_code_length_bits", [y]),
+                         ("prediction_code_length_bits", [predictions]),
+                         ("joint_code_length_bits", [predictions, y])]:
+        summary = empirical_distribution_array(np.column_stack(columns), n_bins=expected_bins)
+        assert report[key] == summary.code_length
 
 
 def test_fit_classification_sets_fitted_attributes():

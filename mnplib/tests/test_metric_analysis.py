@@ -14,7 +14,7 @@ from mnplib.inaccuracy import model_analysis as inaccuracy_model_analysis
 from mnplib.inaccuracy import prediction_analysis
 from mnplib.surfeit import description_analysis
 from mnplib.surfeit import model_analysis as surfeit_model_analysis
-from mnplib.utils import empirical_distribution
+from mnplib.utils import empirical_distribution_array
 
 
 def test_categorical_prediction_analysis_reports_code_lengths_and_counts():
@@ -54,7 +54,7 @@ def test_numeric_prediction_analysis_reports_errors_and_resolved_bins(n_bins, ex
     for key, columns in [("target_code_length_bits", [y]),
                          ("prediction_code_length_bits", [predictions]),
                          ("joint_code_length_bits", [predictions, y])]:
-        summary = empirical_distribution(columns, numeric=[True] * len(columns), n_bins=n_bins)
+        summary = empirical_distribution_array(np.column_stack(columns), n_bins=expected_bins)
         assert report[key] == pytest.approx(summary.code_length)
     assert report == prediction_analysis(predictions, y=y, y_type="numeric", n_bins=n_bins)
 

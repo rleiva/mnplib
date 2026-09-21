@@ -47,7 +47,7 @@ from .surfeit import Surfeit
 from .mismodel import mismodel
 from .models.inputs import model_artifacts
 from ._diagnostics import warn_nan_model
-from ._validation import validate_n_bins, validate_vector
+from ._validation import validate_vector
 
 
 XType = Literal["auto", "numeric", "categorical"]
@@ -103,6 +103,7 @@ class Nescience(BaseEstimator):
         ``max(2, floor(2 * n_samples**(1/3)))``. ``"adaptive"`` applies the
         subset-size rule inside ``Miscoding`` and matches ``"auto"`` for
         target-only quantities.
+        Integer counts must be at least two; bin settings are validated during fit.
 
     zlib_level : int, default=9
         Compression level used by ``Surfeit``.
@@ -135,7 +136,7 @@ class Nescience(BaseEstimator):
         zlib_level: int = 9,
         zlib_overhead: int = 6,
     ):
-        """Initialize the estimator and validate configuration parameters."""
+        """Initialize the estimator configuration."""
         self._validate_init(
             X_type=X_type,
             y_type=y_type,
@@ -144,7 +145,6 @@ class Nescience(BaseEstimator):
             zlib_overhead=zlib_overhead,
         )
 
-        validate_n_bins(n_bins)
         self.X_type = X_type
         self.y_type = y_type
         self.aggregation = aggregation
@@ -171,7 +171,6 @@ class Nescience(BaseEstimator):
         self : Nescience
             Fitted estimator.
         """
-        validate_n_bins(self.n_bins)
         y = validate_vector(y, name="y")
         X_checked, y_checked = check_X_y(X, y, dtype=None, ensure_2d=True)
 

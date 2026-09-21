@@ -2,8 +2,7 @@
 Empirical code-length utilities for the Minimum Nescience Principle.
 
 This module provides stateless utilities for estimating empirical probability
-distributions, empirical entropies, and empirical code lengths from observed
-variables.
+distributions and empirical code lengths from observed variables.
 
 The implementation uses NumPy, pandas, and scikit-learn utilities for the
 standard parts of the workflow:
@@ -13,12 +12,14 @@ standard parts of the workflow:
     - pandas detects missing categorical values and factorizes categorical
       equality classes;
     - NumPy computes uniform bin edges, bin labels, joint states, counts,
-      entropy, and code length.
+      probabilities, and code length.
 
 Numeric variables are discretized independently using uniform bin edges. When
 ``n_bins="auto"``, the number of bins is
-``max(2, floor(2 * n_samples**(1/3)))``. For one-dimensional quantities,
-``n_bins="adaptive"`` uses the same rule.
+``max(2, floor(2 * n_samples**(1/3)))``. For a distribution over ``d`` supplied
+variables, ``n_bins="adaptive"`` uses
+``max(2, floor(2 * n_samples**(1/3) / log2(d + 1)))``. Both policies agree for
+one variable. Integer bin counts are used without dimension-dependent reduction.
 
 Categorical variables are encoded according to order of first appearance. The
 actual integer labels are not meaningful; only equality classes and empirical
@@ -27,11 +28,8 @@ frequencies are used.
 The public API is intentionally small:
 
     - ``discretize_vector``
-    - ``empirical_distribution``
-    - ``empirical_entropy``
-    - ``empirical_code_length``
-    - ``entropy_from_counts``
-    - ``code_length_from_counts``
+    - ``empirical_distribution_vector`` (automatic binning by default)
+    - ``empirical_distribution_array`` (adaptive binning by default)
 
 @copyright: Rafael Garcia Leiva
 @mail:      rgarcialeiva@gmail.com
@@ -44,7 +42,6 @@ from dataclasses import dataclass
 from typing import Literal
 
 import numpy as np
-from ._validation import validate_n_bins
 import pandas as pd
 from sklearn.utils.validation import (
     check_array,
@@ -58,11 +55,8 @@ BinSpec = int | Literal["auto", "adaptive"]
 __all__ = [
     "EmpiricalSummary",
     "discretize_vector",
-    "empirical_distribution",
-    "empirical_entropy",
-    "empirical_code_length",
-    "entropy_from_counts",
-    "code_length_from_counts",
+    "empirical_distribution_vector",
+    "empirical_distribution_array",
 ]
 
 
@@ -80,10 +74,8 @@ class EmpiricalSummary:
           Number of observations associated with each state.
     * probabilities : numpy.ndarray
           Empirical probabilities associated with each state.
-    * entropy : float
-          Empirical entropy of the distribution, measured in bits.
     * code_length : float
-          Total empirical code length in bits, equal to ``n_samples * entropy``.
+          Total empirical code length in bits.
     * n_samples : int
           Number of observations used to estimate the empirical distribution.
     * n_states : int
@@ -92,7 +84,6 @@ class EmpiricalSummary:
     states:        np.ndarray
     counts:        np.ndarray
     probabilities: np.ndarray
-    entropy:       float
     code_length:   float
     n_samples:     int
     n_states:      int
@@ -101,7 +92,6 @@ class EmpiricalSummary:
 #
 # Validation and encoding
 #
-
 
 def _as_1d_array(x, name: str) -> np.ndarray:
     """
@@ -161,8 +151,11 @@ def _validate_columns(
     """
     if len(columns) == 0:
         raise ValueError("At least one random variable must be provided.")
-    if len(columns) != len(numeric):
-        raise ValueError("columns and numeric must have the same length.")
+    numeric_flags = np.asarray(numeric)
+    if numeric_flags.ndim != 1 or numeric_flags.size != len(columns):
+        raise ValueError("numeric must contain one boolean per column.")
+    if not all(isinstance(flag, (bool, np.bool_)) for flag in numeric_flags):
+        raise TypeError("numeric flags must be booleans.")
 
     arrays = [_as_1d_array(column, name=f"columns[{i}]") for i, column in enumerate(columns)]
 
@@ -171,7 +164,7 @@ def _validate_columns(
     except ValueError as exc:
         raise ValueError("All random variables must have the same number of samples.") from exc
 
-    return arrays, [bool(flag) for flag in numeric], arrays[0].size
+    return arrays, [bool(flag) for flag in numeric_flags], arrays[0].size
 
 
 def _numeric_array(x, name: str) -> np.ndarray:
@@ -224,7 +217,7 @@ def _categorical_codes(x, name: str) -> np.ndarray:
     Missing categorical values are rejected.
 
     Encoding follows the order of first appearance. This is sufficient for
-    empirical entropy and code-length computations, because only equality
+    empirical code-length computations, because only equality
     classes and empirical frequencies are used.
 
     Parameters
@@ -273,8 +266,9 @@ def _encode_columns(
           categorical variables are factorized into integer codes.
     * n_bins : int, "auto", or "adaptive", default="auto"
           Number of bins for numeric variables. ``"auto"`` uses
-          ``max(2, floor(2 * n_samples**(1/3)))``. ``"adaptive"`` is
-          equivalent for one-dimensional quantities.
+          ``max(2, floor(2 * n_samples**(1/3)))``. ``"adaptive"`` uses
+          ``max(2, floor(2 * n_samples**(1/3) / log2(d + 1)))``, where ``d``
+          counts all supplied variables, including categorical variables.
     Returns
     * numpy.ndarray
           Integer array of shape ``(n_samples, n_variables)``.
@@ -287,7 +281,7 @@ def _encode_columns(
           If categorical values cannot be factorized.
     """
     arrays, numeric_flags, n_samples = _validate_columns(columns, numeric)
-    bins   = _resolve_bins(n_bins, n_samples=n_samples)
+    bins = _resolve_bins(n_bins, n_samples=n_samples, subset_size=len(arrays))
 
     encoded = [
         discretize_vector(column, n_bins=bins)
@@ -303,7 +297,6 @@ def _encode_columns(
 # Numeric discretization
 #
 
-
 def _auto_n_bins(n_samples: int) -> int:
     """
     Resolve the automatic one-dimensional bin count.
@@ -318,7 +311,7 @@ def _auto_n_bins(n_samples: int) -> int:
 
 def _adaptive_n_bins(n_samples: int, subset_size: int) -> int:
     """
-    Resolve the adaptive empirical subset bin count.
+    Resolve the adaptive bin count for a supplied dimensional context.
     """
     n_samples = int(n_samples)
     subset_size = int(subset_size)
@@ -332,18 +325,21 @@ def _adaptive_n_bins(n_samples: int, subset_size: int) -> int:
     return max(2, int(np.floor(value)))
 
 
-def _resolve_bins(
-    n_bins: BinSpec,
-    n_samples: int,
-) -> int:
+def _resolve_bins(n_bins: BinSpec, n_samples: int,
+                  *, subset_size: int = 1) -> int:
     """
     Resolve an explicit or automatic bin specification.
 
     Parameters
     * n_bins : int, "auto", or "adaptive"
-          Requested bin specification.
+          Requested bin specification. Integer counts must be at least two.
     * n_samples : int
           Number of observations.
+    * subset_size : int, default=1
+          Dimensional context for adaptive binning. Distribution utilities use
+          the number of supplied variables; subset diagnostics use the number
+          of selected features, excluding the target. The default uses the
+          one-dimensional rule. Explicit counts and "auto" ignore this size.
 
     Returns
     * int
@@ -351,17 +347,26 @@ def _resolve_bins(
 
     Raises
     * ValueError
-          If ``n_samples`` is not positive, or if ``n_bins`` is invalid.
+          If ``n_samples`` or ``subset_size`` is not positive, or if
+          ``n_bins`` is invalid.
     """
     n_samples = int(n_samples)
 
     if n_samples <= 0:
         raise ValueError("n_samples must be positive.")
+    subset_size = int(subset_size)
+    if subset_size <= 0:
+        raise ValueError("subset_size must be positive.")
 
-    bins = validate_n_bins(n_bins)
-    if isinstance(bins, str):
-        return _auto_n_bins(n_samples)
-    return bins
+    if isinstance(n_bins, str):
+        if n_bins == "auto":
+            return _auto_n_bins(n_samples)
+        if n_bins == "adaptive":
+            return _adaptive_n_bins(n_samples, subset_size)
+    elif (not isinstance(n_bins, (bool, np.bool_))
+          and isinstance(n_bins, (int, np.integer)) and n_bins >= 2):
+        return int(n_bins)
+    raise ValueError("n_bins must be an integer >= 2, 'auto', or 'adaptive'.")
 
 
 def discretize_vector(
@@ -397,9 +402,8 @@ def discretize_vector(
 
 
 #
-# Counts, entropy, and code length
+# Counts and code length
 #
-
 
 def _unique_states_and_counts(encoded: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """
@@ -464,28 +468,7 @@ def _validate_counts(counts: Sequence[float]) -> tuple[np.ndarray, float]:
     return counts_array, n_samples
 
 
-def entropy_from_counts(counts: Sequence[float]) -> float:
-    """
-    Compute plug-in empirical entropy from state counts, measured in bits.
-
-    Parameters
-    * counts : sequence of float
-          State counts.
-
-    Returns
-    * float
-          Plug-in empirical entropy.
-
-    Raises
-    * ValueError
-          If counts are invalid.
-    """
-    counts_array, n_samples = _validate_counts(counts)
-    probabilities           = counts_array[counts_array > 0.0] / n_samples
-    return -float(np.sum(probabilities * np.log2(probabilities)))
-
-
-def code_length_from_counts(counts: Sequence[float]) -> float:
+def _code_length_from_counts(counts: Sequence[float]) -> float:
     """
     Compute empirical code length from state counts, measured in bits.
 
@@ -504,34 +487,15 @@ def code_length_from_counts(counts: Sequence[float]) -> float:
 
 
 #
-# Public empirical summaries
+# Empirical summaries
 #
 
-def empirical_distribution(
+def _empirical_distribution(
     columns:  Sequence[Iterable],
     numeric:  Sequence[bool],
-    n_bins:   BinSpec = "auto"
+    n_bins:   BinSpec,
 ) -> EmpiricalSummary:
-    """
-    Estimate the empirical distribution of jointly encoded variables.
-
-    Parameters
-    * columns : sequence of iterable
-          Variables observed on the same samples. Each element must be a
-          one-dimensional sequence.
-    * numeric : sequence of bool
-          Flags indicating whether each variable is numeric. Numeric variables
-          are discretized; categorical variables are symbolically encoded.
-    * n_bins : int, "auto", or "adaptive", default="auto"
-          Number of uniform bins for numeric variables.
-          ``"auto"`` uses ``max(2, floor(2 * n_samples**(1/3)))``.
-          ``"adaptive"`` is equivalent for one-dimensional quantities.
-
-    Returns
-    * EmpiricalSummary
-          Summary containing observed states, counts, probabilities, entropy,
-          code length, and metadata.
-    """
+    """Encode jointly observed columns and summarize their empirical counts."""
     encoded = _encode_columns(
         columns,
         numeric,
@@ -541,14 +505,107 @@ def empirical_distribution(
     states, counts = _unique_states_and_counts(encoded)
     n_samples      = int(np.sum(counts))
     probabilities  = counts / n_samples
-    entropy        = entropy_from_counts(counts)
 
     return EmpiricalSummary(
         states        = states,
         counts        = counts,
         probabilities = probabilities,
-        entropy       = entropy,
-        code_length   = float(n_samples * entropy),
+        code_length   = _code_length_from_counts(counts),
         n_samples     = n_samples,
         n_states      = int(states.shape[0]),
     )
+
+
+def empirical_distribution_vector(
+    x,
+    *,
+    numeric: bool = True,
+    n_bins: BinSpec = "auto",
+) -> EmpiricalSummary:
+    """
+    Estimate the empirical distribution of a one-dimensional vector.
+
+    Parameters
+    * x : array-like of shape (n_samples,)
+          Non-empty vector of observed values. A pandas Series is accepted.
+    * numeric : bool, default=True
+          Discretize numeric values when True; encode categories when False.
+    * n_bins : int, "auto", or "adaptive", default="auto"
+          Number of uniform bins for numeric values. Both named policies use
+          ``max(2, floor(2 * n_samples**(1/3)))`` for a single variable.
+          An explicit integer must be at least two. Categorical values are
+          encoded without numerical binning under every policy.
+
+    Returns
+    * EmpiricalSummary
+          Observed states, counts, probabilities, code length in bits, and
+          sample and state counts. ``states`` has shape ``(n_states, 1)``.
+
+    Raises
+    * ValueError
+          If x is empty, not one-dimensional, contains missing or invalid
+          values, or if the bin specification is invalid.
+    * TypeError
+          If numeric is not a boolean or categorical values are unhashable.
+
+    Notes
+    * When comparing this marginal with a joint distribution, pass the same
+      explicit integer bin count to both functions to keep discretization
+      consistent for shared numeric variables.
+    """
+    if not isinstance(numeric, (bool, np.bool_)):
+        raise TypeError("numeric must be a boolean.")
+    values = np.asarray(x, dtype=object)
+    if values.ndim != 1:
+        raise ValueError("x must be a one-dimensional array.")
+    return _empirical_distribution([values], [numeric], n_bins)
+
+
+def empirical_distribution_array(
+    X,
+    *,
+    numeric: bool | Sequence[bool] = True,
+    n_bins: BinSpec = "adaptive",
+) -> EmpiricalSummary:
+    """
+    Estimate the empirical joint distribution of a two-dimensional array.
+
+    Parameters
+    * X : array-like of shape (n_samples, n_variables)
+          Rows are samples and columns are variables. A pandas DataFrame is
+          accepted. Both dimensions must be non-empty.
+    * numeric : bool or sequence of bool, default=True
+          A boolean applies to every column. A sequence specifies one flag per
+          column, in column order. Numeric columns are discretized independently;
+          categorical columns are encoded by equality of their values.
+    * n_bins : int, "auto", or "adaptive", default="adaptive"
+          Number of uniform bins per numeric column. ``"adaptive"`` uses
+          ``max(2, floor(2 * n_samples**(1/3) / log2(n_variables + 1)))``.
+          All columns count toward n_variables, including categorical columns.
+          ``"auto"`` uses ``max(2, floor(2 * n_samples**(1/3)))`` regardless
+          of dimension. An explicit integer must be at least two. Categorical
+          columns are encoded without numerical binning under every policy.
+
+    Returns
+    * EmpiricalSummary
+          Observed joint states, counts, probabilities, code length in bits,
+          and sample and state counts. Only observed combinations are stored;
+          ``states`` has shape ``(n_states, n_variables)``.
+
+    Raises
+    * ValueError
+          If X is empty, not two-dimensional, contains missing or invalid
+          values, if numeric has the wrong shape, or if n_bins is invalid.
+    * TypeError
+          If numeric flags are not booleans or categorical values are unhashable.
+
+    Notes
+    * When comparing marginal and joint code lengths, pass the same explicit
+      integer bin count to all related distributions. Resolving adaptive counts
+      separately for different numbers of columns produces different
+      discretizations of their shared numeric variables.
+    """
+    values = check_array(X, dtype=object, ensure_2d=True, ensure_all_finite=False)
+    columns = [values[:, j] for j in range(values.shape[1])]
+    flags = [numeric] * len(columns) if isinstance(numeric, (bool, np.bool_)) else numeric
+    return _empirical_distribution(columns, flags, n_bins)

@@ -33,7 +33,7 @@ from sklearn.utils.validation import check_is_fitted
 from .classifier import NescienceClassifier
 from .miscoding import Miscoding
 from .regressor import NescienceRegressor
-from .utils import _auto_n_bins
+from .utils import _resolve_bins
 
 
 Task = Literal["auto", "classification", "regression"]
@@ -61,6 +61,7 @@ class AnomalyDetector(BaseEstimator):
         when numeric attributes are analyzed. ``"auto"`` uses
         ``max(2, floor(2 * n_samples**(1/3)))``. ``"adaptive"`` uses that rule
         for detection and subset-size adaptation for feature explanation.
+        Integer counts must be at least two; bin settings are validated during fit.
 
     auto_model_kwargs : mapping, optional
         Additional keyword arguments passed to ``NescienceClassifier`` or
@@ -136,6 +137,7 @@ class AnomalyDetector(BaseEstimator):
         self.y_ = y_checked
         self.feature_names_in_ = np.asarray(feature_names, dtype=object)
         self.n_samples_in_, self.n_features_in_ = self.X_.shape
+        self.n_bins_ = _resolve_bins(self.n_bins, self.n_samples_in_)
         self.task_ = self._resolve_task(self.y_)
         self.model_ = None
 
@@ -607,12 +609,12 @@ class AnomalyDetector(BaseEstimator):
         the observed target range receive dedicated out-of-range states, so an
         extreme prediction cannot be hidden inside an edge bin.
         """
-        bins = self._resolve_bins(self.n_bins, self.n_samples_in_)
+        bins = self.n_bins_
 
         lower = float(np.min(y_true))
         upper = float(np.max(y_true))
 
-        if bins <= 1 or lower == upper:
+        if lower == upper:
             self.n_bins_ = 1
             edges = np.asarray([lower, upper], dtype=float)
             true_bins = np.zeros(self.n_samples_in_, dtype=int)
@@ -621,7 +623,6 @@ class AnomalyDetector(BaseEstimator):
             pred_bins[y_pred > upper] = 1
             return true_bins, pred_bins, edges
 
-        self.n_bins_ = bins
         edges = np.linspace(lower, upper, bins + 1, dtype=float)
         internal_edges = edges[1:-1]
 
@@ -642,15 +643,6 @@ class AnomalyDetector(BaseEstimator):
         codes, _ = pd.factorize(combined, sort=False)
         n = observed.shape[0]
         return codes[:n].astype(int), codes[n:].astype(int)
-
-    @staticmethod
-    def _resolve_bins(n_bins: BinSpec, n_samples: int) -> int:
-        """Resolve an explicit bin count or Rice's automatic rule."""
-        if isinstance(n_bins, str) and n_bins in {"auto", "adaptive"}:
-            return _auto_n_bins(n_samples)
-        if isinstance(n_bins, (bool, np.bool_)) or not isinstance(n_bins, (int, np.integer)) or n_bins < 1:
-            raise ValueError("n_bins must be a positive integer, 'auto', or 'adaptive'.")
-        return int(n_bins)
 
     # ------------------------------------------------------------------
     # Masks
@@ -705,8 +697,6 @@ class AnomalyDetector(BaseEstimator):
                 f"Valid options for X_type are {self._VALID_X_TYPES}. "
                 f"Got {self.X_type!r}."
             )
-
-        self._resolve_bins(self.n_bins, 1)
 
     @staticmethod
     def _prepare_X_y(X, y) -> tuple[np.ndarray, np.ndarray, list[str], pd.DataFrame]:

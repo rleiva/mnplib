@@ -28,10 +28,10 @@ from sklearn.utils import check_X_y
 from sklearn.utils.multiclass import type_of_target
 from sklearn.utils.validation import check_is_fitted
 
-from .utils import _adaptive_n_bins, _auto_n_bins, empirical_distribution
+from .utils import _resolve_bins, empirical_distribution_array
 from .models.inputs import model_artifacts
 from ._diagnostics import warn_nan_model
-from ._validation import validate_n_bins, validate_vector
+from ._validation import validate_vector
 
 
 XType = Literal["auto", "numeric", "categorical"]
@@ -93,6 +93,7 @@ class Miscoding(BaseEstimator):
 
         n_bins : int, "auto", or "adaptive", default="adaptive"
             Number of uniform bins used to discretize numeric variables.
+            Integer counts must be at least two and are validated during fit.
             ``"auto"`` uses ``max(2, floor(2 * n_samples**(1/3)))``.
             ``"adaptive"`` matches ``"auto"`` for feature-level diagnostics
             and uses ``max(2, floor(2 * n_samples**(1/3) / log2(|S| + 1)))``
@@ -102,7 +103,6 @@ class Miscoding(BaseEstimator):
         self._validate_init(
             X_type=X_type,
             y_type=y_type,
-            n_bins=n_bins,
         )
 
         self.X_type = X_type
@@ -128,7 +128,6 @@ class Miscoding(BaseEstimator):
         self : Miscoding
             Fitted estimator.
         """
-        validate_n_bins(self.n_bins)
         if y is None:
             raise ValueError("Miscoding.fit requires a target vector y.")
 
@@ -678,8 +677,8 @@ class Miscoding(BaseEstimator):
             Empirical code length of the supplied variables.
         """
         return float(
-            empirical_distribution(
-                columns=columns,
+            empirical_distribution_array(
+                np.asarray(columns, dtype=object).T,
                 numeric=numeric,
                 n_bins=n_bins,
             ).code_length
@@ -761,8 +760,8 @@ class Miscoding(BaseEstimator):
         if not columns:
             raise ValueError("At least one random variable must be provided.")
 
-        summary = empirical_distribution(
-            columns=columns,
+        summary = empirical_distribution_array(
+            np.asarray(columns, dtype=object).T,
             numeric=numeric,
             n_bins=int(n_bins),
         )
@@ -1182,15 +1181,9 @@ class Miscoding(BaseEstimator):
         """
         Resolve the numeric bin count for a feature subset size.
         """
-        subset_size = int(subset_size)
-        if subset_size <= 0:
-            raise ValueError("subset_size must be positive.")
-
-        if self.n_bins == "auto":
-            return _auto_n_bins(self.n_samples_in_)
-        if self.n_bins == "adaptive":
-            return _adaptive_n_bins(self.n_samples_in_, subset_size)
-        return validate_n_bins(self.n_bins)
+        return _resolve_bins(
+            self.n_bins, self.n_samples_in_, subset_size=subset_size
+        )
 
     #
     # Index handling and numerical helpers
@@ -1263,7 +1256,6 @@ class Miscoding(BaseEstimator):
         *,
         X_type,
         y_type,
-        n_bins,
     ):
         """
         Validate constructor arguments before storing them on the estimator.
@@ -1278,7 +1270,6 @@ class Miscoding(BaseEstimator):
                 f"Valid options for 'y_type' are {cls._VALID_Y_TYPES}. "
                 f"Got {y_type!r}."
             )
-        validate_n_bins(n_bins)
 
 
 #

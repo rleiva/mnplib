@@ -209,18 +209,59 @@ class TimeSeries(BaseEstimator):
         return self
 
 
-    def forecast(self, steps: int = 1, *, X_future=None) -> np.ndarray:
-        """Produce recursive forecasts for a positive number of future steps."""
+    @classmethod
+    def family_capabilities(cls) -> dict[str, dict[str, object]]:
+        """Return independent capability records keyed by supported family ID.
+
+        Diagnostic-proxy subsets describe the representation used for metrics,
+        not literal inputs to the fitted ARIMA or state-space model.
+        """
+        return {
+            family: {
+                "supports_exogenous": family == "autoregressive",
+                "uses_future_exogenous": family == "autoregressive",
+                "subset_semantics": "diagnostic_proxy" if family in {"arima", "state_space"} else "lag_inputs",
+                "forecast_strategy": "native" if family in {"arima", "state_space"} else "recursive",
+            }
+            for family in cls._VALID_MODELS
+        }
+
+    def _candidate_result(self, candidate: str | None):
+        check_is_fitted(self)
+        if candidate is None:
+            return self.best_result_
+        for result in self.candidate_results_:
+            if result.name == candidate:
+                return result
+        raise ValueError(f"Unknown time-series candidate {candidate!r}.")
+
+    def fitted_values(self, candidate: str | None = None) -> np.ndarray:
+        """Return aligned training predictions, with NaN before the lag window.
+
+        Choosing a candidate does not change the minimum-nescience model.
+        The returned array is independent of the stored fitted artifacts.
+        """
+        result = self._candidate_result(candidate)
+        values = np.full(len(self.y_), np.nan, dtype=float)
+        values[self.window_size_:] = result.artifacts.predictions
+        return values
+
+    def forecast(self, steps: int = 1, *, X_future=None, candidate: str | None = None) -> np.ndarray:
+        """Forecast with a named candidate, or the best model when omitted.
+
+        Candidate selection does not mutate the minimum-nescience model.
+        """
         check_is_fitted(self)
         if isinstance(steps, (bool, np.bool_)) or not isinstance(steps, (int, np.integer)) or steps < 1:
             raise ValueError("steps must be a positive integer.")
 
-        if self.best_result_.family in {"arima", "state_space"}:
-            return self.model_.forecast(steps=steps, X_future=X_future)
+        result = self._candidate_result(candidate)
+        if self.family_capabilities()[result.family]["forecast_strategy"] == "native":
+            return result.model.forecast(steps=steps, X_future=X_future)
 
         y_history = list(np.asarray(self.y_, dtype=float))
         X_history, X_future_array = self._prepare_future_exogenous(steps, X_future)
-        selected = np.flatnonzero(self.subset_)
+        selected = list(result.artifacts.subset)
         forecasts: list[float] = []
 
         for step in range(steps):
@@ -229,7 +270,7 @@ class TimeSeries(BaseEstimator):
                 X_history=None if X_history is None else np.asarray(X_history, dtype=float),
                 window_size=self.window_size_,
             )
-            forecast_value = float(self.model_.predict(row[:, selected])[0])
+            forecast_value = float(result.model.predict(row[:, selected])[0])
             forecasts.append(forecast_value)
             y_history.append(forecast_value)
 
@@ -404,6 +445,21 @@ class TimeSeries(BaseEstimator):
 
         for searcher in self.searchers_:
             report = searcher.search(context)
+            for result in report.results:
+                capabilities = self.family_capabilities()[result.family]
+                result.metadata["subset_semantics"] = capabilities["subset_semantics"]
+                if capabilities["forecast_strategy"] == "native":
+                    optimizer = result.model.result_.mle_retvals
+                    converged = optimizer.get("converged")
+                    iterations = optimizer.get("iterations")
+                    result.metadata["converged"] = None if converged is None else bool(converged)
+                    result.metadata["optimizer_iterations"] = None if iterations is None else int(iterations)
+                    if converged is not None and not converged:
+                        self.diagnostics_.append({
+                            "candidate": result.name, "family": result.family,
+                            "reason": "not_converged", "converged": False,
+                            "optimizer_iterations": result.metadata["optimizer_iterations"],
+                        })
             self.results_.extend(report.results)
             self.diagnostics_.extend(report.diagnostics)
 

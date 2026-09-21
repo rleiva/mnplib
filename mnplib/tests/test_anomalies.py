@@ -9,6 +9,7 @@ from sklearn.tree import DecisionTreeClassifier
 
 from mnplib import AnomalyDetector
 from mnplib.anomalies import results_dataframe
+from mnplib.utils import _resolve_bins
 
 
 @pytest.fixture
@@ -72,6 +73,7 @@ def test_discretization_and_consolidated_explanation(data, bins):
     X, y = data
     predictions = np.roll(y, 1)
     metric = AnomalyDetector(task="regression", n_bins=bins).fit(X, y, predictions=predictions)
+    assert metric.n_bins_ == _resolve_bins(bins, len(y))
     report = metric.analysis()
     assert report["n_anomalies"] == len(metric.anomalies())
     assert "compressibility" in report
@@ -114,12 +116,37 @@ def test_fitted_state_is_required(method):
 
 
 @pytest.mark.parametrize("options", [{"task": "other"}, {"X_type": "other"},
-                                      {"n_bins": 0}, {"n_bins": 1.5}, {"n_bins": True},
+                                      {"n_bins": 0}, {"n_bins": 1},
+                                      {"n_bins": 1.5}, {"n_bins": True},
                                       {"n_bins": "other"}])
 def test_invalid_configuration_is_rejected(data, options):
     X, y = data
     with pytest.raises(ValueError):
         AnomalyDetector(**options).fit(X, y, predictions=y)
+
+
+@pytest.mark.parametrize("task", ["classification", "regression"])
+@pytest.mark.parametrize("bins", [1, np.bool_(False), 2.5, "invalid"])
+def test_bin_validation_runs_before_anomaly_prediction(data, task, bins, monkeypatch):
+    def unexpected_predictions(*args, **kwargs):
+        raise AssertionError("Bin settings must be resolved before predicting.")
+
+    metric = AnomalyDetector(task=task).set_params(n_bins=bins)
+    monkeypatch.setattr(metric, "_resolve_predictions", unexpected_predictions)
+    with pytest.raises(ValueError, match="n_bins must be an integer"):
+        metric.fit(*data)
+
+
+def test_constant_regression_target_uses_one_observed_bin(data):
+    X, y = data
+    y = np.ones_like(y)
+    predictions = y.copy()
+    predictions[:2] = [0, 2]
+    metric = AnomalyDetector(task="regression", n_bins=3).fit(X, y, predictions=predictions)
+    assert metric.n_bins_ == 1
+    assert metric.anomalies().tolist() == [0, 1]
+    np.testing.assert_array_equal(metric.y_true_bin_, np.zeros(len(y)))
+    np.testing.assert_array_equal(metric.y_pred_bin_[:2], [-1, 1])
 
 
 def test_prediction_input_validation(data):

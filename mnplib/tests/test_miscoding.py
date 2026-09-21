@@ -32,15 +32,18 @@ from sklearn.exceptions import NotFittedError
 import mnplib.miscoding as miscoding_module
 from mnplib.miscoding import (
     Miscoding,
-    _adaptive_n_bins,
-    _auto_n_bins,
     feature_analysis,
     redundancy_matrix,
     miscoding_subset,
     rank_features,
     select_features,
 )
-from mnplib.utils import empirical_distribution
+from mnplib.utils import (
+    _adaptive_n_bins,
+    _auto_n_bins,
+    empirical_distribution_array,
+    empirical_distribution_vector,
+)
 
 
 RELIABILITY_FIELDS = {
@@ -140,8 +143,6 @@ def test_constructor_defaults():
     [
         ({"X_type": "invalid"}, "X_type"),
         ({"y_type": "invalid"}, "y_type"),
-        ({"n_bins": "invalid"}, "n_bins"),
-        ({"n_bins": 1}, "n_bins"),
     ],
 )
 def test_constructor_rejects_invalid_configuration(kwargs, message):
@@ -458,17 +459,17 @@ def test_empirical_subset_formulas_match_manual_code_lengths():
     ).fit(X, y)
     details = metric.subset_analysis([0, 2])
 
-    k_xy = empirical_distribution(
-        [X[:, 0], X[:, 2], y],
-        [False, False, False],
+    k_xy = empirical_distribution_array(
+        np.column_stack([X[:, 0], X[:, 2], y]),
+        numeric=False,
         n_bins=2,
     ).code_length
-    k_x = empirical_distribution(
-        [X[:, 0], X[:, 2]],
-        [False, False],
+    k_x = empirical_distribution_array(
+        X[:, [0, 2]],
+        numeric=False,
         n_bins=2,
     ).code_length
-    k_y = empirical_distribution([y], [False], n_bins=2).code_length
+    k_y = empirical_distribution_vector(y, numeric=False, n_bins=2).code_length
 
     deficiency = (k_xy - k_x) / k_y
     surplus = (k_xy - k_y) / k_x
@@ -574,21 +575,21 @@ def test_empirical_subset_counts_duplicate_information_once():
 
 
 def test_adaptive_subset_uses_consistent_bins_for_numerical_target(monkeypatch):
-    x0 = np.tile([0.0, 1.0], 12)
-    x1 = np.tile([0.0, 0.0, 1.0, 1.0], 6)
-    x2 = np.tile([0.0, 1.0, 1.0, 0.0], 6)
+    x0 = np.tile([0.0, 1.0], 50)
+    x1 = np.tile([0.0, 0.0, 1.0, 1.0], 25)
+    x2 = np.tile([0.0, 1.0, 1.0, 0.0], 25)
     X = np.column_stack([x0, x1, x2])
     y = X[:, 0] + X[:, 1]
     calls = []
-    original = miscoding_module.empirical_distribution
+    original = miscoding_module.empirical_distribution_array
 
-    def spy_distribution(columns, numeric, n_bins="auto"):
-        calls.append((len(columns), tuple(numeric), n_bins))
-        return original(columns=columns, numeric=numeric, n_bins=n_bins)
+    def spy_distribution(X, *, numeric, n_bins):
+        calls.append((X.shape[1], tuple(numeric), n_bins))
+        return original(X, numeric=numeric, n_bins=n_bins)
 
     monkeypatch.setattr(
         miscoding_module,
-        "empirical_distribution",
+        "empirical_distribution_array",
         spy_distribution,
     )
 
@@ -597,12 +598,15 @@ def test_adaptive_subset_uses_consistent_bins_for_numerical_target(monkeypatch):
         y_type="numeric",
         n_bins="adaptive",
     ).fit(X, y)
+    assert all(isinstance(call[2], int) for call in calls)
     metric._code_length_cache_.clear()
+    metric._empirical_summary_cache_.clear()
     calls.clear()
 
     metric.subset_analysis([0, 1, 2])
 
     expected_bins = _adaptive_n_bins(X.shape[0], 3)
+    assert expected_bins != _adaptive_n_bins(X.shape[0], 4)
     assert calls == [
         (4, (True, True, True, True), expected_bins),
         (3, (True, True, True), expected_bins),
@@ -611,21 +615,21 @@ def test_adaptive_subset_uses_consistent_bins_for_numerical_target(monkeypatch):
 
 
 def test_adaptive_subset_keeps_categorical_target_encoding(monkeypatch):
-    x0 = np.tile([0.0, 1.0], 12)
-    x1 = np.tile([0.0, 0.0, 1.0, 1.0], 6)
-    x2 = np.tile([0.0, 1.0, 1.0, 0.0], 6)
+    x0 = np.tile([0.0, 1.0], 50)
+    x1 = np.tile([0.0, 0.0, 1.0, 1.0], 25)
+    x2 = np.tile([0.0, 1.0, 1.0, 0.0], 25)
     X = np.column_stack([x0, x1, x2])
-    y = np.array(["low", "high"] * 12)
+    y = np.array(["low", "high"] * 50)
     calls = []
-    original = miscoding_module.empirical_distribution
+    original = miscoding_module.empirical_distribution_array
 
-    def spy_distribution(columns, numeric, n_bins="auto"):
-        calls.append((len(columns), tuple(numeric), n_bins))
-        return original(columns=columns, numeric=numeric, n_bins=n_bins)
+    def spy_distribution(X, *, numeric, n_bins):
+        calls.append((X.shape[1], tuple(numeric), n_bins))
+        return original(X, numeric=numeric, n_bins=n_bins)
 
     monkeypatch.setattr(
         miscoding_module,
-        "empirical_distribution",
+        "empirical_distribution_array",
         spy_distribution,
     )
 
@@ -634,12 +638,15 @@ def test_adaptive_subset_keeps_categorical_target_encoding(monkeypatch):
         y_type="categorical",
         n_bins="adaptive",
     ).fit(X, y)
+    assert all(isinstance(call[2], int) for call in calls)
     metric._code_length_cache_.clear()
+    metric._empirical_summary_cache_.clear()
     calls.clear()
 
     metric.subset_analysis([0, 2])
 
     expected_bins = _adaptive_n_bins(X.shape[0], 2)
+    assert expected_bins != _adaptive_n_bins(X.shape[0], 3)
     assert calls == [
         (3, (True, True, False), expected_bins),
         (2, (True, True), expected_bins),

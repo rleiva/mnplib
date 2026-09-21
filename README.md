@@ -257,6 +257,37 @@ The current priority is to stabilize:
 * automated classification and regression workflows;
 * examples and documentation.
 
+### Candidate-specific time-series forecasts
+
+```python
+from mnplib.timeseries import TimeSeries
+
+capabilities = TimeSeries.family_capabilities()
+search = TimeSeries(models=list(capabilities), n_bins="adaptive").fit(y)
+candidate = search.results_dataframe().iloc[-1]["candidate"]
+future = search.forecast(steps=12, candidate=candidate)
+fitted = search.fitted_values(candidate=candidate)
+```
+
+Omitting `candidate` uses the minimum-nescience model. Named-candidate calls do
+not change `best_result_`, `model_`, or the selected metrics. `fitted_values()`
+returns an independent array aligned with the original series, with NaN in the
+initial lag-window positions. These values are in-sample predictions, not
+held-out forecast performance.
+
+`family_capabilities()` returns fresh records keyed by supported family ID,
+including external-input support, use of future external inputs, forecast
+strategy, and subset semantics. For autoregressive forecasting, omitted future
+external values retain the existing last-observation behavior. ARIMA and
+state-space subsets are `diagnostic_proxy` representations for metric evaluation,
+not literal lag inputs; other families report `lag_inputs`.
+
+Candidate-report `metadata` contains `subset_semantics`. Statsmodels-backed
+candidates additionally expose `converged` and `optimizer_iterations` (null if
+unavailable). `diagnostics_` includes `not_converged` records. Nonconvergence does
+not change candidate ranking; applications can surface it separately from
+representation reliability. Qualitative interpretations belong to the caller.
+
 ### License
 
 See the repository license file for licensing details.
