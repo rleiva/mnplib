@@ -599,6 +599,7 @@ def test_adaptive_subset_uses_consistent_bins_for_numerical_target(monkeypatch):
         n_bins="adaptive",
     ).fit(X, y)
     assert all(isinstance(call[2], int) for call in calls)
+    metric._redundancy_weights([0, 1, 2])
     metric._code_length_cache_.clear()
     metric._empirical_summary_cache_.clear()
     calls.clear()
@@ -639,6 +640,7 @@ def test_adaptive_subset_keeps_categorical_target_encoding(monkeypatch):
         n_bins="adaptive",
     ).fit(X, y)
     assert all(isinstance(call[2], int) for call in calls)
+    metric._redundancy_weights([0, 2])
     metric._code_length_cache_.clear()
     metric._empirical_summary_cache_.clear()
     calls.clear()

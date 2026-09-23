@@ -65,6 +65,14 @@ class Miscoding(BaseEstimator):
     ``select_features()`` greedily selects a strict subset by requiring subset
     miscoding improvement. ``rank_features()`` greedily orders features for
     model construction while reliable candidate extensions remain.
+
+    Feature-level diagnostics are computed during ``fit()``. Pairwise
+    redundancies are computed and cached on demand. ``redundancy_matrix()``
+    and ``redundancy_`` request all pairs. Detailed selection and ranking
+    reports also include the full redundancy matrix.
+
+    Fitted data and discretization settings are snapshots. Input changes and
+    parameter changes take effect only after fitting again.
     """
 
     _VALID_X_TYPES = get_args(XType)
@@ -108,8 +116,11 @@ class Miscoding(BaseEstimator):
 
     def fit(self, X, y):
         """
-        Estimate feature-level code lengths, feature miscoding values, and
-        pairwise feature redundancies.
+        Store evaluation data and compute feature-level diagnostics.
+
+        Reset diagnostic caches and defer pairwise redundancy computations
+        until requested. Input arrays are copied to isolate fitted results
+        from changes to the supplied data.
 
         Parameters
         ----------
@@ -125,17 +136,22 @@ class Miscoding(BaseEstimator):
         self : Miscoding
             Fitted estimator.
         """
+        self.is_fitted_ = False
+        self._code_length_cache_ = {}
+        self._empirical_summary_cache_ = {}
+        self._pair_redundancy_cache_ = {}
+        self._redundancy_matrix_ = None
+        self._validate_init(X_type=self.X_type, y_type=self.y_type)
         if y is None:
             raise ValueError("Miscoding.fit requires a target vector y.")
 
         self.X_, self.y_ = self._validate_X_y(X, y)
-        self._model_X_ = X
+        self._model_X_ = X.copy(deep=True) if isinstance(X, pd.DataFrame) else self.X_
         self.n_samples_in_, self.n_features_in_ = self.X_.shape
         self.X_isnumeric_ = self._infer_X_isnumeric(X, self.X_)
         self.y_isnumeric_ = self._infer_y_isnumeric(self.y_)
 
-        self._code_length_cache_ = {}
-        self._empirical_summary_cache_ = {}
+        self._fitted_n_bins_ = self.n_bins
         self.target_code_length_ = self._code_length_for_indices(y_included=True)
 
         self.feature_code_lengths_ = np.array(
@@ -183,10 +199,13 @@ class Miscoding(BaseEstimator):
         )
 
         self.miscoding_ = np.maximum(self.deficiency_, self.surplus_)
-        self.redundancy_ = self._feature_redundancy_matrix()
 
         self.is_fitted_ = True
         return self
+
+    def __sklearn_is_fitted__(self) -> bool:
+        """Report whether fitting completed successfully."""
+        return getattr(self, "is_fitted_", False)
 
     #
     # Public feature-level diagnostics
@@ -258,9 +277,20 @@ class Miscoding(BaseEstimator):
             raise ValueError("feature is outside the fitted feature dimension.")
         return float(values[feature])
 
+    @property
+    def redundancy_(self) -> np.ndarray:
+        """Compute the full redundancy matrix on first access and return a copy."""
+        check_is_fitted(self)
+        if self._redundancy_matrix_ is None:
+            self._redundancy_matrix_ = self._feature_redundancy_matrix()
+        return self._redundancy_matrix_.copy()
+
     def redundancy_matrix(self) -> pd.DataFrame:
         """
         Return the pairwise redundancy matrix between features.
+
+        Compute any missing pairs and cache the complete matrix. Each call
+        returns an independent DataFrame.
 
         Returns
         -------
@@ -272,9 +302,9 @@ class Miscoding(BaseEstimator):
         """
         check_is_fitted(self)
         return pd.DataFrame(
-            self.redundancy_.copy(),
-            index=self.feature_names_in_,
-            columns=self.feature_names_in_,
+            self.redundancy_,
+            index   = self.feature_names_in_,
+            columns = self.feature_names_in_,
         )
 
     def feature_analysis(self) -> pd.DataFrame:
@@ -291,21 +321,20 @@ class Miscoding(BaseEstimator):
         """
         check_is_fitted(self)
 
-        table = pd.DataFrame(
-            {
-                "feature_index": np.arange(self.n_features_in_),
-                "feature_name": self.feature_names_in_,
-                "is_numeric": self.X_isnumeric_,
-                "code_length_bits": self.feature_code_lengths_,
-                "deficiency": self.deficiency_,
-                "surplus": self.surplus_,
-                "miscoding": self.miscoding_,
-            }
-        )
+        table = pd.DataFrame({
+            "feature_index"    : np.arange(self.n_features_in_),
+            "feature_name"     : self.feature_names_in_,
+            "is_numeric"       : self.X_isnumeric_,
+            "code_length_bits" : self.feature_code_lengths_,
+            "deficiency"       : self.deficiency_,
+            "surplus"          : self.surplus_,
+            "miscoding"        : self.miscoding_,
+        })
+
         return table.sort_values(
-            by=["miscoding", "deficiency", "surplus"],
-            ascending=[True, True, True],
-            ignore_index=True,
+            by           = ["miscoding", "deficiency", "surplus"],
+            ascending    = [True, True, True],
+            ignore_index = True,
         )
 
     #
@@ -602,8 +631,8 @@ class Miscoding(BaseEstimator):
         self.feature_names_in_ = np.asarray(
             getattr(X, "columns", [f"x{i}" for i in range(X_arr.shape[1])]),
             dtype=object,
-        )
-        return X_arr, y_arr
+        ).copy()
+        return X_arr.copy(), y_arr.copy()
 
     def _infer_X_isnumeric(self, X_original, X_array: np.ndarray) -> list[bool]:
         """
@@ -823,19 +852,20 @@ class Miscoding(BaseEstimator):
     # Redundancy and empirical subset diagnostics
     #
 
-    def _feature_redundancy_matrix(self) -> np.ndarray:
+    def _feature_redundancy_matrix(self, selected=None) -> np.ndarray:
         """
-        Estimate pairwise redundancy between features.
+        Assemble pairwise redundancy for selected features, or all features.
 
         Redundancy is defined as ``1 - mu(X_i, X_j)``, where ``mu`` is the
         symmetric normalized code-length distance between the two feature
         strings. The diagonal is set to one.
         """
-        redundancy = np.eye(self.n_features_in_, dtype=float)
+        indices = list(range(self.n_features_in_)) if selected is None else list(selected)
+        redundancy = np.eye(len(indices), dtype=float)
 
-        for i in range(self.n_features_in_):
-            for j in range(i + 1, self.n_features_in_):
-                value = self._feature_pair_redundancy(i, j)
+        for i in range(len(indices)):
+            for j in range(i + 1, len(indices)):
+                value = self._feature_pair_redundancy(indices[i], indices[j])
                 redundancy[i, j] = value
                 redundancy[j, i] = value
 
@@ -843,8 +873,14 @@ class Miscoding(BaseEstimator):
 
     def _feature_pair_redundancy(self, i: int, j: int) -> float:
         """
-        Estimate the redundancy between two features.
+        Compute and cache the symmetric redundancy between two features.
         """
+        if i == j:
+            return 1.0
+        key = (min(i, j), max(i, j))
+        if key in self._pair_redundancy_cache_:
+            return self._pair_redundancy_cache_[key]
+
         n_bins = self._resolve_n_bins_for_subset(2)
         k_i = float(self._code_length_for_indices(features=[i], n_bins=n_bins))
         k_j = float(self._code_length_for_indices(features=[j], n_bins=n_bins))
@@ -852,10 +888,12 @@ class Miscoding(BaseEstimator):
 
         denominator = max(k_i, k_j)
         if denominator <= 0.0:
-            return 1.0
-
-        miscoding = (k_ij - min(k_i, k_j)) / denominator
-        return float(np.clip(1.0 - miscoding, 0.0, 1.0))
+            value = 1.0
+        else:
+            miscoding = (k_ij - min(k_i, k_j)) / denominator
+            value = float(np.clip(1.0 - miscoding, 0.0, 1.0))
+        self._pair_redundancy_cache_[key] = value
+        return value
 
     def _redundancy_weights(self, selected: list[int]) -> np.ndarray:
         """
@@ -864,7 +902,11 @@ class Miscoding(BaseEstimator):
         if len(selected) == 0:
             return np.array([], dtype=float)
 
-        matrix = self.redundancy_[np.ix_(selected, selected)]
+        matrix = (
+            self._feature_redundancy_matrix(selected)
+            if self._redundancy_matrix_ is None
+            else self._redundancy_matrix_[np.ix_(selected, selected)]
+        )
         off_diagonal_sum = np.sum(matrix, axis=1) - np.diag(matrix)
         return 1.0 / (1.0 + off_diagonal_sum)
     
@@ -1179,7 +1221,7 @@ class Miscoding(BaseEstimator):
         Resolve the numeric bin count for a feature subset size.
         """
         return _resolve_bins(
-            self.n_bins, self.n_samples_in_, subset_size=subset_size
+            self._fitted_n_bins_, self.n_samples_in_, subset_size=subset_size
         )
 
     #
