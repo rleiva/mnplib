@@ -15,9 +15,8 @@ layer and then delegate to the same string-based computation.
 
 from __future__ import annotations
 
-from typing import Literal
-
 import zlib
+from typing import get_args
 
 import numpy as np
 
@@ -26,12 +25,10 @@ from sklearn.utils import check_X_y
 from sklearn.utils.multiclass import type_of_target
 from sklearn.utils.validation import check_is_fitted
 
+from ._types import BinSpec, YType
 from .models.inputs import model_artifacts
-from .utils import empirical_distribution_vector
-from ._validation import validate_vector
+from .utils import _validate_vector, empirical_distribution_vector
 
-YType = Literal["auto", "numeric", "categorical"]
-BinSpec = int | Literal["auto", "adaptive"]
 
 class Surfeit(BaseEstimator):
     """
@@ -67,7 +64,7 @@ class Surfeit(BaseEstimator):
         compressed length.
     """
 
-    _VALID_Y_TYPES = ("auto", "numeric", "categorical")
+    _VALID_Y_TYPES = get_args(YType)
 
     def __init__(
         self,
@@ -110,7 +107,7 @@ class Surfeit(BaseEstimator):
             Fitted estimator.
         """
         feature_names = self._feature_names_from_input(X)
-        y = validate_vector(y, name="y")
+        y = _validate_vector(y, name="y")
         self.X_, self.y_ = check_X_y(X, y, dtype=None, ensure_2d=True)
         self._fit_target(self.y_)
         self.n_features_in_ = self.X_.shape[1]
@@ -340,7 +337,7 @@ class Surfeit(BaseEstimator):
 
     def _fit_target(self, y) -> None:
         """Fit target-dependent attributes."""
-        self.y_ = validate_vector(y, name="y")
+        self.y_ = _validate_vector(y, name="y")
         self.y_isnumeric_ = self._infer_y_isnumeric(self.y_)
         self.len_y_ = self._target_code_length()
         self.n_samples_in_ = self.y_.shape[0]

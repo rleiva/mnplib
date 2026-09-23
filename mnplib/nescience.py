@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
-from typing import Literal
+from typing import get_args
 
 import numpy as np
 
@@ -41,27 +41,14 @@ from sklearn.base import BaseEstimator
 from sklearn.utils import check_X_y
 from sklearn.utils.validation import check_is_fitted
 
+from ._types import Aggregation, BinSpec, XType, YType
 from .miscoding import Miscoding
 from .inaccuracy import Inaccuracy
 from .surfeit import Surfeit
 from .mismodel import mismodel
 from .models.inputs import model_artifacts
 from ._diagnostics import warn_nan_model
-from ._validation import validate_vector
-
-
-XType = Literal["auto", "numeric", "categorical"]
-YType = Literal["auto", "numeric", "categorical"]
-BinSpec = int | Literal["auto", "adaptive"]
-Aggregation = Literal[
-    "euclidean",
-    "arithmetic",
-    "geometric",
-    "harmonic",
-    "maximum",
-    "addition",
-    "product",
-]
+from .utils import _validate_vector
 
 
 class Nescience(BaseEstimator):
@@ -114,17 +101,9 @@ class Nescience(BaseEstimator):
 
     component_names_ = ("deficiency", "surplus", "inaccuracy", "surfeit")
 
-    _VALID_X_TYPES = ("auto", "numeric", "categorical")
-    _VALID_Y_TYPES = ("auto", "numeric", "categorical")
-    _VALID_AGGREGATIONS = (
-        "euclidean",
-        "arithmetic",
-        "geometric",
-        "harmonic",
-        "maximum",
-        "addition",
-        "product",
-    )
+    _VALID_X_TYPES = get_args(XType)
+    _VALID_Y_TYPES = get_args(YType)
+    _VALID_AGGREGATIONS = get_args(Aggregation)
 
     def __init__(
         self,
@@ -171,7 +150,7 @@ class Nescience(BaseEstimator):
         self : Nescience
             Fitted estimator.
         """
-        y = validate_vector(y, name="y")
+        y = _validate_vector(y, name="y")
         X_checked, y_checked = check_X_y(X, y, dtype=None, ensure_2d=True)
 
         self.X_ = X_checked

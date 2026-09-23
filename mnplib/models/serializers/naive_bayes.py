@@ -13,9 +13,9 @@ import numpy as np
 
 from sklearn.naive_bayes import GaussianNB
 
+from ..._types import ResolvedTask
 from .base import (
     SklearnSerializer,
-    Task,
     format_number,
     require_fitted
 )
@@ -41,7 +41,7 @@ class NaiveBayesSerializer(SklearnSerializer):
     name            = "naive_bayes"
     supported_types = (GaussianNB,)
 
-    def task(self, model) -> Task:
+    def task(self, model) -> ResolvedTask:
         """
         Return the task type of the supported Naive Bayes estimator.
         """

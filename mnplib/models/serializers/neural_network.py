@@ -22,9 +22,9 @@ import numpy as np
 
 from sklearn.neural_network import MLPClassifier, MLPRegressor
 
+from ..._types import ResolvedTask
 from .base import (
     SklearnSerializer,
-    Task,
     format_number,
     nonzero_mask,
     require_fitted,
@@ -43,7 +43,7 @@ class MLPSerializer(SklearnSerializer):
     name = "mlp_neural_network"
     supported_types = (MLPClassifier, MLPRegressor)
 
-    def task(self, model) -> Task:
+    def task(self, model) -> ResolvedTask:
         """
         Return the task type of the fitted MLP estimator.
         """

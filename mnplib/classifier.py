@@ -10,7 +10,6 @@ by this core estimator.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Literal
 
 import numpy as np
 import pandas as pd
@@ -20,6 +19,7 @@ from sklearn.tree import DecisionTreeClassifier
 from sklearn.utils import check_X_y, check_array
 from sklearn.utils.validation import check_is_fitted
 
+from ._types import Aggregation, BinSpec, XType
 from .automl import CandidateEvaluator, CandidateResult
 from .automl.descriptions import describe_candidate_model
 from .automl.configuration import validated_search_options
@@ -34,18 +34,6 @@ from .automl.searchers import (
     SearchContext,
 )
 from .nescience import Nescience
-
-XType = Literal["auto", "numeric", "categorical"]
-BinSpec = int | Literal["auto", "adaptive"]
-Aggregation = Literal[
-    "euclidean",
-    "arithmetic",
-    "geometric",
-    "harmonic",
-    "maximum",
-    "addition",
-    "product",
-]
 
 SUPPORTED_MODELS = (
     "decision_tree",

@@ -39,7 +39,6 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Literal
 
 import numpy as np
 import pandas as pd
@@ -49,8 +48,8 @@ from sklearn.utils.validation import (
     column_or_1d,
 )
 
+from ._types import BinSpec
 
-BinSpec = int | Literal["auto", "adaptive"]
 
 __all__ = [
     "EmpiricalSummary",
@@ -92,6 +91,16 @@ class EmpiricalSummary:
 #
 # Validation and encoding
 #
+
+def _validate_vector(values, *, name):
+    """Require a non-empty one-dimensional vector without reshaping it."""
+    array = np.asarray(values)
+    if array.ndim != 1:
+        raise ValueError(f"{name} must be a one-dimensional array.")
+    if array.size == 0:
+        raise ValueError(f"{name} must not be empty.")
+    return array
+
 
 def _as_1d_array(x, name: str) -> np.ndarray:
     """

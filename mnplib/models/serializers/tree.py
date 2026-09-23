@@ -8,9 +8,9 @@ import numpy as np
 
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 
+from ..._types import ResolvedTask
 from .base import (
     SklearnSerializer,
-    Task,
     class_token,
     format_number,
     require_fitted,
@@ -24,7 +24,7 @@ class DecisionTreeSerializer(SklearnSerializer):
     name = "decision_tree"
     supported_types = (DecisionTreeClassifier, DecisionTreeRegressor)
 
-    def task(self, model) -> Task:
+    def task(self, model) -> ResolvedTask:
         """
         Return the task type of the decision tree.
         """
@@ -68,7 +68,7 @@ class DecisionTreeSerializer(SklearnSerializer):
         return "\n".join(lines) + "\n"
 
     def _tree_rule_lines(self, model, *, node_id: int, depth: int,
-                         feature_names: list[str], task: Task) -> list[str]:
+                         feature_names: list[str], task: ResolvedTask) -> list[str]:
         """
         Recursively serialize one decision-tree node using indentation.
 
@@ -120,7 +120,7 @@ class DecisionTreeSerializer(SklearnSerializer):
 
         return lines
 
-    def _leaf_value(self, model, node_id: int, task: Task) -> str:
+    def _leaf_value(self, model, node_id: int, task: ResolvedTask) -> str:
         """
         Return the canonical prediction at a decision-tree leaf.
         """

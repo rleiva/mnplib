@@ -11,7 +11,7 @@ representation, using empirical code lengths as practical approximations.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import get_args
 
 import numpy as np
 
@@ -21,17 +21,14 @@ from sklearn.utils import check_X_y
 from sklearn.utils.multiclass import type_of_target
 from sklearn.utils.validation import check_is_fitted
 
+from ._types import BinSpec, YType
 from .utils import (
     _resolve_bins,
+    _validate_vector,
     empirical_distribution_array,
     empirical_distribution_vector,
 )
 from .models.inputs import model_input
-from ._validation import validate_vector
-
-
-YType = Literal["auto", "numeric", "categorical"]
-BinSpec = int | Literal["auto", "adaptive"]
 
 
 class Inaccuracy(BaseEstimator):
@@ -60,7 +57,7 @@ class Inaccuracy(BaseEstimator):
         Integer counts must be at least two; bin settings are validated during fit.
     """
 
-    _VALID_Y_TYPES = ("auto", "numeric", "categorical")
+    _VALID_Y_TYPES = get_args(YType)
 
     def __init__(
         self,
@@ -95,7 +92,7 @@ class Inaccuracy(BaseEstimator):
         * self : Inaccuracy
               Fitted estimator.
         """
-        y = validate_vector(y, name="y")
+        y = _validate_vector(y, name="y")
         self.X_, self.y_ = check_X_y(X, y, dtype=None, ensure_2d=True)
         self._model_X_ = X
         self.feature_names_in_ = np.asarray(
@@ -230,7 +227,7 @@ class Inaccuracy(BaseEstimator):
 
     def _fit_target(self, y) -> None:
         """Fit target-dependent attributes."""
-        self.y_ = validate_vector(y, name="y")
+        self.y_ = _validate_vector(y, name="y")
         self.y_isnumeric_ = self._infer_y_isnumeric(self.y_)
         self.len_y_ = float(self._empirical_summary(self.y_).code_length)
         self.n_samples_in_ = self.y_.shape[0]
@@ -317,7 +314,7 @@ class Inaccuracy(BaseEstimator):
         """
         Validate predictions against the fitted target vector.
         """
-        pred = validate_vector(predictions, name="predictions")
+        pred = _validate_vector(predictions, name="predictions")
 
         if pred.shape[0] != self.y_.shape[0]:
             raise ValueError(

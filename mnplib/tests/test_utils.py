@@ -8,8 +8,10 @@ import pytest
 from mnplib import utils
 from mnplib.utils import (
     EmpiricalSummary,
+    _as_1d_array,
     _code_length_from_counts,
     _resolve_bins,
+    _validate_vector,
     discretize_vector,
     empirical_distribution_array,
     empirical_distribution_vector,
@@ -38,6 +40,43 @@ def test_utils_public_api():
     assert public_functions == {
         "discretize_vector", "empirical_distribution_vector", "empirical_distribution_array"
     }
+
+
+# ---------------------------------------------------------------------------
+# Vector validation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("values", [
+    [1, 2, 3],
+    ("a", "b", "a"),
+    pd.Series([1.5, 2.5]),
+    np.array([1, 2], dtype=np.int32),
+])
+def test_validate_vector_preserves_values_shape_and_dtype(values):
+    expected = np.asarray(values)
+    result = _validate_vector(values, name="target")
+    np.testing.assert_array_equal(result, expected)
+    assert result.shape == expected.shape
+    assert result.dtype == expected.dtype
+
+
+@pytest.mark.parametrize("name", ["target", "predictions"])
+@pytest.mark.parametrize("values", [1, np.ones((3, 1)), np.ones((1, 3)), np.ones((2, 2, 2))])
+def test_validate_vector_rejects_non_vector_inputs(values, name):
+    with pytest.raises(ValueError, match=f"^{name} must be a one-dimensional array\\.$"):
+        _validate_vector(values, name=name)
+
+
+@pytest.mark.parametrize("values", [[], np.empty(0)])
+def test_validate_vector_rejects_empty_vectors(values):
+    with pytest.raises(ValueError, match=r"^target must not be empty\.$"):
+        _validate_vector(values, name="target")
+
+
+def test_as_1d_array_flattens_single_column_inputs():
+    values = np.array([[1], [2], [3]])
+    np.testing.assert_array_equal(_as_1d_array(values, name="x"), [1, 2, 3])
 
 
 # ---------------------------------------------------------------------------

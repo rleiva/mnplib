@@ -5,15 +5,13 @@ Base classes and formatting helpers for canonical scikit-learn serializers.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Literal
 
 import numpy as np
 
 from sklearn.utils.validation import check_is_fitted
 
+from ..._types import ResolvedTask
 from ..artifacts import ModelArtifacts
-
-Task = Literal["classification", "regression"]
 
 # Fixed canonical model-string policy used by all sklearn serializers.
 indent                 : str   = " "
@@ -71,7 +69,7 @@ class SklearnSerializer(ABC):
         )
 
     @abstractmethod
-    def task(self, model) -> Task:
+    def task(self, model) -> ResolvedTask:
         """
         Return the model task: ``"classification"`` or ``"regression"``.
         """

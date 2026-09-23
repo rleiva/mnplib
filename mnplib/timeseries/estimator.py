@@ -13,7 +13,7 @@ a metric object to inspect a fitted model.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Literal
+from typing import Literal, get_args
 
 import numpy as np
 import pandas as pd
@@ -28,11 +28,12 @@ from mnplib.automl.descriptions import describe_candidate_model
 from mnplib.automl.configuration import validated_search_options
 from mnplib.automl.results import candidate_results_dataframe
 
+from .._types import Aggregation, BinSpec, XType
 from ..inaccuracy import Inaccuracy
 from ..miscoding import Miscoding
 from ..nescience import Nescience
 from ..surfeit import Surfeit
-from .lagged import LaggedRepresentationBuilder
+from .lagged import LaggedRepresentationBuilder, WindowSize
 from .searchers import (
     ARIMASearcher,
     AutoregressiveSearcher,
@@ -46,17 +47,6 @@ from .selection import (
 )
 
 
-XType = Literal["auto", "numeric", "categorical"]
-BinSpec = int | Literal["auto", "adaptive"]
-Aggregation = Literal[
-    "euclidean",
-    "arithmetic",
-    "geometric",
-    "harmonic",
-    "maximum",
-    "addition",
-    "product",
-]
 ModelName = Literal[
     "autoregressive",
     "moving_average",
@@ -110,14 +100,8 @@ class TimeSeries(BaseEstimator):
         ``forecast()``; ``score()`` evaluates subsequent observed values.
     """
 
-    _VALID_X_TYPES = ("auto", "numeric", "categorical")
-    _VALID_MODELS = (
-        "autoregressive",
-        "moving_average",
-        "exponential_smoothing",
-        "arima",
-        "state_space",
-    )
+    _VALID_X_TYPES = get_args(XType)
+    _VALID_MODELS = get_args(ModelName)
     _VALID_STATE_SPACE_MODELS = ("local_level", "local_linear_trend")
     _DEFAULT_ARIMA_ORDERS = ((1, 0, 0), (2, 0, 0), (1, 1, 0), (0, 1, 1))
 
@@ -125,7 +109,7 @@ class TimeSeries(BaseEstimator):
         self,
         *,
         X_type: XType = "numeric",
-        window_size: int | Literal["auto"] = "auto",
+        window_size: WindowSize = "auto",
         models: Sequence[ModelName] | None = None,
         search_options: Mapping[str, Mapping[str, object]] | None = None,
         aggregation: Aggregation = "euclidean",

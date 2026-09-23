@@ -8,9 +8,9 @@ import numpy as np
 
 from sklearn.linear_model import LinearRegression, LogisticRegression
 
+from ..._types import ResolvedTask
 from .base import (
     SklearnSerializer,
-    Task,
     format_number,
     nonzero_mask,
     require_fitted,
@@ -25,7 +25,7 @@ class LinearModelSerializer(SklearnSerializer):
     name = "linear_model"
     supported_types = (LinearRegression,)
 
-    def task(self, model) -> Task:
+    def task(self, model) -> ResolvedTask:
         """
         Return the task type of the linear model.
         """
@@ -72,7 +72,7 @@ class LogisticRegressionSerializer(SklearnSerializer):
     name            = "logistic_regression"
     supported_types = (LogisticRegression,)
 
-    def task(self, model) -> Task:
+    def task(self, model) -> ResolvedTask:
         """
         Return the task type of logistic regression.
         """

@@ -5,14 +5,14 @@ Base interfaces for model-family searchers.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
 import numpy as np
 
+from mnplib._types import ResolvedTask
 from mnplib.automl.evaluator import CandidateEvaluator
 from mnplib.automl.results   import SearchReport
 
-Task = Literal["classification", "regression"]
 
 @dataclass(frozen=True)
 class SearchContext:
@@ -23,7 +23,7 @@ class SearchContext:
     y             : np.ndarray
     feature_names : list[str]
     evaluator     : CandidateEvaluator
-    task          : Task
+    task          : ResolvedTask
     random_state  : Any = None
     verbose       : int = 0
     feature_ranking_criterion : str = "deficiency"

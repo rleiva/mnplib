@@ -21,9 +21,9 @@ import numpy as np
 
 from sklearn.svm import LinearSVC, LinearSVR
 
+from ..._types import ResolvedTask
 from .base import (
     SklearnSerializer,
-    Task,
     format_number,
     nonzero_mask,
     require_fitted,
@@ -43,7 +43,7 @@ class LinearSVMSerializer(SklearnSerializer):
     name = "linear_svm"
     supported_types = (LinearSVC, LinearSVR)
 
-    def task(self, model) -> Task:
+    def task(self, model) -> ResolvedTask:
         """
         Return the task type of the fitted linear SVM estimator.
         """

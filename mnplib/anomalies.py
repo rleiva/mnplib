@@ -20,7 +20,7 @@ states of anomalous observations are.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 import numpy as np
 import pandas as pd
@@ -30,16 +30,13 @@ from sklearn.utils import check_X_y
 from sklearn.utils.multiclass import type_of_target
 from sklearn.utils.validation import check_is_fitted
 
+from ._types import BinSpec, ResolvedTask, Task, XType
 from .classifier import NescienceClassifier
 from .miscoding import Miscoding
 from .regressor import NescienceRegressor
 from .utils import _resolve_bins
 
 
-Task = Literal["auto", "classification", "regression"]
-ResolvedTask = Literal["classification", "regression"]
-XType = Literal["auto", "numeric", "categorical"]
-BinSpec = int | Literal["auto", "adaptive"]
 AnomalyKind = Literal["all", "misclassified", "under_predicted", "over_predicted"]
 
 
@@ -82,9 +79,9 @@ class AnomalyDetector(BaseEstimator):
     mask.
     """
 
-    _VALID_TASKS = ("auto", "classification", "regression")
-    _VALID_X_TYPES = ("auto", "numeric", "categorical")
-    _VALID_KINDS = ("all", "misclassified", "under_predicted", "over_predicted")
+    _VALID_TASKS = get_args(Task)
+    _VALID_X_TYPES = get_args(XType)
+    _VALID_KINDS = get_args(AnomalyKind)
 
     def __init__(
         self,
@@ -736,7 +733,7 @@ class AnomalyDetector(BaseEstimator):
 
     def _resolve_task(self, y: np.ndarray) -> ResolvedTask:
         """Resolve the configured task from the target vector."""
-        if self.task in ("classification", "regression"):
+        if self.task in get_args(ResolvedTask):
             return self.task
 
         target_type = type_of_target(y)

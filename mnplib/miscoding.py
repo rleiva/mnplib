@@ -18,7 +18,7 @@ distribution utilities.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, get_args
 
 import numpy as np
 import pandas as pd
@@ -28,15 +28,12 @@ from sklearn.utils import check_X_y
 from sklearn.utils.multiclass import type_of_target
 from sklearn.utils.validation import check_is_fitted
 
-from .utils import _resolve_bins, empirical_distribution_array
+from ._types import BinSpec, XType, YType
+from .utils import _resolve_bins, _validate_vector, empirical_distribution_array
 from .models.inputs import model_artifacts
 from ._diagnostics import warn_nan_model
-from ._validation import validate_vector
 
 
-XType = Literal["auto", "numeric", "categorical"]
-YType = Literal["auto", "numeric", "categorical"]
-BinSpec = int | Literal["auto", "adaptive"]
 RankingCriterion = Literal["deficiency", "miscoding"]
 
 _SPARSE_JOINT_FAILURE = "joint_distribution_too_sparse"
@@ -70,14 +67,14 @@ class Miscoding(BaseEstimator):
     model construction while reliable candidate extensions remain.
     """
 
-    _VALID_X_TYPES = ("auto", "numeric", "categorical")
-    _VALID_Y_TYPES = ("auto", "numeric", "categorical")
-    _VALID_RANKING_CRITERIA = ("deficiency", "miscoding")
+    _VALID_X_TYPES = get_args(XType)
+    _VALID_Y_TYPES = get_args(YType)
+    _VALID_RANKING_CRITERIA = get_args(RankingCriterion)
 
     def __init__(
         self,
-        X_type: XType = "auto",
-        y_type: YType = "auto",
+        X_type: XType   = "auto",
+        y_type: YType   = "auto",
         n_bins: BinSpec = "adaptive",
     ):
         """
@@ -600,7 +597,7 @@ class Miscoding(BaseEstimator):
         pandas DataFrames preserve their column names; other array-like inputs
         receive generated names ``x0``, ``x1``, and so on.
         """
-        y_arr = validate_vector(y, name="y")
+        y_arr = _validate_vector(y, name="y")
         X_arr, y_arr = check_X_y(X, y_arr, dtype=None, ensure_2d=True)
         self.feature_names_in_ = np.asarray(
             getattr(X, "columns", [f"x{i}" for i in range(X_arr.shape[1])]),
