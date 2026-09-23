@@ -139,7 +139,7 @@ def test_feature_search_materializes_full_matrix_only_for_details(data, method, 
         assert metric._redundancy_matrix_ is None
 
 
-def test_functional_subset_query_does_not_compute_unrelated_pairs(data, monkeypatch):
+def test_functional_subset_score_does_not_compute_pairs(data, monkeypatch):
     calls = []
     original = Miscoding._feature_pair_redundancy
 
@@ -150,7 +150,7 @@ def test_functional_subset_query_does_not_compute_unrelated_pairs(data, monkeypa
     monkeypatch.setattr(Miscoding, "_feature_pair_redundancy", record_pair)
     value = miscoding_subset([1, 3], X=data[0], y=data[1])
     assert np.isfinite(value)
-    assert calls == [(1, 3)]
+    assert calls == []
 
 
 @pytest.mark.parametrize("full_matrix", [False, True])

@@ -343,15 +343,15 @@ class Miscoding(BaseEstimator):
 
     def miscoding_subset(self, subset) -> float:
         """Return subset miscoding, or NaN when joint counts are unreliable."""
-        return float(self.subset_analysis(subset)["miscoding"])
+        return float(self.subset_analysis(subset, include_weights=False)["miscoding"])
 
     def deficiency_subset(self, subset) -> float:
         """Return deficiency for integer feature indices or a Boolean mask."""
-        return float(self.subset_analysis(subset)["deficiency"])
+        return float(self.subset_analysis(subset, include_weights=False)["deficiency"])
 
     def surplus_subset(self, subset) -> float:
         """Return surplus for integer feature indices or a Boolean mask."""
-        return float(self.subset_analysis(subset)["surplus"])
+        return float(self.subset_analysis(subset, include_weights=False)["surplus"])
 
     def miscoding_model(self, model, *, X=None, feature_names=None, feature_indices=None) -> float:
         """Evaluate the feature subset effectively used by a fitted model.
@@ -380,7 +380,7 @@ class Miscoding(BaseEstimator):
                                     feature_indices=feature_indices)
         return self.subset_analysis(artifacts.subset)
 
-    def subset_analysis(self, subset) -> dict[str, object]:
+    def subset_analysis(self, subset, *, include_weights: bool = True) -> dict[str, object]:
         """
         Return detailed empirical diagnostics for a feature subset.
 
@@ -388,6 +388,10 @@ class Miscoding(BaseEstimator):
         ----------
         subset : array-like
             Boolean mask of selected features or list of selected feature indices.
+        include_weights : bool, default=True
+            Include redundancy and feature weights. If False, omit these fields
+            and do not compute pairwise redundancy. Metrics and reliability
+            diagnostics are identical in both modes.
 
         Returns
         -------
@@ -400,7 +404,7 @@ class Miscoding(BaseEstimator):
             their observed categories without binning.
         """
         check_is_fitted(self)
-        return self._subset_measures(subset)
+        return self._subset_measures(subset, include_weights=include_weights)
 
     #
     # Feature selection and ordering
@@ -408,6 +412,7 @@ class Miscoding(BaseEstimator):
 
     def select_features(self, *, max_features: int | None = None,
                         min_improvement: float = 0.0, return_details: bool = False,
+                        include_redundancy: bool = True,
     ):
         """
         Select features by strict subset-miscoding improvement.
@@ -430,6 +435,10 @@ class Miscoding(BaseEstimator):
             If ``False``, return a Boolean selection mask. If ``True``, return a
             dictionary with the mask, selected indices, selected names, selection
             path, and final subset diagnostics.
+        include_redundancy : bool, default=True
+            Include the full redundancy matrix and final subset weights in
+            detailed output. False preserves the selection and path without
+            computing pairwise redundancy. Ignored when return_details=False.
 
         Returns
         -------
@@ -447,7 +456,7 @@ class Miscoding(BaseEstimator):
 
         selected : list[int] = []
         path     : list[dict[str, object]] = []
-        current  = self._subset_measures(selected)
+        current  = self._subset_measures(selected, include_weights=False)
 
         while len(selected) < max_features:
 
@@ -469,7 +478,7 @@ class Miscoding(BaseEstimator):
 
             feature = int(best["feature_index"])
             selected.append(feature)
-            current = self._subset_measures(selected)
+            current = self._subset_measures(selected, include_weights=False)
 
             path.append(
                 {
@@ -510,9 +519,9 @@ class Miscoding(BaseEstimator):
             "selected_feature_names"   : [str(self.feature_names_in_[j]) for j in selected],
             "min_improvement"          : float(improvement_threshold),
             "path"                     : pd.DataFrame(path),
-            "subset"                   : self._subset_measures(selected),
+            "subset"                   : self._subset_measures(selected, include_weights=include_redundancy),
             "features"                 : self.feature_analysis(),
-            "redundancy"               : self.redundancy_matrix(),
+            **({"redundancy": self.redundancy_matrix()} if include_redundancy else {}),
         }
 
     def rank_features(
@@ -521,6 +530,7 @@ class Miscoding(BaseEstimator):
         max_features: int | None = None,
         criterion: RankingCriterion = "deficiency",
         return_details: bool = False,
+        include_redundancy: bool = True,
     ):
         """
         Rank features for model construction.
@@ -547,6 +557,10 @@ class Miscoding(BaseEstimator):
             If ``False``, return ordered feature indices. If ``True``, return a
             dictionary with the feature order, feature names, ranking path, and
             supporting diagnostics.
+        include_redundancy : bool, default=True
+            Include the full redundancy matrix in detailed output. False
+            preserves the order and path without computing pairwise redundancy.
+            Ignored when return_details=False.
 
         Returns
         -------
@@ -560,7 +574,7 @@ class Miscoding(BaseEstimator):
 
         selected: list[int] = []
         path: list[dict[str, object]] = []
-        current = self._subset_measures(selected)
+        current = self._subset_measures(selected, include_weights=False)
 
         while len(selected) < max_features:
             candidates = self._sort_candidates(
@@ -576,7 +590,7 @@ class Miscoding(BaseEstimator):
 
             feature = int(best["feature_index"])
             selected.append(feature)
-            current = self._subset_measures(selected)
+            current = self._subset_measures(selected, include_weights=False)
 
             path.append(
                 {
@@ -612,7 +626,7 @@ class Miscoding(BaseEstimator):
             "feature_names": [str(self.feature_names_in_[j]) for j in selected],
             "path": pd.DataFrame(path),
             "features": self.feature_analysis(),
-            "redundancy": self.redundancy_matrix(),
+            **({"redundancy": self.redundancy_matrix()} if include_redundancy else {}),
         }
 
     #
@@ -705,8 +719,8 @@ class Miscoding(BaseEstimator):
         return float(
             empirical_distribution_array(
                 np.asarray(columns, dtype=object).T,
-                numeric=numeric,
-                n_bins=n_bins,
+                numeric = numeric,
+                n_bins  = n_bins,
             ).code_length
         )
 
@@ -911,7 +925,7 @@ class Miscoding(BaseEstimator):
         return 1.0 / (1.0 + off_diagonal_sum)
     
 
-    def _subset_measures(self, subset) -> dict[str, object]:
+    def _subset_measures(self, subset, *, include_weights: bool = True) -> dict[str, object]:
         """
         Compute empirical deficiency, surplus, and miscoding for a selected
         feature subset.
@@ -940,14 +954,16 @@ class Miscoding(BaseEstimator):
                 "n_selected_features"      : 0,
                 "selected_features" : [],
                 "selected_feature_names"   : [],
-                "redundancy_weights"       : np.array([], dtype=float),
-                "feature_weights"          : np.array([], dtype=float),
+                **({"redundancy_weights": np.array([], dtype=float),
+                    "feature_weights": np.array([], dtype=float)} if include_weights else {}),
             }
 
         selected_array = np.asarray(selected, dtype=int)
-        alpha = self._redundancy_weights(selected)
-        feature_lengths = self.feature_code_lengths_[selected_array]
-        feature_weights = alpha * feature_lengths
+        weights = {}
+        if include_weights:
+            alpha = self._redundancy_weights(selected)
+            weights = {"redundancy_weights": alpha,
+                       "feature_weights": alpha * self.feature_code_lengths_[selected_array]}
         values = self._empirical_subset_measures(selected)
 
         return {
@@ -966,8 +982,7 @@ class Miscoding(BaseEstimator):
             "n_selected_features"      : int(np.sum(mask)),
             "selected_features" : selected,
             "selected_feature_names"   : [str(self.feature_names_in_[j]) for j in selected],
-            "redundancy_weights"       : alpha,
-            "feature_weights"          : feature_weights,
+            **weights,
         }
 
     def _empirical_subset_deficiency(self, selected: list[int]) -> float:
@@ -1098,7 +1113,7 @@ class Miscoding(BaseEstimator):
                 continue
 
             candidate_subset = selected + [feature]
-            values           = self._subset_measures(candidate_subset)
+            values           = self._subset_measures(candidate_subset, include_weights=False)
 
             rows.append({
                 "feature_index": feature,
@@ -1374,9 +1389,10 @@ def surplus_feature(feature=None, *, X, y, X_type: XType = "auto",
 
 
 def subset_analysis(subset, *, X, y, X_type: XType = "auto", y_type: YType = "auto",
-                    n_bins: BinSpec = "adaptive") -> dict[str, object]:
+                    n_bins: BinSpec = "adaptive", include_weights: bool = True) -> dict[str, object]:
     """Return empirical subset diagnostics, including reliability information."""
-    return Miscoding(X_type=X_type, y_type=y_type, n_bins=n_bins).fit(X, y).subset_analysis(subset)
+    return Miscoding(X_type=X_type, y_type=y_type, n_bins=n_bins).fit(X, y).subset_analysis(
+        subset, include_weights=include_weights)
 
 
 def miscoding_model(model, *, X, y, feature_names=None, feature_indices=None,
@@ -1402,6 +1418,7 @@ def select_features(
     max_features: int | None = None,
     min_improvement: float = 0.0,
     return_details: bool = False,
+    include_redundancy: bool = True,
     X_type: XType = "auto",
     y_type: YType = "auto",
     n_bins: BinSpec = "adaptive",
@@ -1414,6 +1431,7 @@ def select_features(
         max_features=max_features,
         min_improvement=min_improvement,
         return_details=return_details,
+        include_redundancy=include_redundancy,
     )
 
 
@@ -1424,6 +1442,7 @@ def rank_features(
     max_features: int | None = None,
     criterion: RankingCriterion = "deficiency",
     return_details: bool = False,
+    include_redundancy: bool = True,
     X_type: XType = "auto",
     y_type: YType = "auto",
     n_bins: BinSpec = "adaptive",
@@ -1436,4 +1455,5 @@ def rank_features(
         max_features=max_features,
         criterion=criterion,
         return_details=return_details,
+        include_redundancy=include_redundancy,
     )

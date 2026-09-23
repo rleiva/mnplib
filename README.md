@@ -59,6 +59,22 @@ miscoding.feature_analysis()
 3	1	sepal width (cm)	True	426.921835	0.725199	0.846968	0.846968
 ```
 
+For interactive applications, fit once and request only the needed diagnostics:
+
+```python
+# Metrics and reliability, without pairwise redundancy or weight fields.
+overview = miscoding.subset_analysis([0, 1, 2], include_weights=False)
+ordering = miscoding.rank_features(
+    criterion="miscoding", return_details=True, include_redundancy=False,
+)
+selection = miscoding.select_features(return_details=True, include_redundancy=False)
+
+# Request the full pairwise matrix only when needed; values are cached.
+redundancy = miscoding.redundancy_matrix()
+```
+
+Omitting weights or redundancy does not change metric values, reliability decisions, selection, or ranking paths. `include_weights=False` omits `redundancy_weights` and `feature_weights`; `include_redundancy=False` omits the detailed report's `redundancy` field and selection's subset weights. The functional `subset_analysis`, `rank_features`, and `select_features` helpers accept the same options. Scalar subset scores and search candidate evaluation do not calculate unused redundancy weights. Fitted data and bin settings are snapshots; refitting resets caches. Serialize concurrent access to a retained estimator, as its lazy caches are mutable.
+
 #### Inaccuracy
 
 `Inaccuracy` measures how well a model predicts the target variable. It compares the observed target values with the values predicted by the model, estimating how much information is lost or distorted by the prediction process. A model with low inaccuracy produces predictions that preserve most of the relevant information in the target, while a model with high inaccuracy leaves many errors to be corrected. In `mnplib`, inaccuracy captures the predictive adequacy of a model.
