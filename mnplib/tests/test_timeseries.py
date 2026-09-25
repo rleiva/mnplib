@@ -36,7 +36,7 @@ def make_exogenous_series(n=90):
 
 def test_fit_selects_candidate_and_sets_public_attributes():
     y = make_series()
-    ts = TimeSeries(window_size=5, n_bins=3, random_state=42).fit(y)
+    ts = TimeSeries(window_size=5, random_state=42).fit(y)
 
     assert ts.is_fitted_
     assert ts.window_size_ == 5
@@ -50,7 +50,7 @@ def test_fit_selects_candidate_and_sets_public_attributes():
 
 def test_forecast_returns_requested_number_of_steps():
     y = make_series()
-    ts = TimeSeries(window_size=4, models=["autoregressive"], n_bins=3).fit(y)
+    ts = TimeSeries(window_size=4, models=["autoregressive"]).fit(y)
 
     forecast = ts.forecast(steps=6)
 
@@ -61,7 +61,7 @@ def test_forecast_returns_requested_number_of_steps():
 
 def test_fitted_values_align_with_training_observations():
     y = make_series()
-    ts = TimeSeries(window_size=4, models=["autoregressive"], n_bins=3).fit(y)
+    ts = TimeSeries(window_size=4, models=["autoregressive"]).fit(y)
 
     assert ts.fitted_values_.shape == y.shape
     assert np.isnan(ts.fitted_values_[:ts.window_size_]).all()
@@ -70,14 +70,14 @@ def test_fitted_values_align_with_training_observations():
 
 def test_score_evaluates_observations_after_training():
     y = make_series(100)
-    ts = TimeSeries(window_size=4, models=["autoregressive"], n_bins=3).fit(y[:80])
+    ts = TimeSeries(window_size=4, models=["autoregressive"]).fit(y[:80])
     expected = r2_score(y[80:], ts.forecast(20))
     assert ts.score(y[80:]) == pytest.approx(expected)
 
 
 def test_results_dataframe_is_sorted_and_has_expected_columns():
     y = make_series()
-    ts = TimeSeries(window_size=4, n_bins=3).fit(y)
+    ts = TimeSeries(window_size=4).fit(y)
 
     df = ts.results_dataframe()
 
@@ -115,7 +115,7 @@ def test_results_dataframe_is_sorted_and_has_expected_columns():
 
 def test_components_nescience_and_model_string():
     y = make_series()
-    ts = TimeSeries(window_size=4, n_bins=3).fit(y)
+    ts = TimeSeries(window_size=4).fit(y)
 
     components = ts.components()
     model_string = ts.model_description()["model_string"]
@@ -133,7 +133,7 @@ def test_components_nescience_and_model_string():
 
 def test_analysis_contains_time_series_details():
     y = make_series()
-    ts = TimeSeries(window_size=4, n_bins=3).fit(y)
+    ts = TimeSeries(window_size=4).fit(y)
 
     explanation = ts.analysis()
 
@@ -156,7 +156,7 @@ def test_analysis_contains_time_series_details():
     ("state_space", {"models": ["local_level"], "max_iter": 30}, {"specification": "local_level"}),
 ])
 def test_candidate_hyperparameters_are_shared_by_reports(family, options, parameters):
-    ts = TimeSeries(window_size=4, models=[family], search_options={family: options}, n_bins=2)
+    ts = TimeSeries(window_size=4, models=[family], search_options={family: options})
     ts.fit(make_series(120))
     report = ts.analysis()
     assert ts.best_result_.hyperparameters == parameters
@@ -167,7 +167,7 @@ def test_candidate_hyperparameters_are_shared_by_reports(family, options, parame
 
 def test_lag_analysis_methods_without_exogenous_data():
     y = make_series()
-    ts = TimeSeries(window_size=5, n_bins=3).fit(y)
+    ts = TimeSeries(window_size=5).fit(y)
 
     auto = ts.lag_analysis(max_lag=4)
     all_lags = ts.lag_analysis(max_lag=4)
@@ -179,7 +179,7 @@ def test_lag_analysis_methods_without_exogenous_data():
 
 def test_exogenous_data_feature_names_forecast_and_cross_lag_analysis():
     y, X = make_exogenous_series()
-    ts = TimeSeries(window_size=4, n_bins=3).fit(y, X)
+    ts = TimeSeries(window_size=4).fit(y, X)
 
     assert list(ts.exogenous_feature_names_) == ["temperature", "demand"]
     assert "temperature_lag_1" in list(ts.feature_names_in_)
@@ -197,7 +197,7 @@ def test_exogenous_data_feature_names_forecast_and_cross_lag_analysis():
 
 def test_model_family_filtering():
     y = make_series()
-    ts = TimeSeries(window_size=4, models=["moving_average"], n_bins=3).fit(y)
+    ts = TimeSeries(window_size=4, models=["moving_average"]).fit(y)
 
     assert set(result.family for result in ts.candidate_results_) == {"moving_average"}
     assert ts.model_name_.startswith("moving_average")
@@ -205,7 +205,7 @@ def test_model_family_filtering():
 
 def test_moving_average_and_smoothing_configuration():
     y = make_series()
-    ts = TimeSeries(window_size=5, models=['moving_average', 'exponential_smoothing'], n_bins=3, search_options={'moving_average': {'windows': [2, 5]}, 'exponential_smoothing': {'alphas': [0.2, 0.8]}}).fit(y)
+    ts = TimeSeries(window_size=5, models=['moving_average', 'exponential_smoothing'], search_options={'moving_average': {'windows': [2, 5]}, 'exponential_smoothing': {'alphas': [0.2, 0.8]}}).fit(y)
 
     names = {result.name for result in ts.candidate_results_}
 
@@ -289,7 +289,7 @@ def test_canonical_fixed_model_string_is_stable():
 
 def test_autoregressive_search_uses_selection_options():
     y = make_series()
-    ts = TimeSeries(window_size=4, models=['autoregressive'], n_bins=3, search_options={'autoregressive': {'min_improvement': 0.0}}).fit(y)
+    ts = TimeSeries(window_size=4, models=['autoregressive'], search_options={'autoregressive': {'min_improvement': 0.0}}).fit(y)
 
     assert ts.search_options["autoregressive"]["min_improvement"] == pytest.approx(0.0)
     assert ts.best_result_.is_reliable
@@ -297,7 +297,7 @@ def test_autoregressive_search_uses_selection_options():
 
 def test_candidate_components_are_computed_from_explicit_artifacts():
     y = make_series()
-    ts = TimeSeries(window_size=4, models=["autoregressive"], n_bins=3).fit(y)
+    ts = TimeSeries(window_size=4, models=["autoregressive"]).fit(y)
     result = ts.best_result_
 
     direct_components = {
@@ -313,7 +313,7 @@ def test_candidate_components_are_computed_from_explicit_artifacts():
 
 def test_candidate_results_include_subset_reliability_diagnostics():
     y = make_series()
-    ts = TimeSeries(window_size=4, models=["autoregressive"], n_bins=3).fit(y)
+    ts = TimeSeries(window_size=4, models=["autoregressive"]).fit(y)
     result = ts.best_result_
     diagnostics = ts.miscoding_.subset_analysis(result.artifacts.subset)
 
@@ -321,14 +321,16 @@ def test_candidate_results_include_subset_reliability_diagnostics():
     assert result.subset_diagnostics["is_reliable"] is True
     assert result.subset_diagnostics["failure_reason"] is None
     assert result.subset_diagnostics["n_samples"] == diagnostics["n_samples"]
-    assert result.subset_diagnostics["resolved_n_bins"] == 3
-    assert ts.results_dataframe()["resolved_n_bins"].eq(3).all()
-    assert ts.analysis()["resolved_n_bins"] == 3
+    assert result.subset_diagnostics["resolved_n_bins"] == diagnostics["resolved_n_bins"]
+    for row in ts.results_dataframe().itertuples():
+        expected = ts.miscoding_.subset_analysis(row.selected_features)["resolved_n_bins"]
+        assert row.resolved_n_bins == expected
+    assert ts.analysis()["resolved_n_bins"] == diagnostics["resolved_n_bins"]
 
 
 def test_arima_candidate_uses_shared_artifacts_and_forecasts():
     y = make_series(n=90)
-    ts = TimeSeries(window_size=5, models=['arima'], n_bins=3, search_options={'arima': {'orders': [(1, 0, 0)], 'max_iter': 20}, 'state_space': {'max_iter': 20}}).fit(y)
+    ts = TimeSeries(window_size=5, models=['arima'], search_options={'arima': {'orders': [(1, 0, 0)], 'max_iter': 20}, 'state_space': {'max_iter': 20}}).fit(y)
 
     result = ts.best_result_
     forecast = ts.forecast(steps=3)
@@ -350,7 +352,7 @@ def test_arima_candidate_uses_shared_artifacts_and_forecasts():
 
 def test_state_space_candidate_uses_shared_artifacts_and_forecasts():
     y = make_series(n=90)
-    ts = TimeSeries(window_size=5, models=['state_space'], n_bins=3, search_options={'state_space': {'models': ['local_level'], 'max_iter': 20}, 'arima': {'max_iter': 20}}).fit(y)
+    ts = TimeSeries(window_size=5, models=['state_space'], search_options={'state_space': {'models': ['local_level'], 'max_iter': 20}, 'arima': {'max_iter': 20}}).fit(y)
 
     result = ts.best_result_
     forecast = ts.forecast(steps=3)
@@ -378,5 +380,4 @@ def test_fit_raises_when_no_reliable_candidate_can_be_evaluated():
         TimeSeries(
             window_size=5,
             models=["moving_average"],
-            n_bins=4,
         ).fit(y)

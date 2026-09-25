@@ -19,7 +19,7 @@ from sklearn.tree import DecisionTreeClassifier
 from sklearn.utils import check_X_y, check_array
 from sklearn.utils.validation import check_is_fitted
 
-from ._types import Aggregation, BinSpec, XType
+from ._types import Aggregation, XType
 from .automl import CandidateEvaluator, CandidateResult
 from .automl.descriptions import describe_candidate_model
 from .automl.configuration import validated_search_options
@@ -61,9 +61,6 @@ class NescienceClassifier(ClassifierMixin, BaseEstimator):
     aggregation : {"euclidean", "arithmetic", "geometric", "harmonic", \
             "maximum", "addition", "product"}, default="euclidean"
         Aggregation rule used by the underlying ``Nescience`` object.
-    n_bins : int, "auto", or "adaptive", default="adaptive"
-        Discretization rule for numerical variables where required by the
-        nescience components.
     weights : mapping, optional
         Named deficiency, surplus, inaccuracy, and surfeit weights.
     feature_ranking_criterion : {"deficiency", "miscoding"}, default="deficiency"
@@ -91,7 +88,6 @@ class NescienceClassifier(ClassifierMixin, BaseEstimator):
         models               : Sequence[str] | None = None,
         X_type               : XType = "numeric",
         aggregation          : Aggregation = "euclidean",
-        n_bins               : BinSpec = "adaptive",
         weights              : Mapping[str, float] | None = None,
         feature_ranking_criterion : str = "deficiency",
         max_feature_prefixes : int | None = None,
@@ -104,7 +100,6 @@ class NescienceClassifier(ClassifierMixin, BaseEstimator):
         self.models                     = models
         self.X_type                     = X_type
         self.aggregation                = aggregation
-        self.n_bins                     = n_bins
         self.weights                    = weights
         self.feature_ranking_criterion  = feature_ranking_criterion
         self.max_feature_prefixes       = max_feature_prefixes
@@ -170,7 +165,6 @@ class NescienceClassifier(ClassifierMixin, BaseEstimator):
             X_type             = self.X_type,
             y_type             = "categorical",
             aggregation        = self.aggregation,
-            n_bins             = self.n_bins,
             weights            = self.weights,
             zlib_level         = self.zlib_level,
             zlib_overhead      = self.zlib_overhead,

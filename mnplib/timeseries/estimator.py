@@ -28,7 +28,7 @@ from mnplib.automl.descriptions import describe_candidate_model
 from mnplib.automl.configuration import validated_search_options
 from mnplib.automl.results import candidate_results_dataframe
 
-from .._types import Aggregation, BinSpec, XType
+from .._types import Aggregation, XType
 from ..inaccuracy import Inaccuracy
 from ..miscoding import Miscoding
 from ..nescience import Nescience
@@ -86,7 +86,7 @@ class TimeSeries(BaseEstimator):
         state_space accepts ``models`` and ``max_iter``. Structural model names
         are ``"local_level"`` and ``"local_linear_trend"``.
 
-    aggregation, weights, n_bins, zlib_level, zlib_overhead :
+    aggregation, weights, zlib_level, zlib_overhead :
         Parameters forwarded to the current nescience component API.
 
     random_state : int or None, default=None
@@ -114,7 +114,6 @@ class TimeSeries(BaseEstimator):
         search_options: Mapping[str, Mapping[str, object]] | None = None,
         aggregation: Aggregation = "euclidean",
         weights: Mapping[str, float] | Sequence[float] | None = None,
-        n_bins: BinSpec = "adaptive",
         zlib_level: int = 9,
         zlib_overhead: int = 6,
         random_state: int | None = None,
@@ -126,7 +125,6 @@ class TimeSeries(BaseEstimator):
         self.search_options = search_options
         self.aggregation = aggregation
         self.weights = weights
-        self.n_bins = n_bins
         self.zlib_level = zlib_level
         self.zlib_overhead = zlib_overhead
         self.random_state = random_state
@@ -505,7 +503,6 @@ class TimeSeries(BaseEstimator):
             y_type="numeric",
             aggregation=self.aggregation,
             weights=self.weights,
-            n_bins=self.n_bins,
             zlib_level=self.zlib_level,
             zlib_overhead=self.zlib_overhead,
         )
@@ -530,18 +527,16 @@ class TimeSeries(BaseEstimator):
         return Miscoding(
             X_type=self.X_type,
             y_type="numeric",
-            n_bins=self.n_bins,
         )
 
     def _make_inaccuracy(self) -> Inaccuracy:
         """Return an Inaccuracy instance configured for the target series."""
-        return Inaccuracy(y_type="numeric", n_bins=self.n_bins)
+        return Inaccuracy(y_type="numeric")
 
     def _make_surfeit(self) -> Surfeit:
         """Return a Surfeit instance configured for canonical model strings."""
         return Surfeit(
             y_type="numeric",
-            n_bins=self.n_bins,
             zlib_level=self.zlib_level,
             zlib_overhead=self.zlib_overhead,
         )

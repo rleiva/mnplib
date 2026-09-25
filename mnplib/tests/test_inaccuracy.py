@@ -18,7 +18,6 @@ def test_constructor_defaults():
     metric = Inaccuracy()
 
     assert metric.y_type == "auto"
-    assert metric.n_bins == "auto"
 
 
 def test_constructor_rejects_invalid_y_type():
@@ -26,10 +25,8 @@ def test_constructor_rejects_invalid_y_type():
         Inaccuracy(y_type="invalid")
 
 
-@pytest.mark.parametrize("n_bins,expected_bins", [(4, 4), ("auto", 9), ("adaptive", 9)])
-def test_marginal_and_joint_distributions_share_target_bin_count(
-    monkeypatch, n_bins, expected_bins
-):
+def test_marginal_and_joint_distributions_share_target_bin_count(monkeypatch):
+    expected_bins = 9
     y = np.linspace(0, 1, 100)
     predictions = np.roll(y, 7)
     calls = []
@@ -44,7 +41,7 @@ def test_marginal_and_joint_distributions_share_target_bin_count(
 
     monkeypatch.setattr(inaccuracy_module, "empirical_distribution_vector", record_vector)
     monkeypatch.setattr(inaccuracy_module, "empirical_distribution_array", record_array)
-    metric = Inaccuracy(y_type="numeric", n_bins=n_bins).fit_y(y)
+    metric = Inaccuracy(y_type="numeric").fit_y(y)
     report = metric.prediction_analysis(predictions)
     assert calls == [(1, expected_bins), (1, expected_bins), (2, expected_bins)]
     assert report["resolved_n_bins"] == expected_bins
@@ -59,7 +56,7 @@ def test_fit_classification_sets_fitted_attributes():
     X = np.array([[0.0], [0.1], [1.0], [1.1]])
     y = np.array([0, 0, 1, 1])
 
-    metric = Inaccuracy(n_bins=2).fit(X, y)
+    metric = Inaccuracy().fit(X, y)
 
     assert metric.is_fitted_ is True
     assert metric.n_samples_in_ == 4
@@ -72,7 +69,7 @@ def test_fit_regression_sets_numeric_target():
     X = np.array([[0.0], [0.1], [1.0], [1.1]])
     y = np.array([1.0, 1.1, 2.0, 2.1])
 
-    metric = Inaccuracy(n_bins=2).fit(X, y)
+    metric = Inaccuracy().fit(X, y)
 
     assert metric.is_fitted_ is True
     assert metric.y_isnumeric_ is True
@@ -83,7 +80,7 @@ def test_fit_y_allows_prediction_only_usage():
     y = np.array([0, 0, 1, 1])
     pred = np.array([0, 0, 1, 1])
 
-    metric = Inaccuracy(n_bins=2).fit_y(y)
+    metric = Inaccuracy().fit_y(y)
 
     assert metric.X_ is None
     assert metric.is_fitted_ is True
@@ -94,7 +91,7 @@ def test_perfect_classification_predictions_have_zero_inaccuracy():
     y = np.array([0, 0, 1, 1])
     pred = np.array([0, 0, 1, 1])
 
-    metric = Inaccuracy(n_bins=2).fit_y(y)
+    metric = Inaccuracy().fit_y(y)
 
     assert metric.inaccuracy_predictions(pred) == pytest.approx(0.0)
 
@@ -103,7 +100,7 @@ def test_perfect_regression_predictions_have_zero_inaccuracy():
     y = np.array([1.0, 1.1, 2.0, 2.1])
     pred = y.copy()
 
-    metric = Inaccuracy(y_type="numeric", n_bins=2).fit_y(y)
+    metric = Inaccuracy(y_type="numeric").fit_y(y)
 
     assert metric.inaccuracy_predictions(pred) == pytest.approx(0.0)
 
@@ -112,7 +109,7 @@ def test_constant_equal_targets_and_predictions_have_zero_inaccuracy():
     y = np.array([1, 1, 1, 1])
     pred = np.array([1, 1, 1, 1])
 
-    metric = Inaccuracy(n_bins=2).fit_y(y)
+    metric = Inaccuracy().fit_y(y)
 
     assert metric.len_y_ == pytest.approx(0.0)
     assert metric.inaccuracy_predictions(pred) == pytest.approx(0.0)
@@ -122,7 +119,7 @@ def test_constant_different_targets_and_predictions_have_unit_inaccuracy():
     y = np.array([1, 1, 1, 1])
     pred = np.array([0, 0, 0, 0])
 
-    metric = Inaccuracy(n_bins=2).fit_y(y)
+    metric = Inaccuracy().fit_y(y)
 
     assert metric.len_y_ == pytest.approx(0.0)
     assert metric.inaccuracy_predictions(pred) == pytest.approx(1.0)
@@ -132,7 +129,7 @@ def test_inaccuracy_predictions_returns_value_between_zero_and_one():
     y = np.array([0, 0, 1, 1, 0, 1])
     pred = np.array([0, 1, 1, 0, 0, 1])
 
-    metric = Inaccuracy(n_bins=2).fit_y(y)
+    metric = Inaccuracy().fit_y(y)
     value = metric.inaccuracy_predictions(pred)
 
     assert isinstance(value, float)
@@ -144,7 +141,7 @@ def test_inaccuracy_model_with_classifier():
     y = np.array([0, 0, 1, 1, 0, 1])
 
     model = DecisionTreeClassifier(random_state=0).fit(X, y)
-    metric = Inaccuracy(n_bins=2).fit(X, y)
+    metric = Inaccuracy().fit(X, y)
 
     value = metric.inaccuracy_model(model)
 
@@ -157,7 +154,7 @@ def test_inaccuracy_model_with_regressor():
     y = np.array([1.0, 1.1, 2.0, 2.1, 1.2, 2.2])
 
     model = DecisionTreeRegressor(random_state=0).fit(X, y)
-    metric = Inaccuracy(n_bins=2).fit(X, y)
+    metric = Inaccuracy().fit(X, y)
 
     value = metric.inaccuracy_model(model)
 
@@ -170,7 +167,7 @@ def test_model_and_prediction_inaccuracy_agree():
     y = np.array([0, 0, 1, 1])
 
     model = DecisionTreeClassifier(random_state=0).fit(X, y)
-    metric = Inaccuracy(n_bins=2).fit(X, y)
+    metric = Inaccuracy().fit(X, y)
 
     assert metric.inaccuracy_predictions(model.predict(X)) == pytest.approx(metric.inaccuracy_model(model))
 
@@ -179,16 +176,16 @@ def test_inaccuracy_score_matches_estimator_usage():
     y = np.array([0, 0, 1, 1, 0, 1])
     pred = np.array([0, 1, 1, 0, 0, 1])
 
-    direct = inaccuracy_predictions(pred, n_bins=2, y=y)
+    direct = inaccuracy_predictions(pred, y=y)
 
-    metric = Inaccuracy(n_bins=2).fit_y(y)
+    metric = Inaccuracy().fit_y(y)
     via_estimator = metric.inaccuracy_predictions(pred)
 
     assert direct == pytest.approx(via_estimator)
 
 
 def test_methods_requiring_fit_raise_not_fitted_error():
-    metric = Inaccuracy(n_bins=2)
+    metric = Inaccuracy()
 
     with pytest.raises(NotFittedError):
         metric.inaccuracy_predictions([0, 1, 1, 0])
@@ -198,7 +195,7 @@ def test_prediction_length_mismatch_raises_value_error():
     y = np.array([0, 0, 1, 1])
     pred = np.array([0, 1])
 
-    metric = Inaccuracy(n_bins=2).fit_y(y)
+    metric = Inaccuracy().fit_y(y)
 
     with pytest.raises(ValueError, match="same number of samples"):
         metric.inaccuracy_predictions(pred)
@@ -208,14 +205,14 @@ def test_2d_predictions_raise_value_error():
     y = np.array([0, 0, 1, 1])
     pred = np.array([[0], [0], [1], [1]])
 
-    metric = Inaccuracy(n_bins=2).fit_y(y)
+    metric = Inaccuracy().fit_y(y)
 
     with pytest.raises(ValueError, match="one-dimensional"):
         metric.inaccuracy_predictions(pred)
 
 
 def test_empty_target_raises_value_error():
-    metric = Inaccuracy(n_bins=2)
+    metric = Inaccuracy()
 
     with pytest.raises(ValueError, match="must not be empty"):
         metric.fit_y([])
@@ -223,7 +220,7 @@ def test_empty_target_raises_value_error():
 
 def test_fit_y_then_inaccuracy_model_raises_value_error():
     y = np.array([0, 0, 1, 1])
-    metric = Inaccuracy(n_bins=2).fit_y(y)
+    metric = Inaccuracy().fit_y(y)
 
     model = DecisionTreeClassifier(random_state=0)
 
@@ -235,7 +232,7 @@ def test_model_without_predict_raises_type_error():
     X = np.array([[0.0], [0.1], [1.0], [1.1]])
     y = np.array([0, 0, 1, 1])
 
-    metric = Inaccuracy(n_bins=2).fit(X, y)
+    metric = Inaccuracy().fit(X, y)
 
     with pytest.raises(TypeError, match="predict"):
         metric.inaccuracy_model(object())
@@ -244,7 +241,7 @@ def test_model_without_predict_raises_type_error():
 def test_manual_y_type_numeric_overrides_auto_detection():
     y = np.array([0, 1, 2, 3])
 
-    metric = Inaccuracy(y_type="numeric", n_bins=2).fit_y(y)
+    metric = Inaccuracy(y_type="numeric").fit_y(y)
 
     assert metric.y_isnumeric_ is True
 
@@ -252,7 +249,7 @@ def test_manual_y_type_numeric_overrides_auto_detection():
 def test_manual_y_type_categorical_overrides_auto_detection():
     y = np.array([0.0, 1.0, 2.0, 3.0])
 
-    metric = Inaccuracy(y_type="categorical", n_bins=2).fit_y(y)
+    metric = Inaccuracy(y_type="categorical").fit_y(y)
 
     assert metric.y_isnumeric_ is False
 

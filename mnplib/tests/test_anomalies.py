@@ -24,7 +24,7 @@ def test_regression_bin_mismatches_and_direction(data):
     predictions = y.copy()
     predictions[0] = 10
     predictions[3] = -10
-    metric = AnomalyDetector(task="regression", n_bins=4).fit(X, y, predictions=predictions)
+    metric = AnomalyDetector(task="regression").fit(X, y, predictions=predictions)
     assert metric.anomalies().tolist() == [0, 3]
     assert metric.anomalies("over_predicted").tolist() == [0]
     assert metric.anomalies("under_predicted").tolist() == [3]
@@ -32,7 +32,7 @@ def test_regression_bin_mismatches_and_direction(data):
     assert table["sample_index"].tolist() == [0, 3]
     assert table["is_anomaly"].all()
     assert len(metric.results_dataframe(only_anomalies=False)) == len(y)
-    assert table.loc[0, "y_pred_bin"] == 4
+    assert table.loc[0, "y_pred_bin"] == metric.n_bins_
     assert table.loc[1, "y_pred_bin"] == -1
 
 
@@ -53,7 +53,7 @@ def test_supplied_models_are_evaluated_without_retraining(data, task, model):
     X, y = data
     model.fit(X, y)
     predictions = model.predict(X)
-    metric = AnomalyDetector(task=task, n_bins=3).fit(X, y, model=model)
+    metric = AnomalyDetector(task=task).fit(X, y, model=model)
     assert metric.model_ is model
     np.testing.assert_array_equal(metric.y_pred_, predictions)
 
@@ -62,18 +62,17 @@ def test_supplied_models_are_evaluated_without_retraining(data, task, model):
                                          ("classification", "decision_tree")])
 def test_automatic_model_workflow(data, task, family):
     X, y = data
-    metric = AnomalyDetector(task=task, n_bins=2,
+    metric = AnomalyDetector(task=task,
                              auto_model_kwargs={"models": [family]}).fit(X, y)
     assert metric.model_.best_result_.is_reliable
     assert metric.analysis()["model_nescience"] == metric.model_.nescience()
 
 
-@pytest.mark.parametrize("bins", [3, "auto", "adaptive"])
-def test_discretization_and_consolidated_explanation(data, bins):
+def test_discretization_and_consolidated_explanation(data):
     X, y = data
     predictions = np.roll(y, 1)
-    metric = AnomalyDetector(task="regression", n_bins=bins).fit(X, y, predictions=predictions)
-    assert metric.n_bins_ == _resolve_bins(bins, len(y))
+    metric = AnomalyDetector(task="regression").fit(X, y, predictions=predictions)
+    assert metric.n_bins_ == _resolve_bins("auto", len(y))
     report = metric.analysis()
     assert report["n_anomalies"] == len(metric.anomalies())
     assert "compressibility" in report
@@ -87,7 +86,7 @@ def test_discretization_and_consolidated_explanation(data, bins):
 
 def test_empty_anomaly_set_has_a_clear_explanation(data):
     X, y = data
-    metric = AnomalyDetector(task="regression", n_bins=3).fit(X, y, predictions=y)
+    metric = AnomalyDetector(task="regression").fit(X, y, predictions=y)
     report = metric.analysis()
     assert metric.results_dataframe().empty
     assert report["n_anomalies"] == 0
@@ -104,8 +103,8 @@ def test_single_correction_pattern_is_reported(data):
 def test_functional_report_matches_estimator(data):
     X, y = data
     predictions = np.roll(y, 1)
-    expected = AnomalyDetector(task="regression", n_bins=3).fit(X, y, predictions=predictions)
-    pd.testing.assert_frame_equal(results_dataframe(X, y, predictions, task="regression", n_bins=3),
+    expected = AnomalyDetector(task="regression").fit(X, y, predictions=predictions)
+    pd.testing.assert_frame_equal(results_dataframe(X, y, predictions, task="regression"),
                                   expected.results_dataframe())
 
 
@@ -115,26 +114,11 @@ def test_fitted_state_is_required(method):
         getattr(AnomalyDetector(), method)()
 
 
-@pytest.mark.parametrize("options", [{"task": "other"}, {"X_type": "other"},
-                                      {"n_bins": 0}, {"n_bins": 1},
-                                      {"n_bins": 1.5}, {"n_bins": True},
-                                      {"n_bins": "other"}])
+@pytest.mark.parametrize("options", [{"task": "other"}, {"X_type": "other"}])
 def test_invalid_configuration_is_rejected(data, options):
     X, y = data
     with pytest.raises(ValueError):
         AnomalyDetector(**options).fit(X, y, predictions=y)
-
-
-@pytest.mark.parametrize("task", ["classification", "regression"])
-@pytest.mark.parametrize("bins", [1, np.bool_(False), 2.5, "invalid"])
-def test_bin_validation_runs_before_anomaly_prediction(data, task, bins, monkeypatch):
-    def unexpected_predictions(*args, **kwargs):
-        raise AssertionError("Bin settings must be resolved before predicting.")
-
-    metric = AnomalyDetector(task=task).set_params(n_bins=bins)
-    monkeypatch.setattr(metric, "_resolve_predictions", unexpected_predictions)
-    with pytest.raises(ValueError, match="n_bins must be an integer"):
-        metric.fit(*data)
 
 
 def test_constant_regression_target_uses_one_observed_bin(data):
@@ -142,7 +126,7 @@ def test_constant_regression_target_uses_one_observed_bin(data):
     y = np.ones_like(y)
     predictions = y.copy()
     predictions[:2] = [0, 2]
-    metric = AnomalyDetector(task="regression", n_bins=3).fit(X, y, predictions=predictions)
+    metric = AnomalyDetector(task="regression").fit(X, y, predictions=predictions)
     assert metric.n_bins_ == 1
     assert metric.anomalies().tolist() == [0, 1]
     np.testing.assert_array_equal(metric.y_true_bin_, np.zeros(len(y)))

@@ -55,7 +55,6 @@ def test_constructor_defaults():
     assert metric.y_type == "auto"
     assert metric.aggregation == "euclidean"
     assert metric.weights is None
-    assert metric.n_bins == "adaptive"
     assert metric.zlib_level == 9
     assert metric.zlib_overhead == 6
 
@@ -82,20 +81,22 @@ def test_default_model_nescience_is_finite_for_iris_tree():
 
 
 @pytest.mark.parametrize("functional", [False, True])
-def test_auto_model_nescience_warns_with_sparse_joint_diagnostics(functional):
-    X, y = load_iris(return_X_y=True)
-    model = DecisionTreeClassifier(min_samples_leaf=5, random_state=42).fit(X, y)
-    metric = Nescience(n_bins="auto").fit(X, y)
+def test_model_nescience_warns_with_sparse_joint_diagnostics(functional):
+    rng = np.random.default_rng(1)
+    X = rng.normal(size=(30, 20))
+    y = rng.normal(size=30)
+    model = LinearRegression().fit(X, y)
+    metric = Nescience().fit(X, y)
 
     with pytest.warns(RuntimeWarning, match="joint_distribution_too_sparse") as caught:
-        value = (nescience_model(model, X=X, y=y, n_bins="auto") if functional
+        value = (nescience_model(model, X=X, y=y) if functional
                  else metric.nescience_model(model))
 
     assert np.isnan(value)
     assert len(caught) == 1
     message = str(caught[0].message)
-    for field in ("n_samples=150", "n_selected_features=3", "resolved_n_bins=10",
-                  "mean_joint_occupancy=2.206", "singleton_fraction=0.529",
+    for field in ("n_samples=30", "n_selected_features=20", "resolved_n_bins=2",
+                  "mean_joint_occupancy=", "singleton_fraction=",
                   "model_analysis(model)"):
         assert field in message
 
@@ -117,16 +118,18 @@ def test_sparse_adaptive_model_nescience_warns_and_returns_nan():
 
 
 def test_sparse_diagnostics_and_candidate_evaluation_are_quiet():
-    X, y = load_iris(return_X_y=True)
-    model = DecisionTreeClassifier(min_samples_leaf=5, random_state=42).fit(X, y)
-    metric = Nescience(n_bins="auto").fit(X, y)
+    rng = np.random.default_rng(1)
+    X = rng.normal(size=(30, 20))
+    y = rng.normal(size=30)
+    model = LinearRegression().fit(X, y)
+    metric = Nescience().fit(X, y)
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         details = metric.model_analysis(model)
         result = CandidateEvaluator(X=X, y=y, nescience=metric,
                                     feature_names=metric.feature_names_in_).evaluate(
-            name="tree", family="decision_tree", model=model)
+            name="linear", family="linear_regression", model=model)
         primitive = metric.nescience(**result.artifacts.to_nescience_kwargs())
 
     assert not caught
@@ -134,7 +137,7 @@ def test_sparse_diagnostics_and_candidate_evaluation_are_quiet():
     assert np.isnan(result.nescience)
     assert np.isnan(primitive)
     assert result.is_reliable is False
-    assert result.subset_diagnostics["resolved_n_bins"] == 10
+    assert result.subset_diagnostics["resolved_n_bins"] == 2
 
 
 @pytest.mark.parametrize(

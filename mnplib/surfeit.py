@@ -25,7 +25,7 @@ from sklearn.utils import check_X_y
 from sklearn.utils.multiclass import type_of_target
 from sklearn.utils.validation import check_is_fitted
 
-from ._types import BinSpec, YType
+from ._types import YType
 from .models.inputs import model_artifacts
 from .utils import _validate_vector, empirical_distribution_vector
 
@@ -45,16 +45,13 @@ class Surfeit(BaseEstimator):
     library serializer layer. ``description_analysis()`` and ``model_analysis()``
     explain the computation using code lengths in bits.
 
+    Numeric target code lengths use uniform discretization with
+    ``max(2, floor(2 * n_samples**(1/3)))`` bins.
+
     Parameters
     ----------
     y_type : {"auto", "numeric", "categorical"}, default="auto"
         Encoding strategy for the target variable.
-
-    n_bins : int, "auto", or "adaptive", default="auto"
-        Number of uniform bins used for numeric targets. ``"auto"`` uses
-        ``max(2, floor(2 * n_samples**(1/3)))``. ``"adaptive"`` is equivalent
-        for target-only quantities.
-        Integer counts must be at least two; bin settings are validated during fit.
 
     zlib_level : int, default=9
         Compression level passed to ``zlib.compress``. Must be between 0 and 9.
@@ -69,7 +66,6 @@ class Surfeit(BaseEstimator):
     def __init__(
         self,
         y_type: YType = "auto",
-        n_bins: BinSpec = "auto",
         zlib_level: int = 9,
         zlib_overhead: int = 6,
     ):
@@ -81,7 +77,6 @@ class Surfeit(BaseEstimator):
         )
 
         self.y_type = y_type
-        self.n_bins = n_bins
         self.zlib_level = int(zlib_level)
         self.zlib_overhead = int(zlib_overhead)
 
@@ -349,7 +344,6 @@ class Surfeit(BaseEstimator):
             empirical_distribution_vector(
                 self.y_,
                 numeric=self.y_isnumeric_,
-                n_bins=self.n_bins,
             ).code_length
         )
 
@@ -476,7 +470,6 @@ def surfeit_string(
     *,
     y,
     y_type: YType = "auto",
-    n_bins: BinSpec = "auto",
     zlib_level: int = 9,
     zlib_overhead: int = 6,
 ) -> float:
@@ -496,9 +489,6 @@ def surfeit_string(
     y_type : {"auto", "numeric", "categorical"}, default="auto"
         Encoding strategy for the target variable.
 
-    n_bins : int, "auto", or "adaptive", default="auto"
-        Number of uniform bins used for numeric targets.
-
     zlib_level : int, default=9
         Compression level passed to ``zlib.compress``.
 
@@ -512,7 +502,6 @@ def surfeit_string(
     """
     metric = Surfeit(
         y_type=y_type,
-        n_bins=n_bins,
         zlib_level=zlib_level,
         zlib_overhead=zlib_overhead,
     )
@@ -530,7 +519,6 @@ def surfeit_model(
     feature_names=None,
     feature_indices=None,
     y_type: YType = "auto",
-    n_bins: BinSpec = "auto",
     zlib_level: int = 9,
     zlib_overhead: int = 6,
 ) -> float:
@@ -557,9 +545,6 @@ def surfeit_model(
     y_type : {"auto", "numeric", "categorical"}, default="auto"
         Encoding strategy for the target variable.
 
-    n_bins : int, "auto", or "adaptive", default="auto"
-        Number of uniform bins used for numeric targets.
-
     zlib_level : int, default=9
         Compression level passed to ``zlib.compress``.
 
@@ -573,7 +558,6 @@ def surfeit_model(
     """
     metric = Surfeit(
         y_type=y_type,
-        n_bins=n_bins,
         zlib_level=zlib_level,
         zlib_overhead=zlib_overhead,
     )
@@ -593,7 +577,6 @@ def model_analysis(
     feature_names=None,
     feature_indices=None,
     y_type: YType = "auto",
-    n_bins: BinSpec = "auto",
     zlib_level: int = 9,
     zlib_overhead: int = 6,
 ) -> dict[str, object]:
@@ -620,9 +603,6 @@ def model_analysis(
     y_type : {"auto", "numeric", "categorical"}, default="auto"
         Encoding strategy for the target variable.
 
-    n_bins : int, "auto", or "adaptive", default="auto"
-        Number of uniform bins used for numeric targets.
-
     zlib_level : int, default=9
         Compression level passed to ``zlib.compress``.
 
@@ -637,7 +617,6 @@ def model_analysis(
     """
     metric = Surfeit(
         y_type=y_type,
-        n_bins=n_bins,
         zlib_level=zlib_level,
         zlib_overhead=zlib_overhead,
     )
@@ -654,11 +633,10 @@ def description_analysis(
     *,
     y,
     y_type: YType = "auto",
-    n_bins: BinSpec = "auto",
     zlib_level: int = 9,
     zlib_overhead: int = 6,
 ) -> dict[str, object]:
     """Analyze an explicit model description with all code lengths in bits."""
-    metric = Surfeit(y_type=y_type, n_bins=n_bins, zlib_level=zlib_level,
+    metric = Surfeit(y_type=y_type, zlib_level=zlib_level,
                      zlib_overhead=zlib_overhead).fit_y(y)
     return metric.description_analysis(model_string)

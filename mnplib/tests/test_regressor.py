@@ -119,7 +119,7 @@ def test_default_behavior_uses_all_supported_internal_model_families(
 ):
     X, y = regression_data
 
-    reg = NescienceRegressor(n_bins=3, random_state=42, search_options={'mlp': FAST_MLP}).fit(X, y)
+    reg = NescienceRegressor(random_state=42, search_options={'mlp': FAST_MLP}).fit(X, y)
 
     assert reg.model_names_ == SUPPORTED_MODELS
     assert [searcher.family for searcher in reg.searchers_] == [
@@ -136,7 +136,6 @@ def test_selecting_only_decision_tree_runs_only_tree_searcher(regression_data):
 
     reg = NescienceRegressor(
         models=["decision_tree"],
-        n_bins=3,
         random_state=42,
     ).fit(X, y)
 
@@ -154,7 +153,6 @@ def test_selected_models_preserve_user_order(regression_data):
 
     reg = NescienceRegressor(
         models=["decision_tree", "linear_regression"],
-        n_bins=3,
         random_state=42,
     ).fit(X, y)
 
@@ -175,7 +173,6 @@ def test_invalid_model_name_raises_clear_value_error(regression_data):
     with pytest.raises(ValueError, match="random_forest"):
         NescienceRegressor(
             models=["random_forest"],
-            n_bins=3,
         ).fit(X, y)
 
 
@@ -187,7 +184,6 @@ def test_arbitrary_candidate_mapping_is_rejected(regression_data):
             candidates={
                 "my_model": DecisionTreeRegressor(max_depth=2, random_state=42)
             },
-            n_bins=3,
         ).fit(X, y)
 
 
@@ -197,14 +193,13 @@ def test_arbitrary_candidate_sequence_is_rejected(regression_data):
     with pytest.raises(TypeError, match="candidates"):
         NescienceRegressor(
             candidates=[DecisionTreeRegressor(max_depth=2, random_state=42)],
-            n_bins=3,
         ).fit(X, y)
 
 
 def test_fit_selects_minimum_nescience_candidate(regression_data):
     X, y = regression_data
 
-    reg = NescienceRegressor(n_bins=3, random_state=42, search_options={'mlp': FAST_MLP}).fit(X, y)
+    reg = NescienceRegressor(random_state=42, search_options={'mlp': FAST_MLP}).fit(X, y)
 
     assert reg.is_fitted_
     assert reg.n_samples_in_ == X.shape[0]
@@ -221,7 +216,7 @@ def test_fit_selects_minimum_nescience_candidate(regression_data):
 def test_predict_score_components_explain_and_model_string(regression_data):
     X, y = regression_data
 
-    reg = NescienceRegressor(n_bins=3, random_state=42, search_options={'mlp': FAST_MLP}).fit(X, y)
+    reg = NescienceRegressor(random_state=42, search_options={'mlp': FAST_MLP}).fit(X, y)
 
     assert reg.predict(X[:7]).shape == (7,)
     assert reg.score(X, y) == pytest.approx(reg.model_.score(X, y))
@@ -259,7 +254,7 @@ def test_candidate_model_description_for_best_and_named_candidate(
 ):
     X, y = regression_data
 
-    reg = NescienceRegressor(n_bins=3, random_state=42, search_options={'linear_regression': {'patience': 1}, 'mlp': FAST_MLP}).fit(X, y)
+    reg = NescienceRegressor(random_state=42, search_options={'linear_regression': {'patience': 1}, 'mlp': FAST_MLP}).fit(X, y)
 
     best_description = reg.model_description()
     _assert_candidate_model_description(best_description, reg.best_result_)
@@ -279,7 +274,7 @@ def test_candidate_model_description_for_best_and_named_candidate(
 def test_results_dataframe_has_expected_columns(regression_data):
     X, y = regression_data
 
-    reg = NescienceRegressor(n_bins=3, random_state=42, search_options={'mlp': FAST_MLP}).fit(X, y)
+    reg = NescienceRegressor(random_state=42, search_options={'mlp': FAST_MLP}).fit(X, y)
     df = reg.results_dataframe()
 
     _assert_common_result_frame(df)
@@ -300,7 +295,7 @@ def test_dataframe_feature_names_are_preserved(regression_data):
     X, y = regression_data
     X_df = pd.DataFrame(X, columns=[f"feature_{j}" for j in range(X.shape[1])])
 
-    reg = NescienceRegressor(n_bins=3, search_options={'mlp': FAST_MLP}).fit(X_df, y)
+    reg = NescienceRegressor(search_options={'mlp': FAST_MLP}).fit(X_df, y)
 
     assert list(reg.feature_names_in_) == list(X_df.columns)
     assert "feature_" not in reg.model_description()["model_string"]
@@ -311,11 +306,10 @@ def test_component_weights_and_sklearn_clone_support():
     assert "weights" in inspect.signature(NescienceRegressor).parameters
     assert "serialization_config" not in inspect.signature(NescienceRegressor).parameters
 
-    reg = NescienceRegressor(n_bins=3, random_state=42, verbose=0, search_options={'mlp': FAST_MLP})
+    reg = NescienceRegressor(random_state=42, verbose=0, search_options={'mlp': FAST_MLP})
     cloned = clone(reg)
 
     assert isinstance(cloned, NescienceRegressor)
-    assert cloned.n_bins == 3
     assert cloned.random_state == 42
 
 
@@ -350,6 +344,6 @@ def test_unfitted_methods_raise_not_fitted_error(method_name, args):
 def test_regressor_public_import(regression_data):
     X, y = regression_data
 
-    reg = NescienceRegressor(n_bins=3, search_options={'mlp': FAST_MLP}).fit(X, y)
+    reg = NescienceRegressor(search_options={'mlp': FAST_MLP}).fit(X, y)
 
     assert isinstance(reg, NescienceRegressor)

@@ -62,8 +62,8 @@ miscoding.feature_analysis()
 For interactive applications, fit once and request only the needed diagnostics:
 
 ```python
-# Metrics and reliability, without pairwise redundancy or weight fields.
-overview = miscoding.subset_analysis([0, 1, 2], include_weights=False)
+# Subset metrics and reliability.
+overview = miscoding.subset_analysis([0, 1, 2])
 ordering = miscoding.rank_features(
     criterion="miscoding", return_details=True, include_redundancy=False,
 )
@@ -73,7 +73,15 @@ selection = miscoding.select_features(return_details=True, include_redundancy=Fa
 redundancy = miscoding.redundancy_matrix()
 ```
 
-Omitting weights or redundancy does not change metric values, reliability decisions, selection, or ranking paths. `include_weights=False` omits `redundancy_weights` and `feature_weights`; `include_redundancy=False` omits the detailed report's `redundancy` field and selection's subset weights. The functional `subset_analysis`, `rank_features`, and `select_features` helpers accept the same options. Scalar subset scores and search candidate evaluation do not calculate unused redundancy weights. Fitted data and bin settings are snapshots; refitting resets caches. Serialize concurrent access to a retained estimator, as its lazy caches are mutable.
+Subset analysis reports metrics, reliability, and selected-feature metadata without computing pairwise redundancy. For detailed selection and ranking reports, `include_redundancy=False` omits the `redundancy` field without changing metric values, reliability decisions, selection, or ranking paths. The functional `rank_features` and `select_features` helpers accept the same option. Fitted data and variable types are snapshots; refitting resets caches. Serialize concurrent access to a retained estimator, as its lazy caches are mutable.
+
+#### Discretization
+
+Metrics and model searches resolve numeric discretization internally. `Miscoding` uses `max(2, floor(2 * n_samples**(1/3) / log2(d + 1)))` bins for a subset of `d` features, excluding the target. It applies that count consistently to joint and marginal distributions. Feature diagnostics use `d=1`; pairwise redundancy uses `d=2`.
+
+`Inaccuracy` and `Surfeit` use the target-vector rule, `max(2, floor(2 * n_samples**(1/3)))`. Inaccuracy shares the count across target, prediction, and joint distributions. Regression anomaly detection uses the same vector rule with common target-domain bin edges. Nescience, AutoML, and time series delegate to these component policies.
+
+Reports expose resolved bin counts where relevant. Sparse subset distributions remain subject to reliability checks. Explicit bin configuration is available in the low-level `mnplib.utils` functions: `discretize_vector`, `empirical_distribution_vector`, and `empirical_distribution_array`.
 
 #### Inaccuracy
 
@@ -279,7 +287,7 @@ The current priority is to stabilize:
 from mnplib.timeseries import TimeSeries
 
 capabilities = TimeSeries.family_capabilities()
-search = TimeSeries(models=list(capabilities), n_bins="adaptive").fit(y)
+search = TimeSeries(models=list(capabilities)).fit(y)
 candidate = search.results_dataframe().iloc[-1]["candidate"]
 future = search.forecast(steps=12, candidate=candidate)
 fitted = search.fitted_values(candidate=candidate)

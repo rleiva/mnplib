@@ -50,7 +50,6 @@ def test_shared_aliases_describe_supported_configuration_values():
 ])
 def test_estimator_configuration_annotations_use_shared_types(cls):
     hints = get_type_hints(cls.__init__)
-    assert hints["n_bins"] == BinSpec
     for parameter, alias in [("X_type", XType), ("y_type", YType),
                              ("aggregation", Aggregation), ("task", Task)]:
         if parameter in hints:

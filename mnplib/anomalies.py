@@ -30,7 +30,7 @@ from sklearn.utils import check_X_y
 from sklearn.utils.multiclass import type_of_target
 from sklearn.utils.validation import check_is_fitted
 
-from ._types import BinSpec, ResolvedTask, Task, XType
+from ._types import ResolvedTask, Task, XType
 from .classifier import NescienceClassifier
 from .miscoding import Miscoding
 from .regressor import NescienceRegressor
@@ -53,13 +53,6 @@ class AnomalyDetector(BaseEstimator):
         Feature encoding strategy passed to the nescience-based auto estimators
         and to ``Miscoding`` during anomaly explanation.
 
-    n_bins : int, "auto", or "adaptive", default="adaptive"
-        Number of bins used for regression anomaly detection and by ``Miscoding``
-        when numeric attributes are analyzed. ``"auto"`` uses
-        ``max(2, floor(2 * n_samples**(1/3)))``. ``"adaptive"`` uses that rule
-        for detection and subset-size adaptation for feature explanation.
-        Integer counts must be at least two; bin settings are validated during fit.
-
     auto_model_kwargs : mapping, optional
         Additional keyword arguments passed to ``NescienceClassifier`` or
         ``NescienceRegressor`` when no model and no predictions are supplied.
@@ -73,6 +66,9 @@ class AnomalyDetector(BaseEstimator):
     is anomalous exactly when its predicted class differs from the observed
     class. A regression sample is anomalous exactly when its observed and
     predicted values fall in different bins of one common discretization.
+    Numeric targets use ``max(2, floor(2 * n_samples**(1/3)))`` uniform bins;
+    a constant target has one observed bin. Feature explanations use the
+    subset-adaptive discretization of ``Miscoding``.
 
     Local correction information and negative local explanatory gain are
     diagnostics computed after anomaly detection. They never affect the anomaly
@@ -87,13 +83,11 @@ class AnomalyDetector(BaseEstimator):
         self,
         task: Task = "auto",
         X_type: XType = "auto",
-        n_bins: BinSpec = "adaptive",
         auto_model_kwargs: Mapping[str, Any] | None = None,
         random_state: int | None = None,
     ):
         self.task = task
         self.X_type = X_type
-        self.n_bins = n_bins
         self.auto_model_kwargs = auto_model_kwargs
         self.random_state = random_state
 
@@ -134,7 +128,7 @@ class AnomalyDetector(BaseEstimator):
         self.y_ = y_checked
         self.feature_names_in_ = np.asarray(feature_names, dtype=object)
         self.n_samples_in_, self.n_features_in_ = self.X_.shape
-        self.n_bins_ = _resolve_bins(self.n_bins, self.n_samples_in_)
+        self.n_bins_ = _resolve_bins("auto", self.n_samples_in_)
         self.task_ = self._resolve_task(self.y_)
         self.model_ = None
 
@@ -174,7 +168,6 @@ class AnomalyDetector(BaseEstimator):
         """Fit the appropriate nescience-based auto estimator."""
         kwargs = dict(self.auto_model_kwargs or {})
         kwargs.setdefault("X_type", self.X_type)
-        kwargs.setdefault("n_bins", self.n_bins)
         kwargs.setdefault("random_state", self.random_state)
 
         if self.task_ == "classification":
@@ -387,7 +380,6 @@ class AnomalyDetector(BaseEstimator):
         metric = Miscoding(
             X_type=self.X_type,
             y_type="categorical",
-            n_bins=self.n_bins,
         )
         metric.fit(self.X_frame_.iloc[indices].reset_index(drop=True), correction_target)
 

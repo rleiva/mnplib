@@ -41,7 +41,7 @@ from sklearn.base import BaseEstimator
 from sklearn.utils import check_X_y
 from sklearn.utils.validation import check_is_fitted
 
-from ._types import Aggregation, BinSpec, XType, YType
+from ._types import Aggregation, XType, YType
 from .miscoding import Miscoding
 from .inaccuracy import Inaccuracy
 from .surfeit import Surfeit
@@ -68,6 +68,9 @@ class Nescience(BaseEstimator):
     ``model_string``
         String representation of the model or explanation being evaluated.
 
+    Component metrics resolve discretization internally: miscoding adapts to
+    subset size, while inaccuracy and surfeit use the target-vector policy.
+
     Parameters
     ----------
     X_type : {"auto", "numeric", "categorical"}, default="auto"
@@ -84,13 +87,6 @@ class Nescience(BaseEstimator):
         Component weights in the order ``deficiency``, ``surplus``,
         ``inaccuracy``, and ``surfeit``. If a mapping is supplied, valid keys
         are those component names. Missing mapping keys default to 1.0.
-
-    n_bins : int, "auto", or "adaptive", default="adaptive"
-        Number of uniform bins used for numeric variables. ``"auto"`` uses
-        ``max(2, floor(2 * n_samples**(1/3)))``. ``"adaptive"`` applies the
-        subset-size rule inside ``Miscoding`` and matches ``"auto"`` for
-        target-only quantities.
-        Integer counts must be at least two; bin settings are validated during fit.
 
     zlib_level : int, default=9
         Compression level used by ``Surfeit``.
@@ -111,7 +107,6 @@ class Nescience(BaseEstimator):
         y_type: YType = "auto",
         aggregation: Aggregation = "euclidean",
         weights: Mapping[str, float] | Sequence[float] | None = None,
-        n_bins: BinSpec = "adaptive",
         zlib_level: int = 9,
         zlib_overhead: int = 6,
     ):
@@ -128,7 +123,6 @@ class Nescience(BaseEstimator):
         self.y_type = y_type
         self.aggregation = aggregation
         self.weights = weights
-        self.n_bins = n_bins
         self.zlib_level = int(zlib_level)
         self.zlib_overhead = int(zlib_overhead)
 
@@ -162,20 +156,17 @@ class Nescience(BaseEstimator):
         self.miscoding_ = Miscoding(
             X_type=self.X_type,
             y_type=self.y_type,
-            n_bins=self.n_bins,
         )
         self.miscoding_.fit(X, y_checked)
         self.feature_names_in_ = self.miscoding_.feature_names_in_.copy()
 
         self.inaccuracy_ = Inaccuracy(
             y_type=self.y_type,
-            n_bins=self.n_bins,
         )
         self.inaccuracy_.fit_y(y_checked)
 
         self.surfeit_ = Surfeit(
             y_type=self.y_type,
-            n_bins=self.n_bins,
             zlib_level=self.zlib_level,
             zlib_overhead=self.zlib_overhead,
         )
@@ -510,7 +501,6 @@ def nescience(
     y_type: YType = "auto",
     aggregation: Aggregation = "euclidean",
     weights: Mapping[str, float] | Sequence[float] | None = None,
-    n_bins: BinSpec = "adaptive",
     zlib_level: int = 9,
     zlib_overhead: int = 6,
 ) -> float:
@@ -534,7 +524,7 @@ def nescience(
     model_string : str
         String description of the model.
 
-    X_type, y_type, aggregation, weights, n_bins, zlib_level, zlib_overhead
+    X_type, y_type, aggregation, weights, zlib_level, zlib_overhead
         Configuration with the same meaning as in ``Nescience``.
 
     Returns
@@ -543,7 +533,7 @@ def nescience(
         Aggregated nescience value.
     """
     metric = Nescience(X_type=X_type, y_type=y_type, aggregation=aggregation,
-                       weights=weights, n_bins=n_bins, zlib_level=zlib_level,
+                       weights=weights, zlib_level=zlib_level,
                        zlib_overhead=zlib_overhead).fit(X, y)
     return metric.nescience(
         subset=subset,
@@ -563,7 +553,6 @@ def nescience_components(
     y_type: YType = "auto",
     aggregation: Aggregation = "euclidean",
     weights: Mapping[str, float] | Sequence[float] | None = None,
-    n_bins: BinSpec = "adaptive",
     zlib_level: int = 9,
     zlib_overhead: int = 6,
 ) -> dict[str, float]:
@@ -571,7 +560,7 @@ def nescience_components(
     Compute the four scalar nescience components using a functional interface.
     """
     metric = Nescience(X_type=X_type, y_type=y_type, aggregation=aggregation,
-                       weights=weights, n_bins=n_bins, zlib_level=zlib_level,
+                       weights=weights, zlib_level=zlib_level,
                        zlib_overhead=zlib_overhead).fit(X, y)
     return metric.components(
         subset=subset,
@@ -585,11 +574,11 @@ def nescience_model(
     X_type: XType = "auto", y_type: YType = "auto",
     aggregation: Aggregation = "euclidean",
     weights: Mapping[str, float] | Sequence[float] | None = None,
-    n_bins: BinSpec = "adaptive", zlib_level: int = 9, zlib_overhead: int = 6,
+    zlib_level: int = 9, zlib_overhead: int = 6,
 ) -> float:
     """Compute fitted-model nescience on evaluation data."""
     metric = Nescience(X_type=X_type, y_type=y_type, aggregation=aggregation,
-                       weights=weights, n_bins=n_bins, zlib_level=zlib_level,
+                       weights=weights, zlib_level=zlib_level,
                        zlib_overhead=zlib_overhead).fit(X, y)
     return metric.nescience_model(
         model, feature_names=feature_names, feature_indices=feature_indices)
@@ -600,11 +589,11 @@ def model_analysis(
     X_type: XType = "auto", y_type: YType = "auto",
     aggregation: Aggregation = "euclidean",
     weights: Mapping[str, float] | Sequence[float] | None = None,
-    n_bins: BinSpec = "adaptive", zlib_level: int = 9, zlib_overhead: int = 6,
+    zlib_level: int = 9, zlib_overhead: int = 6,
 ) -> dict[str, object]:
     """Explain fitted-model nescience, including subset reliability."""
     metric = Nescience(X_type=X_type, y_type=y_type, aggregation=aggregation,
-                       weights=weights, n_bins=n_bins, zlib_level=zlib_level,
+                       weights=weights, zlib_level=zlib_level,
                        zlib_overhead=zlib_overhead).fit(X, y)
     return metric.model_analysis(
         model, feature_names=feature_names, feature_indices=feature_indices)

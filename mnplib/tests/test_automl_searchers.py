@@ -86,7 +86,6 @@ def _classification_context(X, y):
     metric = Nescience(
         X_type="numeric",
         y_type="categorical",
-        n_bins=3,
     ).fit(X, y)
 
     feature_names = [f"x{i}" for i in range(X.shape[1])]
@@ -158,7 +157,7 @@ def test_classifier_default_uses_all_supported_internal_model_families():
         random_state=42,
     )
 
-    clf = NescienceClassifier(n_bins=3, random_state=42, search_options={'mlp': FAST_MLP}).fit(X, y)
+    clf = NescienceClassifier(random_state=42, search_options={'mlp': FAST_MLP}).fit(X, y)
 
     assert clf.model_names_ == CLASSIFIER_SUPPORTED_MODELS
 
@@ -171,7 +170,7 @@ def test_regressor_default_uses_all_supported_internal_model_families():
         random_state=42,
     )
 
-    reg = NescienceRegressor(n_bins=3, random_state=42, search_options={'mlp': FAST_MLP}).fit(X, y)
+    reg = NescienceRegressor(random_state=42, search_options={'mlp': FAST_MLP}).fit(X, y)
 
     assert reg.model_names_ == REGRESSOR_SUPPORTED_MODELS
 
@@ -375,7 +374,7 @@ def test_linear_regression_feature_prefix_search_evaluates_reliable_prefixes():
         random_state=42,
     )
 
-    reg = NescienceRegressor(n_bins=3, random_state=42, search_options={'mlp': FAST_MLP}).fit(X, y)
+    reg = NescienceRegressor(random_state=42, search_options={'mlp': FAST_MLP}).fit(X, y)
 
     linear_results = [
         result
@@ -386,11 +385,8 @@ def test_linear_regression_feature_prefix_search_evaluates_reliable_prefixes():
     assert [
         len(result.model.selected_features)
         for result in linear_results
-    ] == [
-        1,
-        2,
-        3,
-    ]
+    ] == list(range(1, len(reg.nescience_.miscoding_.rank_features()) + 1))
+    assert linear_results
     assert all(result.is_reliable for result in linear_results)
     assert all(
         not hasattr(result, "metadata")
@@ -423,7 +419,6 @@ def test_automl_uses_feature_ranking_for_prefix_search(monkeypatch):
 
     clf = NescienceClassifier(
         models=["logistic_regression"],
-        n_bins=3,
         random_state=42,
     ).fit(X, y)
 
@@ -445,7 +440,6 @@ def test_automl_estimators_fit_with_adaptive_miscoding():
     )
     clf = NescienceClassifier(
         models=["logistic_regression"],
-        n_bins="adaptive",
         random_state=42,
     ).fit(Xc, yc)
 
@@ -458,7 +452,6 @@ def test_automl_estimators_fit_with_adaptive_miscoding():
     )
     reg = NescienceRegressor(
         models=["linear_regression"],
-        n_bins="adaptive",
         random_state=42,
     ).fit(Xr, yr)
 
@@ -484,7 +477,6 @@ def test_automl_keeps_unreliable_candidates_sorted_last():
 
     clf = NescienceClassifier(
         models=["linear_svc", "logistic_regression"],
-        n_bins=3,
         random_state=42,
     ).fit(X, y)
     df = clf.results_dataframe()
@@ -496,8 +488,10 @@ def test_automl_keeps_unreliable_candidates_sorted_last():
     assert bool(df.iloc[-1]["is_reliable"]) is False
     assert np.isnan(df.iloc[-1]["nescience"])
     assert df.iloc[-1]["failure_reason"] == "joint_distribution_too_sparse"
-    assert df["resolved_n_bins"].eq(3).all()
-    assert clf.analysis()["resolved_n_bins"] == 3
+    for row in df.itertuples():
+        expected = clf.nescience_.miscoding_.subset_analysis(row.selected_features)["resolved_n_bins"]
+        assert row.resolved_n_bins == expected
+    assert clf.analysis()["resolved_n_bins"] == clf.best_result_.subset_diagnostics["resolved_n_bins"]
 
 
 def test_automl_raises_when_no_reliable_candidate_exists():
@@ -512,7 +506,6 @@ def test_automl_raises_when_no_reliable_candidate_exists():
     with pytest.raises(ValueError, match="No reliable candidate subset"):
         NescienceClassifier(
             models=["linear_svc"],
-            n_bins=3,
             random_state=42,
         ).fit(X, y)
 
@@ -534,7 +527,6 @@ def test_automl_evaluates_prefixes_beyond_strict_selection():
     clf = NescienceClassifier(
         models=["logistic_regression"],
         X_type="categorical",
-        n_bins=2,
         random_state=42,
     ).fit(X_class, y_class)
     classifier_prefix_lengths = [
@@ -562,13 +554,11 @@ def test_automl_evaluates_prefixes_beyond_strict_selection():
     strict_reg = Miscoding(
         X_type="numeric",
         y_type="numeric",
-        n_bins=2,
     ).fit(X_reg, y_reg).select_features(return_details=True)
 
     reg = NescienceRegressor(
         models=["linear_regression"],
         X_type="numeric",
-        n_bins=2,
         random_state=42,
     ).fit(X_reg, y_reg)
     regressor_prefix_lengths = [
@@ -594,7 +584,6 @@ def test_max_feature_prefixes_limits_prefix_candidates():
     )
     clf = NescienceClassifier(
         models=["logistic_regression"],
-        n_bins=3,
         random_state=42,
         max_feature_prefixes=2,
     ).fit(Xc, yc)
@@ -614,7 +603,6 @@ def test_max_feature_prefixes_limits_prefix_candidates():
     )
     reg = NescienceRegressor(
         models=["linear_regression"],
-        n_bins=3,
         random_state=42,
         max_feature_prefixes=2,
     ).fit(Xr, yr)
@@ -637,7 +625,6 @@ def test_logistic_regression_feature_prefix_search_evaluates_reliable_prefixes()
 
     clf = NescienceClassifier(
         models=["logistic_regression"],
-        n_bins=3,
         random_state=42,
     ).fit(X, y)
 
@@ -650,11 +637,8 @@ def test_logistic_regression_feature_prefix_search_evaluates_reliable_prefixes()
     assert [
         len(result.model.selected_features)
         for result in logistic_results
-    ] == [
-        1,
-        2,
-        3,
-    ]
+    ] == list(range(1, len(clf.nescience_.miscoding_.rank_features()) + 1))
+    assert logistic_results
     assert all(result.is_reliable for result in logistic_results)
     assert all(
         result.hyperparameters == {
@@ -675,16 +659,10 @@ def test_logistic_regression_feature_prefix_search_evaluates_reliable_prefixes()
 
 
 def test_linear_svm_searchers_remain_internal_candidates():
-    Xc, yc = make_classification(
-        n_samples=60,
-        n_features=4,
-        n_informative=2,
-        n_redundant=0,
-        random_state=42,
-    )
+    Xc = np.random.default_rng(42).integers(0, 2, size=(160, 4)).astype(float)
+    yc = (Xc[:, 0] + Xc[:, 1] > 0).astype(int)
     clf = NescienceClassifier(
         models=["linear_svc"],
-        n_bins=2,
         random_state=42,
     ).fit(Xc, yc)
 
@@ -695,7 +673,7 @@ def test_linear_svm_searchers_remain_internal_candidates():
         noise=0.1,
         random_state=42,
     )
-    reg = NescienceRegressor(models=['linear_svr'], n_bins=3, random_state=42, search_options={'mlp': FAST_MLP}).fit(Xr, yr)
+    reg = NescienceRegressor(models=['linear_svr'], random_state=42, search_options={'mlp': FAST_MLP}).fit(Xr, yr)
 
     svc_results = [
         result
@@ -715,11 +693,7 @@ def test_linear_svm_searchers_remain_internal_candidates():
     assert [
         len(result.model.selected_features)
         for result in svr_results
-    ] == [
-        1,
-        2,
-        3,
-    ]
+    ] == list(range(1, len(reg.nescience_.miscoding_.rank_features()) + 1))
     assert all(result.is_reliable for result in svc_results + svr_results)
     assert all(
         result.name == f"linear_svr_prefix_{index}"
@@ -759,7 +733,6 @@ def test_naive_bayes_uses_gaussian_feature_prefixes_only():
 
     clf = NescienceClassifier(
         models=["naive_bayes"],
-        n_bins=3,
         random_state=42,
     ).fit(X, y)
 
@@ -799,7 +772,7 @@ def test_mlp_search_is_internal_bounded_and_serializes_executable_predictor():
         random_state=42,
     )
 
-    clf = NescienceClassifier(models=['mlp'], n_bins=3, random_state=42, search_options={'mlp': FAST_MLP}).fit(X, y)
+    clf = NescienceClassifier(models=['mlp'], random_state=42, search_options={'mlp': FAST_MLP}).fit(X, y)
 
     mlp_results = [
         result
@@ -832,7 +805,6 @@ def test_classifier_and_regressor_public_workflows_and_results_columns():
     )
     clf = NescienceClassifier(
         models=["decision_tree", "logistic_regression"],
-        n_bins=3,
         random_state=42,
     ).fit(pd.DataFrame(Xc, columns=list("abcd")), yc)
 
@@ -843,7 +815,7 @@ def test_classifier_and_regressor_public_workflows_and_results_columns():
         noise=0.1,
         random_state=42,
     )
-    reg = NescienceRegressor(n_bins=3, random_state=42, search_options={'mlp': FAST_MLP}).fit(Xr, yr)
+    reg = NescienceRegressor(random_state=42, search_options={'mlp': FAST_MLP}).fit(Xr, yr)
 
     for estimator, X in [(clf, Xc), (reg, Xr)]:
         assert estimator.predict(X[:5]).shape == (5,)
@@ -896,7 +868,6 @@ def test_explicit_artifact_workflow_is_preserved(monkeypatch):
 
     NescienceClassifier(
         models=["decision_tree"],
-        n_bins=3,
     ).fit(Xc, yc)
 
     Xr, yr = make_regression(
@@ -907,7 +878,6 @@ def test_explicit_artifact_workflow_is_preserved(monkeypatch):
     )
     NescienceRegressor(
         models=["linear_regression"],
-        n_bins=3,
     ).fit(Xr, yr)
 
     assert calls

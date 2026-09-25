@@ -11,10 +11,10 @@ from sklearn.tree import DecisionTreeRegressor
 
 from mnplib import (
     Inaccuracy, Miscoding, Nescience, Surfeit,
-    NescienceClassifier, NescienceRegressor, TimeSeries,
+    NescienceClassifier, NescienceRegressor, TimeSeries, AnomalyDetector,
 )
 from mnplib import inaccuracy, miscoding, nescience, surfeit
-from mnplib.utils import empirical_distribution_array, empirical_distribution_vector
+from mnplib.utils import _auto_n_bins, empirical_distribution_vector
 
 
 CLASSES = (Miscoding, Inaccuracy, Surfeit, Nescience)
@@ -26,31 +26,31 @@ def data():
     return X, X[:, 0]
 
 
-@pytest.mark.parametrize("cls", CLASSES)
-@pytest.mark.parametrize("bins", [2.9, 3.0, True, np.bool_(False), "3", 1, None, [2]])
+@pytest.mark.parametrize("cls", CLASSES + (
+    NescienceClassifier, NescienceRegressor, TimeSeries, AnomalyDetector,
+))
+def test_high_level_configuration_exposes_only_estimator_options(cls):
+    assert "n_bins" not in inspect.signature(cls).parameters
+    assert "n_bins" not in cls().get_params(deep=True)
+    with pytest.raises(TypeError, match="n_bins"):
+        cls(n_bins=3)
+    with pytest.raises(ValueError, match="n_bins"):
+        cls().set_params(n_bins=3)
+
+
+@pytest.mark.parametrize("n_samples", [30, 100, 500])
 @pytest.mark.parametrize("y_type", ["numeric", "categorical"])
-def test_bins_require_integer_counts_or_named_policies(cls, bins, y_type, data):
-    options = {"y_type": y_type}
-    if cls in (Miscoding, Nescience):
-        options["X_type"] = y_type
-    for metric in (cls(n_bins=bins, **options), cls(**options).set_params(n_bins=bins)):
-        assert metric.n_bins is bins
-        with pytest.raises(ValueError, match="n_bins must be an integer"):
-            metric.fit(*data)
-
-
-@pytest.mark.parametrize("bins", [2.9, True, "3", [2]])
-def test_distribution_bin_validation_matches_metric_validation(bins):
-    with pytest.raises(ValueError, match="n_bins must be an integer"):
-        empirical_distribution_vector([0, 1], n_bins=bins)
-    with pytest.raises(ValueError, match="n_bins must be an integer"):
-        empirical_distribution_array([[0], [1]], n_bins=bins)
-
-
-@pytest.mark.parametrize("cls", CLASSES)
-@pytest.mark.parametrize("bins", [np.int64(3), 3, "auto", "adaptive"])
-def test_valid_bin_settings_fit_in_every_metric(cls, bins, data):
-    cls(n_bins=bins).fit(*data)
+def test_component_target_code_lengths_share_vector_policy(n_samples, y_type):
+    rng = np.random.default_rng(14)
+    X = rng.normal(size=(n_samples, 3))
+    y = rng.normal(size=n_samples) if y_type == "numeric" else rng.integers(0, 3, n_samples)
+    expected = empirical_distribution_vector(y, numeric=y_type == "numeric").code_length
+    metric = Nescience(y_type=y_type).fit(X, y)
+    assert metric.miscoding_.target_code_length_ == expected
+    assert metric.inaccuracy_.len_y_ == expected
+    assert metric.surfeit_.len_y_ == expected
+    assert Inaccuracy(y_type=y_type).fit_y(y).len_y_ == expected
+    assert Surfeit(y_type=y_type).fit_y(y).len_y_ == expected
 
 
 @pytest.mark.parametrize("cls", CLASSES)
@@ -65,24 +65,6 @@ def test_multidimensional_and_scalar_targets_are_rejected(cls, target):
 def test_target_only_fitting_uses_shared_validation(cls, y_type):
     with pytest.raises(ValueError, match="one-dimensional"):
         cls(y_type=y_type).fit_y(np.ones((4, 1)))
-    with pytest.raises(ValueError, match="n_bins"):
-        cls(y_type=y_type).set_params(n_bins=2.9).fit_y([0, 1])
-
-
-@pytest.mark.parametrize("cls", [NescienceClassifier, NescienceRegressor, TimeSeries])
-@pytest.mark.parametrize("bins", [1, True, 2.5, "invalid"])
-def test_automl_rejects_invalid_bins_before_search(cls, bins, data, monkeypatch):
-    def unexpected_search(self):
-        raise AssertionError("Bin settings must be resolved before searching models.")
-
-    monkeypatch.setattr(cls, "_fit_searchers", unexpected_search)
-    model = cls().set_params(n_bins=bins)
-    X, y = data
-    with pytest.raises(ValueError, match="n_bins must be an integer"):
-        if cls is TimeSeries:
-            model.fit(y)
-        else:
-            model.fit(X, y)
 
 
 @pytest.mark.parametrize("cls", CLASSES)
@@ -107,6 +89,7 @@ def test_functional_helpers_expose_keyword_evaluation_data_and_explicit_options(
         if name.startswith("_") or not inspect.isfunction(function) or function.__module__ != module.__name__:
             continue
         parameters = inspect.signature(function).parameters
+        assert "n_bins" not in parameters
         assert not any(param.kind is inspect.Parameter.VAR_KEYWORD for param in parameters.values())
         for data_name in ("X", "y"):
             if data_name in parameters:
@@ -147,14 +130,13 @@ def test_nescience_model_analysis_has_flat_components(data):
         np.testing.assert_equal(functional[key], report[key])
 
 
-@pytest.mark.parametrize("numeric_X,numeric_y,expected", [(False, False, None),
-                                                          (False, True, 3),
-                                                          (True, False, 3),
-                                                          (True, True, 3)])
-def test_subset_bin_diagnostics_reflect_applied_discretization(data, numeric_X, numeric_y, expected):
+@pytest.mark.parametrize("numeric_X,numeric_y", [(False, False), (False, True),
+                                                (True, False), (True, True)])
+def test_subset_bin_diagnostics_reflect_applied_discretization(data, numeric_X, numeric_y):
     X, y = data
+    expected = _auto_n_bins(len(y)) if numeric_X or numeric_y else None
     metric = Miscoding(X_type="numeric" if numeric_X else "categorical",
-                       y_type="numeric" if numeric_y else "categorical", n_bins=3).fit(X, y)
+                       y_type="numeric" if numeric_y else "categorical").fit(X, y)
     assert metric.subset_analysis([0])["resolved_n_bins"] == expected
     assert metric.subset_analysis([])["resolved_n_bins"] is None
 

@@ -18,6 +18,7 @@ distribution utilities.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Literal, get_args
 
 import numpy as np
@@ -28,7 +29,7 @@ from sklearn.utils import check_X_y
 from sklearn.utils.multiclass import type_of_target
 from sklearn.utils.validation import check_is_fitted
 
-from ._types import BinSpec, XType, YType
+from ._types import XType, YType
 from .utils import _resolve_bins, _validate_vector, empirical_distribution_array
 from .models.inputs import model_artifacts
 from ._diagnostics import warn_nan_model
@@ -37,6 +38,16 @@ from ._diagnostics import warn_nan_model
 RankingCriterion = Literal["deficiency", "miscoding"]
 
 _SPARSE_JOINT_FAILURE = "joint_distribution_too_sparse"
+
+
+@dataclass(frozen=True)
+class _EmpiricalStatistics:
+    """Scalar distribution statistics for code lengths and reliability checks."""
+
+    code_length  : float
+    n_samples    : int
+    n_states     : int
+    n_singletons : int
 
 
 class Miscoding(BaseEstimator):
@@ -56,23 +67,27 @@ class Miscoding(BaseEstimator):
         surplus(S)    = (K(X_S, Y) - K(Y)) / K(X_S)
         miscoding(S)  = max(deficiency(S), surplus(S))
 
-    Numeric variables use uniform discretization. ``n_bins="auto"`` uses
-    ``max(2, floor(2 * n_samples**(1/3)))``. ``n_bins="adaptive"`` uses
-    ``max(2, floor(2 * n_samples**(1/3) / log2(|S| + 1)))`` for empirical
-    subset quantities, so one-feature subsets match ``"auto"`` and larger
-    subsets use coarser bins to reduce joint sparsity.
+    Numeric variables use uniform discretization with
+    ``max(2, floor(2 * n_samples**(1/3) / log2(|S| + 1)))`` bins. The subset
+    size counts selected features, excluding the target. Joint and marginal
+    distributions use the same resolved count. Feature diagnostics use a
+    subset size of one; pairwise redundancy uses two. Larger subsets use
+    coarser bins to reduce joint sparsity.
 
-    ``select_features()`` greedily selects a strict subset by requiring subset
+    ``select_features()`` greedily selects features by requiring subset
     miscoding improvement. ``rank_features()`` greedily orders features for
     model construction while reliable candidate extensions remain.
 
     Feature-level diagnostics are computed during ``fit()``. Pairwise
-    redundancies are computed and cached on demand. ``redundancy_matrix()``
-    and ``redundancy_`` request all pairs. Detailed selection and ranking
-    reports also include the full redundancy matrix.
+    redundancy is computed on demand and cached as a full matrix.
+    ``redundancy_matrix()`` and ``redundancy_`` request all pairs. Detailed
+    selection and ranking reports include the matrix by default.
 
-    Fitted data and discretization settings are snapshots. Input changes and
-    parameter changes take effect only after fitting again.
+    Code lengths and scalar state counts share a bin-aware cache. Distribution
+    arrays are discarded after these statistics have been extracted.
+
+    Fitted data and variable types are snapshots. Input changes and parameter
+    changes take effect only after fitting again.
     """
 
     _VALID_X_TYPES = get_args(XType)
@@ -83,7 +98,6 @@ class Miscoding(BaseEstimator):
         self,
         X_type: XType   = "auto",
         y_type: YType   = "auto",
-        n_bins: BinSpec = "adaptive",
     ):
         """
         Initialize the estimator.
@@ -95,15 +109,6 @@ class Miscoding(BaseEstimator):
 
         y_type : {"auto", "numeric", "categorical"}, default="auto"
             Encoding strategy for the target variable.
-
-        n_bins : int, "auto", or "adaptive", default="adaptive"
-            Number of uniform bins used to discretize numeric variables.
-            Integer counts must be at least two and are validated during fit.
-            ``"auto"`` uses ``max(2, floor(2 * n_samples**(1/3)))``.
-            ``"adaptive"`` matches ``"auto"`` for feature-level diagnostics
-            and uses ``max(2, floor(2 * n_samples**(1/3) / log2(|S| + 1)))``
-            for empirical subset diagnostics.
-
         """
         self._validate_init(
             X_type=X_type,
@@ -112,7 +117,32 @@ class Miscoding(BaseEstimator):
 
         self.X_type = X_type
         self.y_type = y_type
-        self.n_bins = n_bins
+
+        # List of attributes
+
+        # self.X_type                    # Encoding strategy configured for the feature variables.
+        # self.y_type                    # Encoding strategy configured for the target variable.
+
+        # self.is_fitted_                # Indicates whether fitting completed successfully.
+        # self._empirical_cache_         # Caches scalar distribution statistics for each feature, target, and bin context.
+        # self._redundancy_matrix_       # Stores the complete feature redundancy matrix once it has been computed.
+
+        # self.X_                        # Validated copy of the feature matrix used to fit the estimator.
+        # self.y_                        # Validated copy of the target vector used to fit the estimator.
+        # self._model_X_                 # Feature data preserved in a form suitable for model-artifact analysis.
+        # self.n_samples_in_             # Number of samples in the fitted dataset.
+        # self.n_features_in_            # Number of features in the fitted dataset.
+        # self.feature_names_in_         # Names assigned to the fitted features, preserving DataFrame column names when available.
+        # self.X_isnumeric_              # Boolean flags indicating which fitted features are treated as numeric.
+        # self.y_isnumeric_              # Indicates whether the fitted target is treated as numeric.
+
+        # self.target_code_length_       # Empirical code length of the target variable.
+        # self.feature_code_lengths_     # Empirical code length of each individual feature.
+        # self.deficiency_               # Feature-level deficiency values.
+        # self.surplus_                  # Feature-level surplus values.
+        # self.miscoding_                # Feature-level miscoding values, computed as max(deficiency, surplus).
+
+        # self.redundancy_               # Lazily computed public property returning the complete feature redundancy matrix.
 
     def fit(self, X, y):
         """
@@ -137,9 +167,7 @@ class Miscoding(BaseEstimator):
             Fitted estimator.
         """
         self.is_fitted_ = False
-        self._code_length_cache_ = {}
-        self._empirical_summary_cache_ = {}
-        self._pair_redundancy_cache_ = {}
+        self._empirical_cache_ = {}
         self._redundancy_matrix_ = None
         self._validate_init(X_type=self.X_type, y_type=self.y_type)
         if y is None:
@@ -151,36 +179,34 @@ class Miscoding(BaseEstimator):
         self.X_isnumeric_ = self._infer_X_isnumeric(X, self.X_)
         self.y_isnumeric_ = self._infer_y_isnumeric(self.y_)
 
-        self._fitted_n_bins_ = self.n_bins
-        self.target_code_length_ = self._code_length_for_indices(y_included=True)
+        n_bins = self._resolve_n_bins_for_subset(1)
+
+        self.target_code_length_ = self._empirical_statistics_for_indices(
+            y_included=True, n_bins=n_bins,
+        ).code_length
 
         self.feature_code_lengths_ = np.array(
             [
-                self._code_length_for_indices(features=[j])
+                self._empirical_statistics_for_indices(features=[j], n_bins=n_bins).code_length
                 for j in range(self.n_features_in_)
             ],
             dtype=float,
         )
 
-        target_given_feature = np.array(
+        joint_lengths = np.array(
             [
-                self._conditional_target_length([j])
+                self._empirical_statistics_for_indices(
+                    features=[j], y_included=True, n_bins=n_bins,
+                ).code_length
                 for j in range(self.n_features_in_)
             ],
             dtype=float,
         )
 
-        feature_given_target = np.array(
-            [
-                self._conditional_feature_length(j, selected=[], y_included=True)
-                for j in range(self.n_features_in_)
-            ],
-            dtype=float,
-        )
-
+        # ( K(Y, X_j) - K(X_j) ) / K(Y)
         self.deficiency_ = np.clip(
             self._safe_divide(
-                target_given_feature,
+                joint_lengths - self.feature_code_lengths_,
                 self.target_code_length_,
                 default=0.0,
             ),
@@ -188,9 +214,10 @@ class Miscoding(BaseEstimator):
             1.0,
         )
 
+        # ( K(X_j, Y) - K(Y) ) / K(X_j)
         self.surplus_ = np.clip(
             self._safe_divide(
-                feature_given_target,
+                joint_lengths - self.target_code_length_,
                 self.feature_code_lengths_,
                 default=0.0,
             ),
@@ -343,15 +370,15 @@ class Miscoding(BaseEstimator):
 
     def miscoding_subset(self, subset) -> float:
         """Return subset miscoding, or NaN when joint counts are unreliable."""
-        return float(self.subset_analysis(subset, include_weights=False)["miscoding"])
+        return float(self.subset_analysis(subset)["miscoding"])
 
     def deficiency_subset(self, subset) -> float:
-        """Return deficiency for integer feature indices or a Boolean mask."""
-        return float(self.subset_analysis(subset, include_weights=False)["deficiency"])
+        """Return subset deficiency, or NaN when joint counts are unreliable."""
+        return float(self.subset_analysis(subset)["deficiency"])
 
     def surplus_subset(self, subset) -> float:
-        """Return surplus for integer feature indices or a Boolean mask."""
-        return float(self.subset_analysis(subset, include_weights=False)["surplus"])
+        """Return subset surplus, or NaN when joint counts are unreliable."""
+        return float(self.subset_analysis(subset)["surplus"])
 
     def miscoding_model(self, model, *, X=None, feature_names=None, feature_indices=None) -> float:
         """Evaluate the feature subset effectively used by a fitted model.
@@ -380,7 +407,7 @@ class Miscoding(BaseEstimator):
                                     feature_indices=feature_indices)
         return self.subset_analysis(artifacts.subset)
 
-    def subset_analysis(self, subset, *, include_weights: bool = True) -> dict[str, object]:
+    def subset_analysis(self, subset) -> dict[str, object]:
         """
         Return detailed empirical diagnostics for a feature subset.
 
@@ -388,23 +415,24 @@ class Miscoding(BaseEstimator):
         ----------
         subset : array-like
             Boolean mask of selected features or list of selected feature indices.
-        include_weights : bool, default=True
-            Include redundancy and feature weights. If False, omit these fields
-            and do not compute pairwise redundancy. Metrics and reliability
-            diagnostics are identical in both modes.
+            Masks must match the fitted feature dimension. An empty index list
+            requests the empty subset.
 
         Returns
         -------
         dict
             Dictionary containing deficiency, surplus, miscoding, selected
-            feature metadata, redundancy weights, and feature weights.
+            feature metadata, and reliability diagnostics. Pairwise redundancy
+            is available separately through ``redundancy_matrix()``.
             Reliability diagnostics include ``resolved_n_bins``, the numeric
             bin count for the subset, or None when no numeric discretization is
             applied, including an empty subset. Categorical variables retain
             their observed categories without binning.
+            Unreliable subsets have NaN deficiency, surplus, and miscoding.
+            The empty subset is reliable and has no joint-state diagnostics.
         """
         check_is_fitted(self)
-        return self._subset_measures(subset, include_weights=include_weights)
+        return self._subset_measures(subset)
 
     #
     # Feature selection and ordering
@@ -424,7 +452,7 @@ class Miscoding(BaseEstimator):
 
         Parameters
         ----------
-        max_features : int, optional
+        max_features : non-negative int, optional
             Maximum number of features to select. If omitted, all features are
             eligible.
 
@@ -436,9 +464,9 @@ class Miscoding(BaseEstimator):
             dictionary with the mask, selected indices, selected names, selection
             path, and final subset diagnostics.
         include_redundancy : bool, default=True
-            Include the full redundancy matrix and final subset weights in
-            detailed output. False preserves the selection and path without
-            computing pairwise redundancy. Ignored when return_details=False.
+            Include the full redundancy matrix in detailed output.
+            False preserves the selection and path without computing pairwise
+            redundancy. Ignored when return_details=False.
 
         Returns
         -------
@@ -450,13 +478,13 @@ class Miscoding(BaseEstimator):
 
         improvement_threshold = float(min_improvement)
         if not np.isfinite(improvement_threshold) or improvement_threshold < 0:
-            raise ValueError("min_improvement must be non-negative.")
+            raise ValueError("min_improvement must be finite and non-negative.")
 
         max_features = self._validate_max_features(max_features)
 
         selected : list[int] = []
         path     : list[dict[str, object]] = []
-        current  = self._subset_measures(selected, include_weights=False)
+        current  = self._empirical_subset_measures(selected)
 
         while len(selected) < max_features:
 
@@ -478,30 +506,20 @@ class Miscoding(BaseEstimator):
 
             feature = int(best["feature_index"])
             selected.append(feature)
-            current = self._subset_measures(selected, include_weights=False)
+            current = self._empirical_subset_measures(selected)
 
             path.append(
                 {
-                    "step": len(path) + 1,
-                    "feature_index": feature,
-                    "feature_name": str(self.feature_names_in_[feature]),
-                    "deficiency": float(current["deficiency"]),
-                    "surplus": float(current["surplus"]),
-                    "miscoding": float(current["miscoding"]),
-                    "is_reliable": bool(current["is_reliable"]),
-                    "failure_reason": current["failure_reason"],
-                    "resolved_n_bins": current["resolved_n_bins"],
-                    "n_samples": current["n_samples"],
-                    "n_observed_joint_states": current["n_observed_joint_states"],
-                    "mean_joint_occupancy": current["mean_joint_occupancy"],
-                    "n_singleton_joint_states": current["n_singleton_joint_states"],
-                    "singleton_fraction": current["singleton_fraction"],
-                    "deficiency_improvement": float(best["deficiency_improvement"]),
-                    "surplus_change": float(best["surplus_change"]),
-                    "miscoding_improvement": improvement,
-                    "improvement": improvement,
-                    "selected_features": tuple(selected),
-                    "selected_feature_names": tuple(
+                    "step"                   : len(path) + 1,
+                    "feature_index"          : feature,
+                    "feature_name"           : str(self.feature_names_in_[feature]),
+                    **current,
+                    "deficiency_improvement" : float(best["deficiency_improvement"]),
+                    "surplus_change"         : float(best["surplus_change"]),
+                    "miscoding_improvement"  : improvement,
+                    "improvement"            : improvement,
+                    "selected_features"      : tuple(selected),
+                    "selected_feature_names" : tuple(
                         str(self.feature_names_in_[j]) for j in selected
                     ),
                 }
@@ -515,11 +533,15 @@ class Miscoding(BaseEstimator):
 
         return {
             "mask"                     : mask,
-            "selected_features" : selected,
+            "selected_features"        : selected,
             "selected_feature_names"   : [str(self.feature_names_in_[j]) for j in selected],
             "min_improvement"          : float(improvement_threshold),
-            "path"                     : pd.DataFrame(path),
-            "subset"                   : self._subset_measures(selected, include_weights=include_redundancy),
+            "path"                     : pd.DataFrame(path, columns=[
+                "step", "feature_index", "feature_name", *current,
+                "deficiency_improvement", "surplus_change", "miscoding_improvement",
+                "improvement", "selected_features", "selected_feature_names",
+            ]),
+            "subset"                   : self._subset_measures(selected),
             "features"                 : self.feature_analysis(),
             **({"redundancy": self.redundancy_matrix()} if include_redundancy else {}),
         }
@@ -543,9 +565,9 @@ class Miscoding(BaseEstimator):
 
         Parameters
         ----------
-        max_features : int, optional
+        max_features : non-negative int, optional
             Maximum number of features to rank. If omitted, every feature is
-            ranked.
+            eligible. Ranking stops when no reliable extension remains.
 
         criterion : {"deficiency", "miscoding"}, default="deficiency"
             Candidate ordering criterion. ``"deficiency"`` prioritizes the
@@ -574,7 +596,7 @@ class Miscoding(BaseEstimator):
 
         selected: list[int] = []
         path: list[dict[str, object]] = []
-        current = self._subset_measures(selected, include_weights=False)
+        current = self._empirical_subset_measures(selected)
 
         while len(selected) < max_features:
             candidates = self._sort_candidates(
@@ -590,24 +612,14 @@ class Miscoding(BaseEstimator):
 
             feature = int(best["feature_index"])
             selected.append(feature)
-            current = self._subset_measures(selected, include_weights=False)
+            current = self._empirical_subset_measures(selected)
 
             path.append(
                 {
                     "step": len(path) + 1,
                     "feature_index": feature,
                     "feature_name": str(self.feature_names_in_[feature]),
-                    "deficiency": float(best["deficiency"]),
-                    "surplus": float(best["surplus"]),
-                    "miscoding": float(best["miscoding"]),
-                    "is_reliable": bool(best["is_reliable"]),
-                    "failure_reason": best["failure_reason"],
-                    "resolved_n_bins": best["resolved_n_bins"],
-                    "n_samples": best["n_samples"],
-                    "n_observed_joint_states": best["n_observed_joint_states"],
-                    "mean_joint_occupancy": best["mean_joint_occupancy"],
-                    "n_singleton_joint_states": best["n_singleton_joint_states"],
-                    "singleton_fraction": best["singleton_fraction"],
+                    **{name: best[name] for name in current},
                     "deficiency_improvement": float(best["deficiency_improvement"]),
                     "surplus_change": float(best["surplus_change"]),
                     "miscoding_improvement": float(best["miscoding_improvement"]),
@@ -624,7 +636,11 @@ class Miscoding(BaseEstimator):
         return {
             "feature_order": selected,
             "feature_names": [str(self.feature_names_in_[j]) for j in selected],
-            "path": pd.DataFrame(path),
+            "path": pd.DataFrame(path, columns=[
+                "step", "feature_index", "feature_name", *current,
+                "deficiency_improvement", "surplus_change", "miscoding_improvement",
+                "selected_features", "selected_feature_names",
+            ]),
             "features": self.feature_analysis(),
             **({"redundancy": self.redundancy_matrix()} if include_redundancy else {}),
         }
@@ -693,102 +709,26 @@ class Miscoding(BaseEstimator):
         )
 
     #
-    # Code-length computations
+    # Empirical distribution statistics
     #
 
-    def _code_length(self, columns, numeric, *, n_bins: BinSpec | int) -> float:
-        """
-        Compute an empirical joint code length.
-
-        Parameters
-        ----------
-        columns : sequence of iterable
-            Variables to include in the joint code-length computation.
-
-        numeric : sequence of bool
-            Flags indicating whether each variable should be treated as numeric.
-
-        n_bins : int, "auto", or "adaptive"
-            Bin specification used for numeric variables.
-
-        Returns
-        -------
-        float
-            Empirical code length of the supplied variables.
-        """
-        return float(
-            empirical_distribution_array(
-                np.asarray(columns, dtype=object).T,
-                numeric = numeric,
-                n_bins  = n_bins,
-            ).code_length
-        )
-
-    def _code_length_for_indices(
+    def _empirical_statistics_for_indices(
         self,
-        features: list[int] | tuple[int, ...] | None = None,
+        features: list[int] | tuple[int, ...] = (),
         y_included: bool = False,
         *,
-        n_bins: int | None = None,
-        subset_size: int | None = None,
-    ) -> float:
+        n_bins: int,
+    ) -> _EmpiricalStatistics:
         """
-        Compute and cache a code length for a feature subset and optional target.
+        Cache scalar distribution statistics using the resolved bin count.
+
+        Bin-aware keys distinguish marginals evaluated in different contexts.
+        Full distribution arrays are used only to extract these statistics.
         """
-        features = [] if features is None else list(features)
-        feature_tuple = tuple(sorted(int(j) for j in features))
-        if n_bins is None:
-            effective_subset_size = (
-                max(1, len(feature_tuple))
-                if subset_size is None
-                else int(subset_size)
-            )
-            n_bins = self._resolve_n_bins_for_subset(effective_subset_size)
-
-        key = (feature_tuple, bool(y_included), int(n_bins))
-
-        if key in self._code_length_cache_:
-            return self._code_length_cache_[key]
-
-        columns = [self.X_[:, j] for j in feature_tuple]
-        numeric = [self.X_isnumeric_[j] for j in feature_tuple]
-
-        if y_included:
-            columns.append(self.y_)
-            numeric.append(self.y_isnumeric_)
-
-        value = (
-            0.0
-            if not columns
-            else self._code_length(columns, numeric, n_bins=int(n_bins))
-        )
-        self._code_length_cache_[key] = value
-        return value
-
-    def _empirical_summary_for_indices(
-        self,
-        features: list[int] | tuple[int, ...] | None = None,
-        y_included: bool = False,
-        *,
-        n_bins: int | None = None,
-        subset_size: int | None = None,
-    ):
-        """
-        Return the empirical summary for a feature subset and optional target.
-        """
-        features = [] if features is None else list(features)
-        feature_tuple = tuple(sorted(int(j) for j in features))
-        if n_bins is None:
-            effective_subset_size = (
-                max(1, len(feature_tuple))
-                if subset_size is None
-                else int(subset_size)
-            )
-            n_bins = self._resolve_n_bins_for_subset(effective_subset_size)
-
-        key = (feature_tuple, bool(y_included), int(n_bins))
-        if key in self._empirical_summary_cache_:
-            return self._empirical_summary_cache_[key]
+        feature_tuple = tuple(sorted(features))
+        key = (feature_tuple, y_included, n_bins)
+        if key in self._empirical_cache_:
+            return self._empirical_cache_[key]
 
         columns = [self.X_[:, j] for j in feature_tuple]
         numeric = [self.X_isnumeric_[j] for j in feature_tuple]
@@ -803,83 +743,34 @@ class Miscoding(BaseEstimator):
         summary = empirical_distribution_array(
             np.asarray(columns, dtype=object).T,
             numeric=numeric,
-            n_bins=int(n_bins),
+            n_bins=n_bins,
         )
-        self._empirical_summary_cache_[key] = summary
-        self._code_length_cache_[key] = float(summary.code_length)
-        return summary
-
-    def _conditional_target_length(self, selected) -> float:
-        """Return ``K(Y | X_S)`` for a selected feature subset ``S``."""
-        selected = list(selected)
-        subset_size = max(1, len(selected))
-        n_bins = self._resolve_n_bins_for_subset(subset_size)
-        return max(
-            0.0,
-            self._code_length_for_indices(
-                features=selected,
-                y_included=True,
-                n_bins=n_bins,
-            )
-            - self._code_length_for_indices(
-                features=selected,
-                y_included=False,
-                n_bins=n_bins,
-            ),
+        statistics = _EmpiricalStatistics(
+            code_length  = float(summary.code_length),
+            n_samples    = int(summary.n_samples),
+            n_states     = int(summary.n_states),
+            n_singletons = int(np.count_nonzero(summary.counts == 1)),
         )
-
-    def _conditional_feature_length(
-        self,
-        feature: int,
-        *,
-        selected,
-        y_included: bool,
-    ) -> float:
-        """
-        Estimate the conditional code length of one feature.
-
-        If ``y_included`` is false, the conditioning set is ``X_S``. If
-        ``y_included`` is true, the conditioning set is ``(X_S, Y)``.
-        """
-        selected = list(selected)
-        if feature in selected:
-            return 0.0
-
-        subset_size = max(1, len(selected) + 1)
-        n_bins = self._resolve_n_bins_for_subset(subset_size)
-        return max(
-            0.0,
-            self._code_length_for_indices(
-                features=selected + [int(feature)],
-                y_included=y_included,
-                n_bins=n_bins,
-            )
-            - self._code_length_for_indices(
-                features=selected,
-                y_included=y_included,
-                n_bins=n_bins,
-                subset_size=subset_size,
-            ),
-        )
+        self._empirical_cache_[key] = statistics
+        return statistics
 
     #
     # Redundancy and empirical subset diagnostics
     #
 
-    def _feature_redundancy_matrix(self, selected=None) -> np.ndarray:
+    def _feature_redundancy_matrix(self) -> np.ndarray:
         """
-        Assemble pairwise redundancy for selected features, or all features.
+        Assemble pairwise redundancy for all features.
 
         Redundancy is defined as ``1 - mu(X_i, X_j)``, where ``mu`` is the
         symmetric normalized code-length distance between the two feature
         strings. The diagonal is set to one.
         """
-        indices = list(range(self.n_features_in_)) if selected is None else list(selected)
-        redundancy = np.eye(len(indices), dtype=float)
+        redundancy = np.eye(self.n_features_in_, dtype=float)
 
-        for i in range(len(indices)):
-            for j in range(i + 1, len(indices)):
-                value = self._feature_pair_redundancy(indices[i], indices[j])
+        for i in range(self.n_features_in_):
+            for j in range(i + 1, self.n_features_in_):
+                value = self._feature_pair_redundancy(i, j)
                 redundancy[i, j] = value
                 redundancy[j, i] = value
 
@@ -887,18 +778,14 @@ class Miscoding(BaseEstimator):
 
     def _feature_pair_redundancy(self, i: int, j: int) -> float:
         """
-        Compute and cache the symmetric redundancy between two features.
+        Compute symmetric redundancy using cached empirical statistics.
         """
         if i == j:
             return 1.0
-        key = (min(i, j), max(i, j))
-        if key in self._pair_redundancy_cache_:
-            return self._pair_redundancy_cache_[key]
-
         n_bins = self._resolve_n_bins_for_subset(2)
-        k_i = float(self._code_length_for_indices(features=[i], n_bins=n_bins))
-        k_j = float(self._code_length_for_indices(features=[j], n_bins=n_bins))
-        k_ij = float(self._code_length_for_indices(features=[i, j], n_bins=n_bins))
+        k_i = self._empirical_statistics_for_indices(features=[i], n_bins=n_bins).code_length
+        k_j = self._empirical_statistics_for_indices(features=[j], n_bins=n_bins).code_length
+        k_ij = self._empirical_statistics_for_indices(features=[i, j], n_bins=n_bins).code_length
 
         denominator = max(k_i, k_j)
         if denominator <= 0.0:
@@ -906,26 +793,9 @@ class Miscoding(BaseEstimator):
         else:
             miscoding = (k_ij - min(k_i, k_j)) / denominator
             value = float(np.clip(1.0 - miscoding, 0.0, 1.0))
-        self._pair_redundancy_cache_[key] = value
         return value
 
-    def _redundancy_weights(self, selected: list[int]) -> np.ndarray:
-        """
-        Compute redundancy-discounting exponents for a selected subset.
-        """
-        if len(selected) == 0:
-            return np.array([], dtype=float)
-
-        matrix = (
-            self._feature_redundancy_matrix(selected)
-            if self._redundancy_matrix_ is None
-            else self._redundancy_matrix_[np.ix_(selected, selected)]
-        )
-        off_diagonal_sum = np.sum(matrix, axis=1) - np.diag(matrix)
-        return 1.0 / (1.0 + off_diagonal_sum)
-    
-
-    def _subset_measures(self, subset, *, include_weights: bool = True) -> dict[str, object]:
+    def _subset_measures(self, subset) -> dict[str, object]:
         """
         Compute empirical deficiency, surplus, and miscoding for a selected
         feature subset.
@@ -936,6 +806,21 @@ class Miscoding(BaseEstimator):
         mask = np.zeros(self.n_features_in_, dtype=bool)
         mask[selected] = True
 
+        values = self._empirical_subset_measures(selected)
+
+        return {
+            **values,
+            "mask"                   : mask,
+            "n_selected_features"    : len(selected),
+            "selected_features"      : selected,
+            "selected_feature_names" : [str(self.feature_names_in_[j]) for j in selected],
+        }
+
+    def _empirical_subset_measures(self, selected: list[int]) -> dict[str, object]:
+        """
+        Compute empirical subset deficiency, surplus, and miscoding.
+        """
+        selected = list(selected)
         if len(selected) == 0:
             deficiency = 0.0 if self.target_code_length_ <= 0.0 else 1.0
             return {
@@ -950,108 +835,33 @@ class Miscoding(BaseEstimator):
                 "mean_joint_occupancy"     : None,
                 "n_singleton_joint_states" : None,
                 "singleton_fraction"       : None,
-                "mask"          : mask,
-                "n_selected_features"      : 0,
-                "selected_features" : [],
-                "selected_feature_names"   : [],
-                **({"redundancy_weights": np.array([], dtype=float),
-                    "feature_weights": np.array([], dtype=float)} if include_weights else {}),
-            }
-
-        selected_array = np.asarray(selected, dtype=int)
-        weights = {}
-        if include_weights:
-            alpha = self._redundancy_weights(selected)
-            weights = {"redundancy_weights": alpha,
-                       "feature_weights": alpha * self.feature_code_lengths_[selected_array]}
-        values = self._empirical_subset_measures(selected)
-
-        return {
-            "deficiency"               : float(values["deficiency"]),
-            "surplus"                  : float(values["surplus"]),
-            "miscoding"                : float(values["miscoding"]),
-            "is_reliable"              : bool(values["is_reliable"]),
-            "failure_reason"           : values["failure_reason"],
-            "resolved_n_bins"          : values["resolved_n_bins"],
-            "n_samples"                : values["n_samples"],
-            "n_observed_joint_states"  : values["n_observed_joint_states"],
-            "mean_joint_occupancy"     : values["mean_joint_occupancy"],
-            "n_singleton_joint_states" : values["n_singleton_joint_states"],
-            "singleton_fraction"       : values["singleton_fraction"],
-            "mask"          : mask,
-            "n_selected_features"      : int(np.sum(mask)),
-            "selected_features" : selected,
-            "selected_feature_names"   : [str(self.feature_names_in_[j]) for j in selected],
-            **weights,
-        }
-
-    def _empirical_subset_deficiency(self, selected: list[int]) -> float:
-        """
-        Compute empirical ``K(Y | X_S) / K(Y)`` for a non-empty subset.
-        """
-        return self._empirical_subset_measures(selected)["deficiency"]
-
-    def _empirical_subset_surplus(self, selected: list[int]) -> float:
-        """
-        Compute empirical ``K(X_S | Y) / K(X_S)`` for a non-empty subset.
-        """
-        return self._empirical_subset_measures(selected)["surplus"]
-
-    def _empirical_subset_measures(self, selected: list[int]) -> dict[str, object]:
-        """
-        Compute empirical subset deficiency, surplus, and miscoding.
-        """
-        selected = list(selected)
-        if len(selected) == 0:
-            deficiency = 0.0 if self.target_code_length_ <= 0.0 else 1.0
-            return {
-                "deficiency": deficiency,
-                "surplus": 0.0,
-                "miscoding": deficiency,
-                "is_reliable": True,
-                "failure_reason": None,
-                "resolved_n_bins": None,
-                "n_samples": int(self.n_samples_in_),
-                "n_observed_joint_states": None,
-                "mean_joint_occupancy": None,
-                "n_singleton_joint_states": None,
-                "singleton_fraction": None,
             }
 
         n_bins = self._resolve_n_bins_for_subset(len(selected))
-        joint_summary = self._empirical_summary_for_indices(
-            features=selected,
-            y_included=True,
-            n_bins=n_bins,
+        joint_statistics = self._empirical_statistics_for_indices(
+            features   = selected,
+            y_included = True,
+            n_bins     = n_bins,
         )
-        reliability = self._joint_reliability_diagnostics(joint_summary)
-        reliability["resolved_n_bins"] = (
-            n_bins if self.y_isnumeric_ or any(self.X_isnumeric_[j] for j in selected)
-            else None
+        reliability = self._joint_reliability_diagnostics(
+            joint_statistics,
+            resolved_n_bins=(
+                n_bins if self.y_isnumeric_ or any(self.X_isnumeric_[j] for j in selected)
+                else None
+            ),
         )
 
         if not reliability["is_reliable"]:
             return {
-                "deficiency": float("nan"),
-                "surplus": float("nan"),
-                "miscoding": float("nan"),
+                "deficiency" : float("nan"),
+                "surplus"    : float("nan"),
+                "miscoding"  : float("nan"),
                 **reliability,
             }
 
-        x_summary = self._empirical_summary_for_indices(
-            features=selected,
-            y_included=False,
-            n_bins=n_bins,
-        )
-        y_summary = self._empirical_summary_for_indices(
-            features=[],
-            y_included=True,
-            n_bins=n_bins,
-            subset_size=len(selected),
-        )
-        k_xy = float(joint_summary.code_length)
-        k_x = float(x_summary.code_length)
-        k_y = float(y_summary.code_length)
+        k_x = self._empirical_statistics_for_indices(features=selected, n_bins=n_bins).code_length
+        k_y = self._empirical_statistics_for_indices(y_included=True,   n_bins=n_bins).code_length
+        k_xy = joint_statistics.code_length
 
         deficiency = (
             0.0
@@ -1065,35 +875,38 @@ class Miscoding(BaseEstimator):
         )
 
         return {
-            "deficiency": deficiency,
-            "surplus": surplus,
-            "miscoding": max(deficiency, surplus),
+            "deficiency" : deficiency,
+            "surplus"    : surplus,
+            "miscoding"  : max(deficiency, surplus),
             **reliability,
         }
 
     @staticmethod
-    def _joint_reliability_diagnostics(summary) -> dict[str, object]:
+    def _joint_reliability_diagnostics(
+        statistics: _EmpiricalStatistics, *, resolved_n_bins: int | None,
+    ) -> dict[str, object]:
         """
         Return reliability metadata for an observed joint distribution.
         """
-        n_samples = int(summary.n_samples)
-        n_states = int(summary.n_states)
-        mean_occupancy = float(n_samples / n_states)
-        n_singletons = int(np.sum(np.asarray(summary.counts, dtype=float) == 1.0))
+        n_samples          = statistics.n_samples
+        n_states           = statistics.n_states
+        mean_occupancy     = float(n_samples / n_states)
+        n_singletons       = statistics.n_singletons
         singleton_fraction = float(n_singletons / n_states)
-        is_reliable = (
+        is_reliable        = (
             mean_occupancy >= 2.0
             and singleton_fraction <= 0.5
         )
 
         return {
-            "is_reliable": bool(is_reliable),
-            "failure_reason": None if is_reliable else _SPARSE_JOINT_FAILURE,
-            "n_samples": n_samples,
-            "n_observed_joint_states": n_states,
-            "mean_joint_occupancy": mean_occupancy,
-            "n_singleton_joint_states": n_singletons,
-            "singleton_fraction": singleton_fraction,
+            "is_reliable"              : bool(is_reliable),
+            "failure_reason"           : None if is_reliable else _SPARSE_JOINT_FAILURE,
+            "resolved_n_bins"          : resolved_n_bins,
+            "n_samples"                : n_samples,
+            "n_observed_joint_states"  : n_states,
+            "mean_joint_occupancy"     : mean_occupancy,
+            "n_singleton_joint_states" : n_singletons,
+            "singleton_fraction"       : singleton_fraction,
         }
 
     def _candidate_extensions(
@@ -1113,22 +926,12 @@ class Miscoding(BaseEstimator):
                 continue
 
             candidate_subset = selected + [feature]
-            values           = self._subset_measures(candidate_subset, include_weights=False)
+            values           = self._empirical_subset_measures(candidate_subset)
 
             rows.append({
                 "feature_index": feature,
                 "feature_name": str(self.feature_names_in_[feature]),
-                "deficiency": float(values["deficiency"]),
-                "surplus": float(values["surplus"]),
-                "miscoding": float(values["miscoding"]),
-                "is_reliable": bool(values["is_reliable"]),
-                "failure_reason": values["failure_reason"],
-                "resolved_n_bins": values["resolved_n_bins"],
-                "n_samples": values["n_samples"],
-                "n_observed_joint_states": values["n_observed_joint_states"],
-                "mean_joint_occupancy": values["mean_joint_occupancy"],
-                "n_singleton_joint_states": values["n_singleton_joint_states"],
-                "singleton_fraction": values["singleton_fraction"],
+                **values,
                 "deficiency_improvement": self._finite_difference(
                     current["deficiency"],
                     values["deficiency"],
@@ -1214,11 +1017,14 @@ class Miscoding(BaseEstimator):
         if max_features is None:
             return int(self.n_features_in_)
 
-        max_features = int(max_features)
-        if max_features < 0:
-            raise ValueError("max_features must be non-negative.")
+        if (
+            isinstance(max_features, (bool, np.bool_))
+            or not isinstance(max_features, (int, np.integer))
+            or max_features < 0
+        ):
+            raise ValueError("max_features must be a non-negative integer or None.")
 
-        return min(max_features, int(self.n_features_in_))
+        return min(int(max_features), int(self.n_features_in_))
 
     @classmethod
     def _validate_ranking_criterion(cls, criterion: str) -> None:
@@ -1236,7 +1042,7 @@ class Miscoding(BaseEstimator):
         Resolve the numeric bin count for a feature subset size.
         """
         return _resolve_bins(
-            self._fitted_n_bins_, self.n_samples_in_, subset_size=subset_size
+            "adaptive", self.n_samples_in_, subset_size=subset_size
         )
 
     #
@@ -1252,8 +1058,6 @@ class Miscoding(BaseEstimator):
             return []
 
         arr = np.asarray(selected)
-        if arr.size == 0:
-            return []
         if arr.ndim != 1:
             raise ValueError("selected must be a one-dimensional mask or index list.")
 
@@ -1261,6 +1065,8 @@ class Miscoding(BaseEstimator):
             if arr.size != self.n_features_in_:
                 raise ValueError("Boolean masks must match the fitted feature dimension.")
             indices = np.flatnonzero(arr).tolist()
+        elif arr.size == 0:
+            return []
         elif arr.dtype.kind in "iu":
             indices = arr.tolist()
         else:
@@ -1331,83 +1137,74 @@ class Miscoding(BaseEstimator):
 #
 
 
-def feature_analysis(*, X, y, X_type: XType = "auto", y_type: YType = "auto",
-                     n_bins: BinSpec = "adaptive") -> pd.DataFrame:
+def feature_analysis(*, X, y, X_type: XType = "auto", y_type: YType = "auto") -> pd.DataFrame:
     """
     Return feature analysis using a functional interface.
     """
-    metric = Miscoding(X_type=X_type, y_type=y_type, n_bins=n_bins).fit(X, y)
+    metric = Miscoding(X_type=X_type, y_type=y_type).fit(X, y)
     return metric.feature_analysis()
 
 
-def redundancy_matrix(*, X, y, X_type: XType = "auto", y_type: YType = "auto",
-                      n_bins: BinSpec = "adaptive") -> pd.DataFrame:
+def redundancy_matrix(*, X, y, X_type: XType = "auto", y_type: YType = "auto") -> pd.DataFrame:
     """
     Return pairwise feature redundancy using a functional interface.
     """
-    metric = Miscoding(X_type=X_type, y_type=y_type, n_bins=n_bins).fit(X, y)
+    metric = Miscoding(X_type=X_type, y_type=y_type).fit(X, y)
     return metric.redundancy_matrix()
 
 
-def miscoding_subset(subset, *, X, y, X_type: XType = "auto", y_type: YType = "auto",
-                     n_bins: BinSpec = "adaptive") -> float:
+def miscoding_subset(subset, *, X, y, X_type: XType = "auto", y_type: YType = "auto") -> float:
     """
     Return a subset-level miscoding quantity using a functional interface.
     """
-    metric = Miscoding(X_type=X_type, y_type=y_type, n_bins=n_bins).fit(X, y)
+    metric = Miscoding(X_type=X_type, y_type=y_type).fit(X, y)
     return metric.miscoding_subset(subset)
 
 
-def deficiency_subset(subset, *, X, y, X_type: XType = "auto", y_type: YType = "auto",
-                       n_bins: BinSpec = "adaptive") -> float:
+def deficiency_subset(subset, *, X, y, X_type: XType = "auto", y_type: YType = "auto") -> float:
     """Compute subset deficiency from evaluation data."""
-    return Miscoding(X_type=X_type, y_type=y_type, n_bins=n_bins).fit(X, y).deficiency_subset(subset)
+    return Miscoding(X_type=X_type, y_type=y_type).fit(X, y).deficiency_subset(subset)
 
 
-def surplus_subset(subset, *, X, y, X_type: XType = "auto", y_type: YType = "auto",
-                    n_bins: BinSpec = "adaptive") -> float:
+def surplus_subset(subset, *, X, y, X_type: XType = "auto", y_type: YType = "auto") -> float:
     """Compute subset surplus from evaluation data."""
-    return Miscoding(X_type=X_type, y_type=y_type, n_bins=n_bins).fit(X, y).surplus_subset(subset)
+    return Miscoding(X_type=X_type, y_type=y_type).fit(X, y).surplus_subset(subset)
 
 
 def miscoding_feature(feature=None, *, X, y, X_type: XType = "auto",
-                      y_type: YType = "auto", n_bins: BinSpec = "adaptive"):
+                      y_type: YType = "auto"):
     """Compute one feature's miscoding or all feature values in input order."""
-    return Miscoding(X_type=X_type, y_type=y_type, n_bins=n_bins).fit(X, y).miscoding_feature(feature)
+    return Miscoding(X_type=X_type, y_type=y_type).fit(X, y).miscoding_feature(feature)
 
 
 def deficiency_feature(feature=None, *, X, y, X_type: XType = "auto",
-                        y_type: YType = "auto", n_bins: BinSpec = "adaptive"):
+                        y_type: YType = "auto"):
     """Compute one feature's deficiency or all values in input order."""
-    return Miscoding(X_type=X_type, y_type=y_type, n_bins=n_bins).fit(X, y).deficiency_feature(feature)
+    return Miscoding(X_type=X_type, y_type=y_type).fit(X, y).deficiency_feature(feature)
 
 
 def surplus_feature(feature=None, *, X, y, X_type: XType = "auto",
-                     y_type: YType = "auto", n_bins: BinSpec = "adaptive"):
+                     y_type: YType = "auto"):
     """Compute one feature's surplus or all values in input order."""
-    return Miscoding(X_type=X_type, y_type=y_type, n_bins=n_bins).fit(X, y).surplus_feature(feature)
+    return Miscoding(X_type=X_type, y_type=y_type).fit(X, y).surplus_feature(feature)
 
 
-def subset_analysis(subset, *, X, y, X_type: XType = "auto", y_type: YType = "auto",
-                    n_bins: BinSpec = "adaptive", include_weights: bool = True) -> dict[str, object]:
+def subset_analysis(subset, *, X, y, X_type: XType = "auto", y_type: YType = "auto") -> dict[str, object]:
     """Return empirical subset diagnostics, including reliability information."""
-    return Miscoding(X_type=X_type, y_type=y_type, n_bins=n_bins).fit(X, y).subset_analysis(
-        subset, include_weights=include_weights)
+    return Miscoding(X_type=X_type, y_type=y_type).fit(X, y).subset_analysis(subset)
 
 
 def miscoding_model(model, *, X, y, feature_names=None, feature_indices=None,
-                    X_type: XType = "auto", y_type: YType = "auto",
-                    n_bins: BinSpec = "adaptive") -> float:
+                    X_type: XType = "auto", y_type: YType = "auto") -> float:
     """Compute fitted-model miscoding from evaluation data."""
-    return Miscoding(X_type=X_type, y_type=y_type, n_bins=n_bins).fit(X, y).miscoding_model(
+    return Miscoding(X_type=X_type, y_type=y_type).fit(X, y).miscoding_model(
         model, feature_names=feature_names, feature_indices=feature_indices)
 
 
 def model_analysis(model, *, X, y, feature_names=None, feature_indices=None,
-                   X_type: XType = "auto", y_type: YType = "auto",
-                   n_bins: BinSpec = "adaptive") -> dict[str, object]:
+                   X_type: XType = "auto", y_type: YType = "auto") -> dict[str, object]:
     """Analyze the effective feature subset of a fitted model."""
-    return Miscoding(X_type=X_type, y_type=y_type, n_bins=n_bins).fit(X, y).model_analysis(
+    return Miscoding(X_type=X_type, y_type=y_type).fit(X, y).model_analysis(
         model, feature_names=feature_names, feature_indices=feature_indices)
 
 
@@ -1421,17 +1218,16 @@ def select_features(
     include_redundancy: bool = True,
     X_type: XType = "auto",
     y_type: YType = "auto",
-    n_bins: BinSpec = "adaptive",
 ):
     """
     Select features using a functional interface.
     """
-    metric = Miscoding(X_type=X_type, y_type=y_type, n_bins=n_bins).fit(X, y)
+    metric = Miscoding(X_type=X_type, y_type=y_type).fit(X, y)
     return metric.select_features(
-        max_features=max_features,
-        min_improvement=min_improvement,
-        return_details=return_details,
-        include_redundancy=include_redundancy,
+        max_features       = max_features,
+        min_improvement    = min_improvement,
+        return_details     = return_details,
+        include_redundancy = include_redundancy,
     )
 
 
@@ -1445,12 +1241,11 @@ def rank_features(
     include_redundancy: bool = True,
     X_type: XType = "auto",
     y_type: YType = "auto",
-    n_bins: BinSpec = "adaptive",
 ):
     """
     Rank features using a functional interface.
     """
-    metric = Miscoding(X_type=X_type, y_type=y_type, n_bins=n_bins).fit(X, y)
+    metric = Miscoding(X_type=X_type, y_type=y_type).fit(X, y)
     return metric.rank_features(
         max_features=max_features,
         criterion=criterion,

@@ -56,13 +56,9 @@ def _assert_explicit_model_string(model_string: str, original_feature_names=()):
 
 
 def test_supported_regression_models_produce_artifacts_and_nescience():
-    X, y = make_regression(
-        n_samples=80,
-        n_features=4,
-        n_informative=2,
-        noise=0.1,
-        random_state=42,
-    )
+    rng = np.random.default_rng(42)
+    X = rng.integers(0, 2, size=(240, 4)).astype(float)
+    y = X[:, 0] + 2 * X[:, 1] + rng.normal(scale=0.01, size=len(X))
     feature_names = ["long_feature_a", "long_feature_b", "long_feature_c", "long_feature_d"]
 
     models = [
@@ -76,7 +72,7 @@ def test_supported_regression_models_produce_artifacts_and_nescience():
         ),
     ]
 
-    metric = Nescience(X_type="numeric", y_type="numeric", n_bins=2).fit(X, y)
+    metric = Nescience(X_type="numeric", y_type="numeric").fit(X, y)
 
     for model in models:
         model.fit(X, y)
@@ -129,15 +125,10 @@ def test_supported_classification_models_produce_artifacts_and_nescience(
     model,
     X_transform,
 ):
-    X_raw, y = make_classification(
-        n_samples=100,
-        n_features=5,
-        n_informative=3,
-        n_redundant=0,
-        random_state=42,
-    )
+    X_raw = np.random.default_rng(42).integers(0, 2, size=(200, 5)).astype(float)
+    y = (X_raw[:, :3].sum(axis=1) > 1).astype(int)
     X = X_transform(X_raw)
-    metric = Nescience(X_type="numeric", y_type="categorical", n_bins=2).fit(X, y)
+    metric = Nescience(X_type="numeric", y_type="categorical").fit(X, y)
 
     model.fit(X, y)
     artifacts = sklearn_model_artifacts(model, X)
@@ -295,7 +286,7 @@ def test_candidate_evaluator_uses_fixed_adapter_policy():
         n_redundant=0,
         random_state=42,
     )
-    metric = Nescience(X_type="numeric", y_type="categorical", n_bins=3).fit(X, y)
+    metric = Nescience(X_type="numeric", y_type="categorical").fit(X, y)
     evaluator = CandidateEvaluator(
         X=X,
         y=y,

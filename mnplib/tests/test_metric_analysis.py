@@ -39,11 +39,11 @@ def test_categorical_prediction_analysis_reports_code_lengths_and_counts():
     assert report == prediction_analysis(predictions, y=y)
 
 
-@pytest.mark.parametrize("n_bins,expected_bins", [(2, 2), ("auto", 3), ("adaptive", 3)])
-def test_numeric_prediction_analysis_reports_errors_and_resolved_bins(n_bins, expected_bins):
+def test_numeric_prediction_analysis_reports_errors_and_resolved_bins():
+    expected_bins = 3
     y = np.array([0., 1., 2., 3.])
     predictions = np.array([0., 2., 1., 5.])
-    metric = Inaccuracy(y_type="numeric", n_bins=n_bins).fit_y(y)
+    metric = Inaccuracy(y_type="numeric").fit_y(y)
     report = metric.prediction_analysis(predictions)
 
     assert report["y_type"] == "numeric"
@@ -56,7 +56,7 @@ def test_numeric_prediction_analysis_reports_errors_and_resolved_bins(n_bins, ex
                          ("joint_code_length_bits", [predictions, y])]:
         summary = empirical_distribution_array(np.column_stack(columns), n_bins=expected_bins)
         assert report[key] == pytest.approx(summary.code_length)
-    assert report == prediction_analysis(predictions, y=y, y_type="numeric", n_bins=n_bins)
+    assert report == prediction_analysis(predictions, y=y, y_type="numeric")
 
 
 def test_information_inaccuracy_and_classification_error_are_distinct():
@@ -99,12 +99,12 @@ def test_model_analysis_uses_fitted_feature_coordinates_and_labels():
 
     for cls, functional, key in [(Inaccuracy, inaccuracy_model_analysis, "inaccuracy"),
                                   (Surfeit, surfeit_model_analysis, "surfeit")]:
-        metric = cls(n_bins=3).fit(X, y)
+        metric = cls().fit(X, y)
         implicit = metric.model_analysis(model, feature_indices=selected)
         explicit = metric.model_analysis(model, X=local_X, feature_indices=selected,
                                          feature_names=list(local_X.columns))
         assert implicit == explicit
-        assert implicit == functional(model, X=X, y=y, n_bins=3, feature_indices=selected)
+        assert implicit == functional(model, X=X, y=y, feature_indices=selected)
         assert implicit[key] == pytest.approx(
             getattr(metric, f"{key}_model")(model, feature_indices=selected))
 
@@ -209,9 +209,9 @@ def test_model_analysis_and_nescience_share_corrected_surfeit():
     X = np.tile([[0., 0.], [1., 0.], [0., 1.], [1., 1.]], (50, 1))
     y = X[:, 0] + 2 * X[:, 1]
     model = LinearRegression().fit(X, y)
-    report = Surfeit(n_bins=2).fit(X, y).model_analysis(model)
+    report = Surfeit().fit(X, y).model_analysis(model)
     expected = 1 - report["reference_code_length_bits"] / report["model_code_length_bits"]
-    explanation = Nescience(n_bins=2).fit(X, y).model_analysis(model)
+    explanation = Nescience().fit(X, y).model_analysis(model)
 
     assert report["model_string"] == explanation["model_string"]
     assert report["surfeit"] == pytest.approx(expected)

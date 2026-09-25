@@ -40,7 +40,6 @@ def test_constructor_defaults():
     metric = Surfeit()
 
     assert metric.y_type == "auto"
-    assert metric.n_bins == "auto"
     assert metric.zlib_level == 9
     assert metric.zlib_overhead == 6
 
@@ -77,7 +76,7 @@ def test_fit_sets_fitted_attributes_for_numeric_target():
     X = np.array([[0.0], [0.1], [1.0], [1.1], [0.2], [1.2]])
     y = np.array([1.0, 1.1, 2.0, 2.1, 1.2, 2.2])
 
-    metric = Surfeit(y_type="numeric", n_bins=2).fit(X, y)
+    metric = Surfeit(y_type="numeric").fit(X, y)
 
     assert metric.is_fitted_ is True
     assert metric.y_isnumeric_ is True
@@ -258,7 +257,6 @@ def test_surfeit_model_matches_automl_candidate_artifact_surfeit():
     )
     automl = NescienceRegressor(
         models=["linear_regression"],
-        n_bins=2,
         max_feature_prefixes=2,
     ).fit(X, y)
     result = automl.best_result_
@@ -395,7 +393,7 @@ def test_constant_target_yields_unit_surfeit_for_nonempty_description():
 def test_manual_y_type_numeric_overrides_auto_detection():
     y = np.array([0, 1, 2, 3])
 
-    metric = Surfeit(y_type="numeric", n_bins=2).fit_y(y)
+    metric = Surfeit(y_type="numeric").fit_y(y)
 
     assert metric.y_isnumeric_ is True
 
@@ -403,7 +401,7 @@ def test_manual_y_type_numeric_overrides_auto_detection():
 def test_manual_y_type_categorical_overrides_auto_detection():
     y = np.array([0.0, 1.0, 2.0, 3.0])
 
-    metric = Surfeit(y_type="categorical", n_bins=2).fit_y(y)
+    metric = Surfeit(y_type="categorical").fit_y(y)
 
     assert metric.y_isnumeric_ is False
 
@@ -419,7 +417,7 @@ def test_auto_target_type_detects_binary_as_categorical():
 def test_auto_target_type_detects_continuous_as_numeric():
     y = np.array([0.1, 0.2, 0.3, 0.4])
 
-    metric = Surfeit(y_type="auto", n_bins=2).fit_y(y)
+    metric = Surfeit(y_type="auto").fit_y(y)
 
     assert metric.y_isnumeric_ is True
 

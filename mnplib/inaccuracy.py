@@ -21,7 +21,7 @@ from sklearn.utils import check_X_y
 from sklearn.utils.multiclass import type_of_target
 from sklearn.utils.validation import check_is_fitted
 
-from ._types import BinSpec, YType
+from ._types import YType
 from .utils import (
     _resolve_bins,
     _validate_vector,
@@ -44,26 +44,19 @@ class Inaccuracy(BaseEstimator):
     ``prediction_analysis()`` and ``model_analysis()`` return flat reports with
     code lengths, descriptive joint-state counts, and conventional error metrics.
 
+    Numeric targets use ``max(2, floor(2 * n_samples**(1/3)))`` uniform bins.
+    This target-based count is shared by the target, predictions, and their
+    joint distribution.
+
     Parameters
     ----------
     y_type : {"auto", "numeric", "categorical"}, default="auto"
         Encoding strategy for the target variable.
-
-    n_bins : int, "auto", or "adaptive", default="auto"
-        Number of uniform bins used for numeric targets. ``"auto"`` uses
-        ``max(2, floor(2 * n_samples**(1/3)))``. ``"adaptive"`` is equivalent
-        for target-only quantities. The target-based count is applied to the
-        target, prediction, and joint distributions to keep them consistent.
-        Integer counts must be at least two; bin settings are validated during fit.
     """
 
     _VALID_Y_TYPES = get_args(YType)
 
-    def __init__(
-        self,
-        y_type: YType = "auto",
-        n_bins: BinSpec = "auto",
-    ):
+    def __init__(self, y_type: YType = "auto"):
         """Initialize the estimator configuration."""
         if y_type not in self._VALID_Y_TYPES:
             raise ValueError(
@@ -72,7 +65,6 @@ class Inaccuracy(BaseEstimator):
             )
 
         self.y_type = y_type
-        self.n_bins = n_bins
 
     def fit(self, X, y):
         """
@@ -185,7 +177,7 @@ class Inaccuracy(BaseEstimator):
             "n_samples": int(self.n_samples_in_),
             "y_type": "numeric" if self.y_isnumeric_ else "categorical",
             "resolved_n_bins": (
-                _resolve_bins(self.n_bins, n_samples=self.n_samples_in_)
+                _resolve_bins("auto", n_samples=self.n_samples_in_)
                 if self.y_isnumeric_ else None
             ),
             "target_code_length_bits": float(self.len_y_),
@@ -241,7 +233,7 @@ class Inaccuracy(BaseEstimator):
         numeric/categorical type as the fitted target. Marginal and joint
         distributions share the target-only bin count.
         """
-        bins = _resolve_bins(self.n_bins, n_samples=self.y_.size)
+        bins = _resolve_bins("auto", n_samples=self.y_.size)
         if len(columns) == 1:
             return empirical_distribution_vector(
                 columns[0], numeric=self.y_isnumeric_, n_bins=bins,
@@ -330,38 +322,29 @@ def inaccuracy_predictions(
     *,
     y,
     y_type: YType = "auto",
-    n_bins: BinSpec = "auto",
 ) -> float:
     """
     Compute inaccuracy directly from true and predicted target vectors.
 
     This convenience function does not require a feature matrix or a model.
     """
-    metric = Inaccuracy(
-        y_type=y_type,
-        n_bins=n_bins,
-    )
-
-    metric.fit_y(y)
-
-    return metric.inaccuracy_predictions(predictions)
+    return Inaccuracy(y_type=y_type).fit_y(y).inaccuracy_predictions(predictions)
 
 
 def inaccuracy_model(model, *, X, y, feature_names=None, feature_indices=None,
-                      y_type: YType = "auto", n_bins: BinSpec = "auto") -> float:
+                      y_type: YType = "auto") -> float:
     """Compute a fitted model's inaccuracy on evaluation data."""
-    return Inaccuracy(y_type=y_type, n_bins=n_bins).fit(X, y).inaccuracy_model(
+    return Inaccuracy(y_type=y_type).fit(X, y).inaccuracy_model(
         model, feature_names=feature_names, feature_indices=feature_indices)
 
 
-def prediction_analysis(predictions, *, y, y_type: YType = "auto",
-                        n_bins: BinSpec = "auto") -> dict[str, object]:
+def prediction_analysis(predictions, *, y, y_type: YType = "auto") -> dict[str, object]:
     """Analyze predictions using code lengths and conventional error metrics."""
-    return Inaccuracy(y_type=y_type, n_bins=n_bins).fit_y(y).prediction_analysis(predictions)
+    return Inaccuracy(y_type=y_type).fit_y(y).prediction_analysis(predictions)
 
 
 def model_analysis(model, *, X, y, feature_names=None, feature_indices=None,
-                   y_type: YType = "auto", n_bins: BinSpec = "auto") -> dict[str, object]:
+                   y_type: YType = "auto") -> dict[str, object]:
     """Return prediction diagnostics for a fitted model on evaluation data."""
-    return Inaccuracy(y_type=y_type, n_bins=n_bins).fit(X, y).model_analysis(
+    return Inaccuracy(y_type=y_type).fit(X, y).model_analysis(
         model, feature_names=feature_names, feature_indices=feature_indices)

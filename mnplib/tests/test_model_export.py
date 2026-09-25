@@ -52,14 +52,13 @@ def _model_input(model, X):
 def fitted_automl(request):
     automl_class, family, model_class = request.param
     rng = np.random.default_rng(42)
-    values = rng.normal(size=(120, 4)) * [1, 5, 0.2, 2] + [0, 10, 3, -5]
+    values = rng.choice([-1.0, 1.0], size=(120, 4)) * [1, 5, 0.2, 2] + [0, 10, 3, -5]
     X = pd.DataFrame(values, columns=["a", "b", "c", "d"])
     y = values[:, 1] - 10 + values[:, 3] + 5
     if automl_class is NescienceClassifier:
         y = (y > 0).astype(int)
     model = automl_class(
         models=[family],
-        n_bins=2,
         max_feature_prefixes=3,
         random_state=42,
         search_options={"mlp": {"max_candidates": 1, "max_iter": 10}},
