@@ -91,7 +91,7 @@ Reports expose resolved bin counts where relevant. Sparse subset distributions r
 from sklearn.datasets import load_iris
 from sklearn.tree import DecisionTreeClassifier
 from mnplib.inaccuracy import Inaccuracy
-from pprint import pprint
+from mnplib.reporting import format_analysis
 
 X, y = load_iris(return_X_y=True)
 
@@ -102,7 +102,7 @@ inaccuracy = Inaccuracy()
 inaccuracy.fit(X, y)
 
 report = inaccuracy.model_analysis(model)
-pprint(report)
+print(format_analysis(report))
 ```
 
 #### Surfeit
@@ -113,7 +113,7 @@ pprint(report)
 from sklearn.datasets import load_iris
 from sklearn.tree import DecisionTreeClassifier
 from mnplib.surfeit import Surfeit
-from pprint import pprint
+from mnplib.reporting import format_analysis
 
 X, y = load_iris(return_X_y=True)
 
@@ -124,7 +124,7 @@ surfeit = Surfeit()
 surfeit.fit(X, y)
 
 report = surfeit.model_analysis(model)
-pprint(report)
+print(format_analysis(report))
 ```
 
 #### Nescience
@@ -135,7 +135,7 @@ pprint(report)
 from sklearn.datasets import load_iris
 from sklearn.tree import DecisionTreeClassifier
 from mnplib.nescience import Nescience
-from pprint import pprint
+from mnplib.reporting import format_analysis
 
 X, y = load_iris(return_X_y=True)
 
@@ -146,8 +146,43 @@ nescience = Nescience()
 nescience.fit(X, y)
 
 report = nescience.model_analysis(model)
-pprint(report)
+print(format_analysis(report))
 ```
+
+#### Text Reports
+
+Analysis methods return dictionaries or DataFrames. Use `format_analysis()` for
+an aligned text summary in a notebook, terminal, or log:
+
+```python
+from mnplib.reporting import format_analysis
+
+selected_features = miscoding.select_features()
+report = miscoding.subset_analysis(selected_features)
+print(format_analysis(report))
+print(format_analysis(miscoding.feature_analysis()))
+```
+
+| Class | Supported report methods |
+| --- | --- |
+| `Miscoding` | `subset_analysis()`, `model_analysis()`, `feature_analysis()` |
+| `Inaccuracy` | `prediction_analysis()`, `model_analysis()` |
+| `Surfeit` | `description_analysis()`, `model_analysis()` |
+| `Nescience` | `analysis()`, `model_analysis()` |
+| `NescienceClassifier`, `NescienceRegressor` | `analysis()` |
+| `TimeSeries` | `analysis()`, `lag_analysis()` |
+| `AnomalyDetector` | `analysis()` |
+
+Functional analysis helpers return the same supported structures. Formatting
+does not fit or score a model, modify a report, or print automatically. Summaries
+include metric values, relevant context, and available reliability diagnostics.
+Code lengths are labeled in bits; accuracy is shown as a percentage. AutoML
+estimator scores are identified as training-data scores, not held-out results.
+Model-description strings and prediction arrays are omitted, long feature lists
+are abbreviated, and tables show at most 20 rows. The structured report remains
+available for programmatic use.
+
+See [Reporting.ipynb](examples/Reporting.ipynb) for examples covering every class.
 
 ### Automated Machine Learning
 
@@ -177,7 +212,7 @@ The auto-classification class in `mnplib` automatically searches for a good clas
 ```python
 from sklearn.datasets import load_breast_cancer
 from mnplib.classifier import NescienceClassifier
-from pprint import pprint
+from mnplib.reporting import format_analysis
 
 X, y = load_breast_cancer(return_X_y=True)
 
@@ -186,7 +221,7 @@ model.fit(X, y)
 
 predictions = model.predict(X)
 
-pprint(model.analysis())
+print(format_analysis(model.analysis()))
 ```
 
 #### Auto Regression
@@ -196,7 +231,7 @@ The auto-regressor class in `mnplib` automatically searches for a good regressio
 ```python
 from sklearn.datasets import load_diabetes
 from mnplib.regressor import NescienceRegressor
-from pprint import pprint
+from mnplib.reporting import format_analysis
 
 X, y = load_diabetes(return_X_y=True)
 
@@ -205,7 +240,7 @@ model.fit(X, y)
 
 predictions = model.predict(X)
 
-pprint(model.analysis())
+print(format_analysis(model.analysis()))
 ```
 
 ### User Guide
