@@ -11,6 +11,7 @@ import numpy as np
 from sklearn.utils.validation import check_is_fitted
 
 from ..._types import ResolvedTask
+from ...utils import _resolve_feature_names
 from ..artifacts import ModelArtifacts
 
 # Fixed canonical model-string policy used by all sklearn serializers.
@@ -45,7 +46,7 @@ class SklearnSerializer(ABC):
 
         n_features = int(model.n_features_in_)
         if feature_names is not None:
-            resolve_feature_names(
+            _resolve_feature_names(
                 X,
                 feature_names=feature_names,
                 n_features=n_features,
@@ -127,30 +128,6 @@ def class_token(index: int) -> str:
     Return the compact class reference for a class index.
     """
     return class_token_template.format(index=int(index))
-
-
-def resolve_feature_names(X, *, feature_names=None, n_features: int | None = None) -> list[str]:
-    """
-    Resolve feature names from explicit names, a DataFrame, or generated names.
-    """
-    if n_features is None:
-        n_features = int(getattr(X, "shape")[1])
-
-    if feature_names is None:
-        if hasattr(X, "columns"):
-            names = [str(name) for name in X.columns]
-        else:
-            names = [f"x{i}" for i in range(n_features)]
-    else:
-        names = [str(name) for name in feature_names]
-
-    if len(names) != n_features:
-        raise ValueError(
-            "feature_names must have length {}. Got {} names instead."
-            .format(n_features, len(names))
-        )
-
-    return names
 
 
 def resolve_feature_indices(feature_indices=None, *, n_features: int) -> list[int]:

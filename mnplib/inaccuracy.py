@@ -24,6 +24,7 @@ from sklearn.utils.validation import check_is_fitted
 from ._types import YType
 from .utils import (
     _resolve_bins,
+    _resolve_feature_names,
     _validate_vector,
     empirical_distribution_array,
     empirical_distribution_vector,
@@ -85,10 +86,7 @@ class Inaccuracy(BaseEstimator):
         self.X_, self.y_ = check_X_y(X, y, dtype=None, ensure_2d=True)
         self.X_ = self.X_.copy()
         self._model_X_ = X.copy(deep=True) if isinstance(X, pd.DataFrame) else self.X_
-        self.feature_names_in_ = np.asarray(
-            getattr(X, "columns", [f"x{i}" for i in range(self.X_.shape[1])]),
-            dtype=object,
-        ).copy()
+        self.feature_names_in_ = np.fromiter(_resolve_feature_names(X), dtype=object)
         self._fit_target(self.y_)
         self.n_features_in_ = self.X_.shape[1]
 
@@ -209,8 +207,8 @@ class Inaccuracy(BaseEstimator):
         if not hasattr(model, "predict"):
             raise TypeError("model must implement a predict(X) method.")
         source = model_input(self, model, X=X, feature_indices=feature_indices)
-        if feature_names is not None and len(feature_names) != np.shape(source)[1]:
-            raise ValueError("feature_names must match the estimator input columns.")
+        if feature_names is not None:
+            _resolve_feature_names(source, feature_names=feature_names)
         return model.predict(source)
 
     def _fit_target(self, y) -> None:

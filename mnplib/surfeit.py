@@ -26,7 +26,7 @@ from sklearn.utils.validation import check_is_fitted
 
 from ._types import YType
 from .models.inputs import model_artifacts
-from .utils import _validate_vector, empirical_distribution_vector
+from .utils import _resolve_feature_names, _validate_vector, empirical_distribution_vector
 
 
 _ZLIB_LEVEL = 9
@@ -89,15 +89,12 @@ class Surfeit(BaseEstimator):
         self : Surfeit
             Fitted estimator.
         """
-        feature_names = self._feature_names_from_input(X)
         y = _validate_vector(y, name="y")
         self.X_, self.y_ = check_X_y(X, y, dtype=None, ensure_2d=True)
         self._fit_target(self.y_)
         self.n_features_in_ = self.X_.shape[1]
-        self._model_X_ = X if feature_names is not None else self.X_
-        if feature_names is None:
-            feature_names = [f"x{i}" for i in range(self.n_features_in_)]
-        self.feature_names_in_ = np.asarray(feature_names, dtype=object)
+        self._model_X_ = X if hasattr(X, "columns") else self.X_
+        self.feature_names_in_ = np.fromiter(_resolve_feature_names(X), dtype=object)
 
         return self
 
@@ -302,14 +299,6 @@ class Surfeit(BaseEstimator):
         """Return serializer artifacts for a fitted estimator."""
         return model_artifacts(self, model, X=X, feature_names=feature_names,
                                feature_indices=feature_indices, allow_dummy=True)
-
-
-    @staticmethod
-    def _feature_names_from_input(X):
-        """Return column names from a tabular input when available."""
-        if hasattr(X, "columns"):
-            return list(X.columns)
-        return None
 
 
     def _clear_feature_metadata(self) -> None:

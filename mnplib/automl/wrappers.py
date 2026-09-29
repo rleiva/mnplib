@@ -13,6 +13,8 @@ from sklearn.metrics import accuracy_score, r2_score
 from sklearn.pipeline import Pipeline
 from sklearn.utils import check_array
 
+from ..utils import _resolve_feature_names
+
 
 class SelectedFeaturesEstimator:
     """
@@ -31,10 +33,9 @@ class SelectedFeaturesEstimator:
         self.estimator = estimator
         self.selected_features = tuple(int(index) for index in selected_features)
         self.n_features_in_ = int(n_features_in)
-        self.feature_names_in_ = (
-            np.asarray(feature_names, dtype=object)
-            if feature_names is not None
-            else np.asarray([f"x{i}" for i in range(self.n_features_in_)], dtype=object)
+        self.feature_names_in_ = np.fromiter(
+            _resolve_feature_names(feature_names=feature_names, n_features=self.n_features_in_),
+            dtype=object,
         )
         self.transformer = transformer
 

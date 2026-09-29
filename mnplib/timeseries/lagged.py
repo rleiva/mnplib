@@ -17,6 +17,8 @@ import pandas as pd
 
 from sklearn.utils import check_array, column_or_1d
 
+from ..utils import _resolve_feature_names
+
 
 WindowSize = int | Literal["auto"]
 
@@ -120,14 +122,14 @@ class LaggedRepresentationBuilder:
                 raise ValueError(f"X and y have inconsistent lengths: {len(X)} != {n_samples}.")
             if not all(pd.api.types.is_numeric_dtype(dtype) for dtype in X.dtypes):
                 raise ValueError("TimeSeries requires numeric exogenous variables.")
-            return X.to_numpy(dtype=float), tuple(str(column) for column in X.columns)
+            return X.to_numpy(dtype=float), tuple(str(name) for name in _resolve_feature_names(X))
 
         X_array = check_array(X, dtype=float, ensure_2d=True)
         if X_array.shape[0] != n_samples:
             raise ValueError(f"X and y have inconsistent lengths: {X_array.shape[0]} != {n_samples}.")
         if not np.all(np.isfinite(X_array)):
             raise ValueError("X must contain only finite numeric values.")
-        return X_array, tuple(f"x{j}" for j in range(X_array.shape[1]))
+        return X_array, tuple(_resolve_feature_names(X_array))
 
     @classmethod
     def to_supervised(

@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 from sklearn.utils.validation import check_is_fitted
 
+from ..utils import _resolve_feature_names
 from .artifacts import ModelArtifacts
 from .sklearn import sklearn_model_artifacts
 
@@ -63,10 +64,7 @@ def model_artifacts(metric, model, *, X=None, feature_names=None,
     if names is None:
         names = getattr(metric, "feature_names_in_", None)
         if names is not None and feature_indices is not None:
-            names = np.asarray(names, dtype=object)[list(feature_indices)]
-    if names is None:
-        names = getattr(source, "columns", None)
-    if names is None:
-        names = [f"x{i}" for i in range(np.shape(source)[1])]
+            names = [names[index] for index in feature_indices]
+    names = _resolve_feature_names(source, feature_names=names)
     return sklearn_model_artifacts(model, source, feature_names=names,
                                    feature_indices=feature_indices)

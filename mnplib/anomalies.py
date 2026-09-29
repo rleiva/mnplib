@@ -34,7 +34,7 @@ from ._types import ResolvedTask, Task, XType
 from .classifier import NescienceClassifier
 from .miscoding import Miscoding
 from .regressor import NescienceRegressor
-from .utils import _resolve_bins
+from .utils import _resolve_bins, _resolve_feature_names
 
 
 AnomalyKind = Literal["all", "misclassified", "under_predicted", "over_predicted"]
@@ -126,7 +126,7 @@ class AnomalyDetector(BaseEstimator):
         self.X_ = X_checked
         self.X_frame_ = X_frame
         self.y_ = y_checked
-        self.feature_names_in_ = np.asarray(feature_names, dtype=object)
+        self.feature_names_in_ = np.fromiter(feature_names, dtype=object)
         self.n_samples_in_, self.n_features_in_ = self.X_.shape
         self.n_bins_ = _resolve_bins("auto", self.n_samples_in_)
         self.task_ = self._resolve_task(self.y_)
@@ -688,20 +688,13 @@ class AnomalyDetector(BaseEstimator):
             )
 
     @staticmethod
-    def _prepare_X_y(X, y) -> tuple[np.ndarray, np.ndarray, list[str], pd.DataFrame]:
+    def _prepare_X_y(X, y) -> tuple[np.ndarray, np.ndarray, list[object], pd.DataFrame]:
         """Validate input data while preserving feature names and DataFrame types."""
-        if isinstance(X, pd.DataFrame):
-            feature_names = [str(column) for column in X.columns]
-            source_frame = X.copy().reset_index(drop=True)
-            source_frame.columns = feature_names
-        else:
-            feature_names = None
-            source_frame = None
-
         X_checked, y_checked = check_X_y(X, y, dtype=None, ensure_2d=True)
-
-        if feature_names is None:
-            feature_names = [f"x{i}" for i in range(X_checked.shape[1])]
+        feature_names = _resolve_feature_names(X)
+        if isinstance(X, pd.DataFrame):
+            source_frame = X.copy().reset_index(drop=True)
+        else:
             source_frame = pd.DataFrame(X_checked, columns=feature_names)
 
         return (

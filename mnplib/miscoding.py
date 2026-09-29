@@ -30,7 +30,12 @@ from sklearn.utils.multiclass import type_of_target
 from sklearn.utils.validation import check_is_fitted
 
 from ._types import XType, YType
-from .utils import _resolve_bins, _validate_vector, empirical_distribution_array
+from .utils import (
+    _resolve_bins,
+    _resolve_feature_names,
+    _validate_vector,
+    empirical_distribution_array,
+)
 from .models.inputs import model_artifacts
 from ._diagnostics import warn_nan_model
 
@@ -667,10 +672,7 @@ class Miscoding(BaseEstimator):
         """
         y_arr = _validate_vector(y, name="y")
         X_arr, y_arr = check_X_y(X, y_arr, dtype=None, ensure_2d=True)
-        self.feature_names_in_ = np.asarray(
-            getattr(X, "columns", [f"x{i}" for i in range(X_arr.shape[1])]),
-            dtype=object,
-        ).copy()
+        self.feature_names_in_ = np.fromiter(_resolve_feature_names(X), dtype=object)
         return X_arr.copy(), y_arr.copy()
 
     def _infer_X_isnumeric(self, X_original, X_array: np.ndarray) -> list[bool]:

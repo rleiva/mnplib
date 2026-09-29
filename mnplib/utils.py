@@ -92,6 +92,49 @@ class EmpiricalSummary:
 # Validation and encoding
 #
 
+def _resolve_feature_names(
+    X=None, *, feature_names=None, n_features: int | None = None,
+) -> list[object]:
+    """Return independent feature labels matching the input dimension.
+
+    Explicit names take precedence over DataFrame columns. Unnamed inputs use
+    ``x0``, ``x1``, and so on. Column labels retain their original types.
+    Supply ``n_features`` when no feature matrix is available.
+    """
+    if n_features is not None and (
+        isinstance(n_features, (bool, np.bool_))
+        or not isinstance(n_features, (int, np.integer))
+        or n_features < 0
+    ):
+        raise ValueError("n_features must be a non-negative integer.")
+
+    if X is not None:
+        shape = np.shape(X)
+        if len(shape) != 2:
+            raise ValueError("X must be a two-dimensional feature matrix.")
+        if n_features is not None and n_features != shape[1]:
+            raise ValueError("n_features must match the number of columns in X.")
+        n_features = shape[1]
+    if n_features is None:
+        raise ValueError("Provide X or n_features to resolve feature names.")
+
+    if feature_names is None:
+        feature_names = getattr(X, "columns", None)
+    if feature_names is None:
+        return [f"x{i}" for i in range(n_features)]
+    if isinstance(feature_names, (str, bytes)) or getattr(feature_names, "ndim", 1) != 1:
+        raise ValueError("feature_names must be a one-dimensional sequence of labels.")
+    try:
+        names = list(feature_names)
+    except TypeError as exc:
+        raise ValueError("feature_names must be a one-dimensional sequence of labels.") from exc
+    if len(names) != n_features:
+        raise ValueError(
+            f"feature_names must have length {n_features}. Got {len(names)} names instead."
+        )
+    return names
+
+
 def _validate_vector(values, *, name):
     """Require a non-empty one-dimensional vector without reshaping it."""
     array = np.asarray(values)

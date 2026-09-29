@@ -33,6 +33,7 @@ from .automl.searchers import (
     SearchContext,
 )
 from .nescience import Nescience
+from .utils import _resolve_feature_names
 
 
 SUPPORTED_MODELS = (
@@ -104,14 +105,13 @@ class NescienceRegressor(RegressorMixin, BaseEstimator):
         Fit selected internal searchers and choose minimum nescience.
         """
         model_names          = self._resolve_model_names()
-        feature_names        = self._resolve_input_feature_names(X)
         X_checked, y_checked = check_X_y(X, y, dtype=None, ensure_2d=True)
 
         self.X_ = X_checked
         self.y_ = y_checked
         self.n_samples_in_, self.n_features_in_ = X_checked.shape
         self.model_names_ = tuple(model_names)
-        self.feature_names_in_ = np.asarray(feature_names, dtype=object)
+        self.feature_names_in_ = np.fromiter(_resolve_feature_names(X), dtype=object)
 
         self.nescience_ = Nescience(
             X_type=self.X_type,
@@ -371,14 +371,3 @@ class NescienceRegressor(RegressorMixin, BaseEstimator):
             f"{result.name}: nescience={result.nescience:.6f}, "
             f"estimator_score={result.estimator_score:.6f}"
         )
-
-    @staticmethod
-    def _resolve_input_feature_names(X) -> list[str]:
-        """
-        Return stable feature names for pandas and array-like inputs.
-        """
-        if hasattr(X, "columns"):
-            return [str(name) for name in X.columns]
-
-        n_features = int(getattr(X, "shape")[1])
-        return [f"x{i}" for i in range(n_features)]
