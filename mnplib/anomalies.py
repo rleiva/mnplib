@@ -27,14 +27,13 @@ import pandas as pd
 
 from sklearn.base import BaseEstimator
 from sklearn.utils import check_X_y
-from sklearn.utils.multiclass import type_of_target
 from sklearn.utils.validation import check_is_fitted
 
 from ._types import ResolvedTask, Task, XType
 from .classifier import NescienceClassifier
 from .miscoding import Miscoding
 from .regressor import NescienceRegressor
-from .utils import _resolve_bins, _resolve_feature_names
+from .utils import _resolve_bins, _resolve_feature_names, _resolve_y_isnumeric
 
 
 AnomalyKind = Literal["all", "misclassified", "under_predicted", "over_predicted"]
@@ -721,18 +720,7 @@ class AnomalyDetector(BaseEstimator):
         if self.task in get_args(ResolvedTask):
             return self.task
 
-        target_type = type_of_target(y)
-
-        if target_type in ("binary", "multiclass"):
-            return "classification"
-
-        if target_type == "continuous":
-            return "regression"
-
-        raise ValueError(
-            "Unsupported target type {!r}. Supported targets are binary, "
-            "multiclass, and continuous.".format(target_type)
-        )
+        return "regression" if _resolve_y_isnumeric(y) else "classification"
 
     @staticmethod
     def _numeric_vector(values, *, name: str) -> np.ndarray:

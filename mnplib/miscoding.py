@@ -26,13 +26,13 @@ import pandas as pd
 
 from sklearn.base import BaseEstimator
 from sklearn.utils import check_X_y
-from sklearn.utils.multiclass import type_of_target
 from sklearn.utils.validation import check_is_fitted
 
 from ._types import XType, YType
 from .utils import (
     _resolve_bins,
     _resolve_feature_names,
+    _resolve_y_isnumeric,
     _validate_vector,
     empirical_distribution_array,
 )
@@ -182,7 +182,7 @@ class Miscoding(BaseEstimator):
         self._model_X_ = X.copy(deep=True) if isinstance(X, pd.DataFrame) else self.X_
         self.n_samples_in_, self.n_features_in_ = self.X_.shape
         self.X_isnumeric_ = self._infer_X_isnumeric(X, self.X_)
-        self.y_isnumeric_ = self._infer_y_isnumeric(self.y_)
+        self.y_isnumeric_ = _resolve_y_isnumeric(self.y_, y_type=self.y_type)
 
         n_bins = self._resolve_n_bins_for_subset(1)
 
@@ -700,25 +700,6 @@ class Miscoding(BaseEstimator):
             ]
         )
 
-    def _infer_y_isnumeric(self, y: np.ndarray) -> bool:
-        """Infer whether the target should be encoded as numeric or categorical."""
-        if self.y_type == "numeric":
-            return True
-        if self.y_type == "categorical":
-            return False
-
-        target_type = type_of_target(y)
-        if target_type in ("binary", "multiclass"):
-            return False
-        if target_type == "continuous":
-            return True
-
-        raise ValueError(
-            "Unsupported target type {!r}. Supported one-dimensional target "
-            "types are binary, multiclass, and continuous."
-            .format(target_type)
-        )
-
     #
     # Empirical distribution statistics
     #
@@ -1138,7 +1119,6 @@ class Miscoding(BaseEstimator):
 #
 # Functional interface
 #
-
 
 def feature_analysis(*, X, y, X_type: XType = "auto", y_type: YType = "auto") -> pd.DataFrame:
     """

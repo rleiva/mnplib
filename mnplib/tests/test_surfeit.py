@@ -338,9 +338,9 @@ def test_effective_compressed_length_subtracts_overhead_and_clips():
     ) == 100
 
 
-def test_compress_bytes_uses_fixed_level(monkeypatch):
+def test_description_lengths_uses_fixed_compression_level(monkeypatch):
     metric = Surfeit()
-    data = b"abcabcabcabcabcabc"
+    model_string = "abcabcabcabcabcabc"
     levels = []
     compress = zlib.compress
 
@@ -350,10 +350,11 @@ def test_compress_bytes_uses_fixed_level(monkeypatch):
 
     monkeypatch.setattr(zlib, "compress", record_compression)
 
-    compressed = metric._compress_bytes(data)
+    lengths = metric.description_lengths(model_string)
 
-    assert isinstance(compressed, bytes)
-    assert compressed == compress(data, level=9)
+    data = model_string.encode("utf-8")
+    assert lengths["model_length"] == len(data)
+    assert lengths["model_compressed_length"] == len(compress(data, level=9))
     assert levels == [9]
 
 

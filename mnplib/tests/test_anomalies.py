@@ -19,6 +19,29 @@ def data():
     return X, X["signal"].to_numpy()
 
 
+@pytest.mark.parametrize("values,task,expected", [
+    ([0, 1, 2, 3], "auto", "classification"),
+    ([0., 1., 2., 3.], "auto", "classification"),
+    ([False, True, False, True], "auto", "classification"),
+    (["a", "b", "c", "d"], "auto", "classification"),
+    ([0.1, 0.2, 0.3, 0.4], "auto", "regression"),
+    ([0, 1, 2, 3], "regression", "regression"),
+    ([0.1, 0.2, 0.3, 0.4], "classification", "classification"),
+])
+def test_target_inference_and_explicit_task_selection(data, values, task, expected):
+    X, _ = data
+    y = np.tile(values, len(X) // len(values))
+    metric = AnomalyDetector(task=task).fit(X, y, predictions=y)
+    assert metric.task_ == expected
+    assert metric.anomalies().size == 0
+
+
+def test_automatic_task_rejects_unsupported_target_types(data):
+    X, y = data
+    with pytest.raises(ValueError, match="Unsupported target type 'unknown'"):
+        AnomalyDetector().fit(X, y.astype(object), predictions=y)
+
+
 def test_regression_bin_mismatches_and_direction(data):
     X, y = data
     predictions = y.copy()

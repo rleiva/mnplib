@@ -18,13 +18,13 @@ import pandas as pd
 
 from sklearn.base import BaseEstimator
 from sklearn.utils import check_X_y
-from sklearn.utils.multiclass import type_of_target
 from sklearn.utils.validation import check_is_fitted
 
 from ._types import YType
 from .utils import (
     _resolve_bins,
     _resolve_feature_names,
+    _resolve_y_isnumeric,
     _validate_vector,
     empirical_distribution_array,
     empirical_distribution_vector,
@@ -215,7 +215,7 @@ class Inaccuracy(BaseEstimator):
         """Fit target-dependent attributes."""
         self._validate_y_type()
         self.y_ = _validate_vector(y, name="y").copy()
-        self.y_isnumeric_ = self._infer_y_isnumeric(self.y_)
+        self.y_isnumeric_ = _resolve_y_isnumeric(self.y_, y_type=self.y_type)
         self.len_y_ = float(self._empirical_summary(self.y_).code_length)
         self.n_samples_in_ = self.y_.shape[0]
         self.is_fitted_ = True
@@ -275,35 +275,6 @@ class Inaccuracy(BaseEstimator):
         # Empirical estimates and floating-point arithmetic may occasionally
         # produce tiny negative values or tiny values above one.
         return float(np.clip(inacc, 0.0, 1.0))
-
-    def _infer_y_isnumeric(self, y: np.ndarray) -> bool:
-        """
-        Infer whether the target should be treated as numeric.
-
-        Returns
-        * bool
-              True for numeric/regression targets, False for categorical targets.
-        """
-        if self.y_type == "numeric":
-            return True
-
-        if self.y_type == "categorical":
-            return False
-
-        target_type = type_of_target(y)
-
-        if target_type in ("binary", "multiclass"):
-            return False
-
-        if target_type == "continuous":
-            return True
-
-        raise ValueError(
-            "Unsupported target type {!r}. Supported one-dimensional target "
-            "types are binary, multiclass, and continuous. You may also set "
-            "y_type explicitly to 'numeric' or 'categorical'."
-            .format(target_type)
-        )
 
     def _validate_predictions(self, predictions) -> np.ndarray:
         """

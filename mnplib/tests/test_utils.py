@@ -11,6 +11,7 @@ from mnplib.utils import (
     _as_1d_array,
     _code_length_from_counts,
     _resolve_bins,
+    _resolve_y_isnumeric,
     _validate_vector,
     discretize_vector,
     empirical_distribution_array,
@@ -40,6 +41,52 @@ def test_utils_public_api():
     assert public_functions == {
         "discretize_vector", "empirical_distribution_vector", "empirical_distribution_array"
     }
+
+
+# ---------------------------------------------------------------------------
+# Target encoding
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("y,expected", [
+    ([0, 1, 0, 1], False),
+    ([0, 1, 2, 3], False),
+    ([0., 1., 2., 3.], False),
+    ([True, False, True], False),
+    (["a", "b", "c"], False),
+    (np.ones(4), False),
+    ([0.1, 0.2, 0.3, 0.4], True),
+    (np.full(4, 0.5), True),
+    (pd.Series(["a", "b", "a"], dtype="category"), False),
+])
+def test_resolve_y_isnumeric_infers_target_semantics(y, expected):
+    assert _resolve_y_isnumeric(y) is expected
+
+
+@pytest.mark.parametrize("y_type,expected", [("numeric", True), ("categorical", False)])
+def test_explicit_target_encoding_bypasses_inference(monkeypatch, y_type, expected):
+    def unexpected_inference(y):
+        pytest.fail("Explicit target encoding must not infer a target type.")
+
+    monkeypatch.setattr(utils, "type_of_target", unexpected_inference)
+    assert _resolve_y_isnumeric([0, 1, 2], y_type=y_type) is expected
+
+
+@pytest.mark.parametrize("y_type", ["invalid", None, True, 1])
+def test_resolve_y_isnumeric_rejects_invalid_policy(y_type):
+    with pytest.raises(ValueError, match="Valid options for 'y_type'"):
+        _resolve_y_isnumeric([0, 1], y_type=y_type)
+
+
+@pytest.mark.parametrize("y", [
+    np.array([1, 2], dtype=object),
+    [[0, 1], [1, 0]],
+    [[0, 2], [1, 3]],
+    [[0.1, 0.2], [0.3, 0.4]],
+])
+def test_resolve_y_isnumeric_rejects_unsupported_automatic_target_types(y):
+    with pytest.raises(ValueError, match="Unsupported target type"):
+        _resolve_y_isnumeric(y)
 
 
 # ---------------------------------------------------------------------------

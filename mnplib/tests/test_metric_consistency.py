@@ -92,6 +92,55 @@ def test_high_level_configuration_exposes_only_estimator_options(cls):
         cls().set_params(n_bins=3)
 
 
+@pytest.mark.parametrize("values,y_type,expected", [
+    ([0, 1, 2, 3], "auto", False),
+    ([0., 1., 2., 3.], "auto", False),
+    ([False, True, False, True], "auto", False),
+    (["a", "b", "a", "b"], "auto", False),
+    ([0.1, 0.2, 0.3, 0.4], "auto", True),
+    ([0, 1, 2, 3], "numeric", True),
+    (["0.1", "0.2", "0.3", "0.4"], "numeric", True),
+    ([0.1, 0.2, 0.3, 0.4], "categorical", False),
+])
+def test_metric_components_agree_on_target_encoding(values, y_type, expected):
+    y = np.tile(values, 30)
+    X = np.tile([[0.], [1.], [2.], [3.]], (30, 1))
+    metric = Nescience(y_type=y_type).fit(X, y)
+    miscoding_metric = Miscoding(y_type=y_type).fit(X, y)
+    inaccuracy_metric = Inaccuracy(y_type=y_type).fit(X, y)
+    surfeit_metric = Surfeit(y_type=y_type).fit(X, y)
+    for component in (
+        metric.miscoding_, metric.inaccuracy_, metric.surfeit_,
+        miscoding_metric, inaccuracy_metric, surfeit_metric,
+    ):
+        assert component.y_isnumeric_ is expected
+    target_length = empirical_distribution_vector(y, numeric=expected).code_length
+    assert metric.miscoding_.target_code_length_ == target_length
+    assert metric.inaccuracy_.len_y_ == metric.surfeit_.len_y_ == target_length
+    assert miscoding_metric.target_code_length_ == target_length
+    assert inaccuracy_metric.len_y_ == surfeit_metric.len_y_ == target_length
+
+
+@pytest.mark.parametrize("cls", CLASSES)
+def test_metric_fitting_rejects_invalid_target_policy_after_set_params(cls, data):
+    metric = cls().set_params(y_type="invalid")
+    with pytest.raises(ValueError, match="y_type"):
+        metric.fit(*data)
+
+
+@pytest.mark.parametrize("cls", [Inaccuracy, Surfeit])
+def test_target_only_fitting_rejects_invalid_policy_after_set_params(cls, data):
+    metric = cls().set_params(y_type="invalid")
+    with pytest.raises(ValueError, match="y_type"):
+        metric.fit_y(data[1])
+
+
+@pytest.mark.parametrize("cls", CLASSES)
+def test_metric_fitting_rejects_unsupported_automatic_target_types(cls):
+    with pytest.raises(ValueError, match="Unsupported target type 'unknown'"):
+        cls().fit(np.zeros((4, 1)), np.array([0, 1, 2, 3], dtype=object))
+
+
 @pytest.mark.parametrize("n_samples", [30, 100, 500])
 @pytest.mark.parametrize("y_type", ["numeric", "categorical"])
 def test_component_target_code_lengths_share_vector_policy(n_samples, y_type):

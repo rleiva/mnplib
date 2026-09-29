@@ -187,7 +187,7 @@ def test_surfeit_reference_limits_use_bits(n_samples, compressed_bytes,
                                           reference_source, reference_bits, monkeypatch):
     y = np.tile([0, 1], n_samples // 2)
     metric = Surfeit().fit_y(y)
-    monkeypatch.setattr(metric, "_compress_bytes", lambda data: b"x" * compressed_bytes)
+    monkeypatch.setattr(zlib, "compress", lambda data, *, level: b"x" * compressed_bytes)
     report = metric.description_analysis("x" * 20)
 
     assert report["model_code_length_bits"] == 160

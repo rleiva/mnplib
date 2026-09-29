@@ -39,16 +39,18 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from typing import get_args
 
 import numpy as np
 import pandas as pd
+from sklearn.utils.multiclass import type_of_target
 from sklearn.utils.validation import (
     check_array,
     check_consistent_length,
     column_or_1d,
 )
 
-from ._types import BinSpec
+from ._types import BinSpec, YType
 
 
 __all__ = [
@@ -133,6 +135,33 @@ def _resolve_feature_names(
             f"feature_names must have length {n_features}. Got {len(names)} names instead."
         )
     return names
+
+
+def _resolve_y_isnumeric(y, *, y_type: YType = "auto") -> bool:
+    """Resolve the encoding policy for a validated one-dimensional target.
+
+    Explicit policies take precedence over inference. Automatic inference
+    treats binary and multiclass targets as categorical, including numeric
+    class labels, and continuous targets as numeric.
+    """
+    if y_type not in get_args(YType):
+        raise ValueError(
+            f"Valid options for 'y_type' are {get_args(YType)}. Got y_type={y_type!r} instead."
+        )
+    if y_type == "numeric":
+        return True
+    if y_type == "categorical":
+        return False
+
+    target_type = type_of_target(y)
+    if target_type in ("binary", "multiclass"):
+        return False
+    if target_type == "continuous":
+        return True
+    raise ValueError(
+        f"Unsupported target type {target_type!r}. Supported one-dimensional "
+        "target types are binary, multiclass, and continuous."
+    )
 
 
 def _validate_vector(values, *, name):
