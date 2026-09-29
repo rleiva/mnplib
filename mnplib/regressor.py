@@ -67,10 +67,6 @@ class NescienceRegressor(RegressorMixin, BaseEstimator):
     max_feature_prefixes : int or None, default=None
         Maximum number of ranked feature prefixes evaluated by searchers. If
         ``None``, every feature can appear in the prefix sequence.
-    zlib_level : int, default=9
-        Compression level forwarded to the surfeit component.
-    zlib_overhead : int, default=6
-        Estimated zlib wrapper overhead forwarded to the surfeit component.
     random_state : int, RandomState instance, or None, default=None
         Random state forwarded to stochastic searchers and estimators.
     search_options : mapping, optional
@@ -89,8 +85,6 @@ class NescienceRegressor(RegressorMixin, BaseEstimator):
         weights: Mapping[str, float] | None = None,
         feature_ranking_criterion: str = "deficiency",
         max_feature_prefixes: int | None = None,
-        zlib_level: int = 9,
-        zlib_overhead: int = 6,
         random_state=None,
         search_options: Mapping[str, Mapping[str, object]] | None = None,
         verbose: int = 0,
@@ -101,8 +95,6 @@ class NescienceRegressor(RegressorMixin, BaseEstimator):
         self.weights = weights
         self.feature_ranking_criterion = feature_ranking_criterion
         self.max_feature_prefixes = max_feature_prefixes
-        self.zlib_level = zlib_level
-        self.zlib_overhead = zlib_overhead
         self.random_state = random_state
         self.search_options = search_options
         self.verbose = verbose
@@ -126,8 +118,6 @@ class NescienceRegressor(RegressorMixin, BaseEstimator):
             y_type="numeric",
             aggregation=self.aggregation,
             weights=self.weights,
-            zlib_level=self.zlib_level,
-            zlib_overhead=self.zlib_overhead,
         )
         self.nescience_.fit(self.X_, self.y_)
 

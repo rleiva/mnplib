@@ -29,9 +29,6 @@ _METRIC_FIELDS = {
     ),
     "inaccuracy": (
         ("inaccuracy", "Inaccuracy", ".4f"),
-        ("accuracy", "Accuracy", ".2%"),
-        ("mae", "MAE", ".4f"),
-        ("rmse", "RMSE", ".4f"),
     ),
     "surfeit": (
         ("surfeit", "Surfeit", ".4f"),
@@ -86,9 +83,10 @@ def format_analysis(report: Mapping[str, object] | pd.DataFrame) -> str:
     Feature-analysis and lag-analysis DataFrames are also supported. Functional
     analysis helpers return the same supported report structures.
 
-    Scores use four decimal places, accuracy uses percentages, and code lengths
-    use three decimal places in bits. Nonfinite values and subset failures are
-    explicit. AutoML scores are labeled with their recorded evaluation context.
+    Scores use four decimal places and code lengths use three decimal places
+    in bits. Nonfinite values and subset failures are explicit. AutoML scores
+    are labeled with their recorded evaluation context; classification scores
+    use percentages.
     Only supplied hyperparameters are displayed; no model defaults are inferred.
 
     Dictionary summaries wrap at 78 characters and feature lists show at most

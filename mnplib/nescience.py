@@ -87,12 +87,6 @@ class Nescience(BaseEstimator):
         Component weights in the order ``deficiency``, ``surplus``,
         ``inaccuracy``, and ``surfeit``. If a mapping is supplied, valid keys
         are those component names. Missing mapping keys default to 1.0.
-
-    zlib_level : int, default=9
-        Compression level used by ``Surfeit``.
-
-    zlib_overhead : int, default=6
-        zlib wrapper overhead subtracted by ``Surfeit``.
     """
 
     component_names_ = ("deficiency", "surplus", "inaccuracy", "surfeit")
@@ -107,24 +101,18 @@ class Nescience(BaseEstimator):
         y_type: YType = "auto",
         aggregation: Aggregation = "euclidean",
         weights: Mapping[str, float] | Sequence[float] | None = None,
-        zlib_level: int = 9,
-        zlib_overhead: int = 6,
     ):
         """Initialize the estimator configuration."""
         self._validate_init(
             X_type=X_type,
             y_type=y_type,
             aggregation=aggregation,
-            zlib_level=zlib_level,
-            zlib_overhead=zlib_overhead,
         )
 
         self.X_type = X_type
         self.y_type = y_type
         self.aggregation = aggregation
         self.weights = weights
-        self.zlib_level = int(zlib_level)
-        self.zlib_overhead = int(zlib_overhead)
 
     def fit(self, X, y):
         """
@@ -165,11 +153,7 @@ class Nescience(BaseEstimator):
         )
         self.inaccuracy_.fit_y(y_checked)
 
-        self.surfeit_ = Surfeit(
-            y_type=self.y_type,
-            zlib_level=self.zlib_level,
-            zlib_overhead=self.zlib_overhead,
-        )
+        self.surfeit_ = Surfeit(y_type=self.y_type)
         self.surfeit_.fit_y(y_checked)
 
         self.is_fitted_ = True
@@ -454,8 +438,6 @@ class Nescience(BaseEstimator):
         X_type,
         y_type,
         aggregation,
-        zlib_level,
-        zlib_overhead,
     ) -> None:
         """
         Validate constructor arguments before storing them on the estimator.
@@ -478,17 +460,6 @@ class Nescience(BaseEstimator):
                 .format(cls._VALID_AGGREGATIONS, aggregation)
             )
 
-        zlib_level = int(zlib_level)
-        if zlib_level < 0 or zlib_level > 9:
-            raise ValueError(
-                "zlib_level must be an integer between 0 and 9. "
-                f"Got zlib_level={zlib_level!r} instead."
-            )
-
-        zlib_overhead = int(zlib_overhead)
-        if zlib_overhead < 0:
-            raise ValueError("zlib_overhead must be non-negative.")
-
 
 def nescience(
     *,
@@ -501,8 +472,6 @@ def nescience(
     y_type: YType = "auto",
     aggregation: Aggregation = "euclidean",
     weights: Mapping[str, float] | Sequence[float] | None = None,
-    zlib_level: int = 9,
-    zlib_overhead: int = 6,
 ) -> float:
     """
     Compute scalar nescience using a functional interface.
@@ -524,7 +493,7 @@ def nescience(
     model_string : str
         String description of the model.
 
-    X_type, y_type, aggregation, weights, zlib_level, zlib_overhead
+    X_type, y_type, aggregation, weights
         Configuration with the same meaning as in ``Nescience``.
 
     Returns
@@ -533,8 +502,7 @@ def nescience(
         Aggregated nescience value.
     """
     metric = Nescience(X_type=X_type, y_type=y_type, aggregation=aggregation,
-                       weights=weights, zlib_level=zlib_level,
-                       zlib_overhead=zlib_overhead).fit(X, y)
+                       weights=weights).fit(X, y)
     return metric.nescience(
         subset=subset,
         predictions=predictions,
@@ -553,15 +521,12 @@ def nescience_components(
     y_type: YType = "auto",
     aggregation: Aggregation = "euclidean",
     weights: Mapping[str, float] | Sequence[float] | None = None,
-    zlib_level: int = 9,
-    zlib_overhead: int = 6,
 ) -> dict[str, float]:
     """
     Compute the four scalar nescience components using a functional interface.
     """
     metric = Nescience(X_type=X_type, y_type=y_type, aggregation=aggregation,
-                       weights=weights, zlib_level=zlib_level,
-                       zlib_overhead=zlib_overhead).fit(X, y)
+                       weights=weights).fit(X, y)
     return metric.components(
         subset=subset,
         predictions=predictions,
@@ -574,12 +539,10 @@ def nescience_model(
     X_type: XType = "auto", y_type: YType = "auto",
     aggregation: Aggregation = "euclidean",
     weights: Mapping[str, float] | Sequence[float] | None = None,
-    zlib_level: int = 9, zlib_overhead: int = 6,
 ) -> float:
     """Compute fitted-model nescience on evaluation data."""
     metric = Nescience(X_type=X_type, y_type=y_type, aggregation=aggregation,
-                       weights=weights, zlib_level=zlib_level,
-                       zlib_overhead=zlib_overhead).fit(X, y)
+                       weights=weights).fit(X, y)
     return metric.nescience_model(
         model, feature_names=feature_names, feature_indices=feature_indices)
 
@@ -589,11 +552,9 @@ def model_analysis(
     X_type: XType = "auto", y_type: YType = "auto",
     aggregation: Aggregation = "euclidean",
     weights: Mapping[str, float] | Sequence[float] | None = None,
-    zlib_level: int = 9, zlib_overhead: int = 6,
 ) -> dict[str, object]:
     """Explain fitted-model nescience, including subset reliability."""
     metric = Nescience(X_type=X_type, y_type=y_type, aggregation=aggregation,
-                       weights=weights, zlib_level=zlib_level,
-                       zlib_overhead=zlib_overhead).fit(X, y)
+                       weights=weights).fit(X, y)
     return metric.model_analysis(
         model, feature_names=feature_names, feature_indices=feature_indices)

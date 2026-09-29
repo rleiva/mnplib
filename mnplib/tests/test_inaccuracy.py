@@ -3,11 +3,13 @@ Tests for prediction-vector and fitted-model inaccuracy computation.
 """
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from sklearn.tree       import DecisionTreeClassifier, DecisionTreeRegressor
 from sklearn.exceptions import NotFittedError
 from sklearn.datasets   import load_breast_cancer
+from sklearn.utils.validation import check_is_fitted
 
 from mnplib.inaccuracy import Inaccuracy, inaccuracy_predictions
 import mnplib.inaccuracy as inaccuracy_module
@@ -23,6 +25,77 @@ def test_constructor_defaults():
 def test_constructor_rejects_invalid_y_type():
     with pytest.raises(ValueError, match="Valid options for 'y_type'"):
         Inaccuracy(y_type="invalid")
+
+
+@pytest.mark.parametrize("method", ["fit", "fit_y"])
+@pytest.mark.parametrize("fitted", [False, True])
+@pytest.mark.parametrize("failure", ["empty", "shape", "nonfinite", "parameter"])
+def test_failed_fitting_invalidates_prediction_diagnostics(method, fitted, failure):
+    X = np.arange(8).reshape(4, 2)
+    y = np.array([0., 0., 1., 1.])
+    metric = Inaccuracy(y_type="numeric")
+    if fitted:
+        metric.fit(X, y)
+    bad_y = {
+        "empty": [], "shape": y[:, None], "nonfinite": [0., 1., np.nan, 1.],
+        "parameter": y,
+    }[failure]
+    if failure == "parameter":
+        metric.set_params(y_type="invalid")
+
+    with pytest.raises(ValueError):
+        getattr(metric, method)(X, bad_y) if method == "fit" else metric.fit_y(bad_y)
+    with pytest.raises(NotFittedError):
+        check_is_fitted(metric)
+    with pytest.raises(NotFittedError):
+        metric.prediction_analysis(y)
+    with pytest.raises(NotFittedError):
+        metric.model_analysis(object(), X=X)
+
+    metric.set_params(y_type="numeric").fit(X, y)
+    assert metric.inaccuracy_predictions(y) == pytest.approx(0.0)
+
+
+@pytest.mark.parametrize("as_dataframe", [False, True])
+def test_fitted_evaluation_data_are_independent_of_input_mutation(as_dataframe):
+    X = np.array([[0.], [0.], [1.], [1.]])
+    y = np.array([0, 0, 1, 1])
+    if as_dataframe:
+        X = pd.DataFrame(X, columns=["signal"])
+        y = pd.Series(y)
+    model = DecisionTreeClassifier(random_state=0).fit(X, y)
+    metric = Inaccuracy().fit(X, y)
+    expected = metric.model_analysis(model)
+    if as_dataframe:
+        X.iloc[:, :] = 0
+        X.columns = ["changed"]
+        y.iloc[:] = 0
+    else:
+        X[:] = 0
+        y[:] = 0
+
+    assert metric.model_analysis(model) == expected
+    np.testing.assert_array_equal(metric.y_, [0, 0, 1, 1])
+    np.testing.assert_array_equal(metric.X_.ravel(), [0, 0, 1, 1])
+    if as_dataframe:
+        assert list(metric.feature_names_in_) == list(metric._model_X_.columns) == ["signal"]
+
+
+def test_target_only_fit_keeps_an_independent_snapshot():
+    y = np.array([0, 0, 1, 1])
+    predictions = np.array([0, 1, 1, 1])
+    metric = Inaccuracy().fit_y(y)
+    expected = metric.prediction_analysis(predictions)
+    y[:] = 0
+
+    assert metric.prediction_analysis(predictions) == expected
+    np.testing.assert_array_equal(metric.y_, [0, 0, 1, 1])
+
+
+@pytest.mark.parametrize("prediction,expected", [("1.0", 0.), ("2.0", 1.)])
+def test_constant_numeric_strings_have_valid_inaccuracy(prediction, expected):
+    metric = Inaccuracy(y_type="numeric").fit_y(["1.0"] * 4)
+    assert metric.inaccuracy_predictions([prediction] * 4) == pytest.approx(expected)
 
 
 def test_marginal_and_joint_distributions_share_target_bin_count(monkeypatch):

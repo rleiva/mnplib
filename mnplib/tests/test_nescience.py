@@ -55,8 +55,7 @@ def test_constructor_defaults():
     assert metric.y_type == "auto"
     assert metric.aggregation == "euclidean"
     assert metric.weights is None
-    assert metric.zlib_level == 9
-    assert metric.zlib_overhead == 6
+    assert set(metric.get_params()) == {"X_type", "y_type", "aggregation", "weights"}
 
 
 def test_default_model_nescience_is_finite_for_iris_tree():
@@ -147,9 +146,6 @@ def test_sparse_diagnostics_and_candidate_evaluation_are_quiet():
         ({"X_type": "invalid"}, "X_type"),
         ({"y_type": "invalid"}, "y_type"),
         ({"aggregation": "invalid"}, "aggregation"),
-        ({"zlib_level": -1}, "zlib_level"),
-        ({"zlib_level": 10}, "zlib_level"),
-        ({"zlib_overhead": -1}, "zlib_overhead"),
     ],
 )
 def test_constructor_rejects_invalid_configuration(kwargs, message):

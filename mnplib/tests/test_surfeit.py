@@ -40,22 +40,12 @@ def test_constructor_defaults():
     metric = Surfeit()
 
     assert metric.y_type == "auto"
-    assert metric.zlib_level == 9
-    assert metric.zlib_overhead == 6
+    assert metric.get_params() == {"y_type": "auto"}
 
 
-@pytest.mark.parametrize(
-    "kwargs, message",
-    [
-        ({"y_type": "invalid"}, "y_type"),
-        ({"zlib_level": -1}, "zlib_level"),
-        ({"zlib_level": 10}, "zlib_level"),
-        ({"zlib_overhead": -1}, "zlib_overhead"),
-    ],
-)
-def test_constructor_rejects_invalid_configuration(kwargs, message):
-    with pytest.raises(ValueError, match=message):
-        Surfeit(**kwargs)
+def test_constructor_rejects_invalid_target_type():
+    with pytest.raises(ValueError, match="y_type"):
+        Surfeit(y_type="invalid")
 
 
 def test_fit_sets_fitted_attributes_for_classification_target():
@@ -306,16 +296,16 @@ def test_validate_model_string_returns_utf8_bytes():
     assert model_bytes == model_string.encode("utf-8")
 
 
-def test_description_lengths_use_configured_compression():
+def test_description_lengths_use_fixed_compression():
     model_string = "def predict(x):\n    return 0\n"
     model_bytes = model_string.encode("utf-8")
 
-    metric = Surfeit(zlib_level=1)
+    metric = Surfeit()
     lengths = metric.description_lengths(model_string)
 
     assert lengths == {
         "model_length": len(model_bytes),
-        "model_compressed_length": len(zlib.compress(model_bytes, level=1)),
+        "model_compressed_length": len(zlib.compress(model_bytes, level=9)),
     }
 
 
@@ -330,7 +320,7 @@ def test_description_lengths_reject_invalid_model_string():
 
 
 def test_effective_compressed_length_subtracts_overhead_and_clips():
-    metric = Surfeit(zlib_overhead=6)
+    metric = Surfeit()
 
     assert metric._effective_compressed_length(
         compressed_length=20,
@@ -348,14 +338,23 @@ def test_effective_compressed_length_subtracts_overhead_and_clips():
     ) == 100
 
 
-def test_compress_bytes_returns_bytes():
-    metric = Surfeit(zlib_level=9)
+def test_compress_bytes_uses_fixed_level(monkeypatch):
+    metric = Surfeit()
     data = b"abcabcabcabcabcabc"
+    levels = []
+    compress = zlib.compress
+
+    def record_compression(data, *, level):
+        levels.append(level)
+        return compress(data, level=level)
+
+    monkeypatch.setattr(zlib, "compress", record_compression)
 
     compressed = metric._compress_bytes(data)
 
     assert isinstance(compressed, bytes)
-    assert len(compressed) > 0
+    assert compressed == compress(data, level=9)
+    assert levels == [9]
 
 
 def test_description_measures_use_bits_for_the_target_reference():

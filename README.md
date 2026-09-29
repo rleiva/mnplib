@@ -65,19 +65,21 @@ For interactive applications, fit once and request only the needed diagnostics:
 # Subset metrics and reliability.
 overview = miscoding.subset_analysis([0, 1, 2])
 ordering = miscoding.rank_features(
-    criterion="miscoding", return_details=True, include_redundancy=False,
+    criterion="miscoding", return_details=True, include_pairwise_miscoding=False,
 )
-selection = miscoding.select_features(return_details=True, include_redundancy=False)
+selection = miscoding.select_features(return_details=True, include_pairwise_miscoding=False)
 
 # Request the full pairwise matrix only when needed; values are cached.
-redundancy = miscoding.redundancy_matrix()
+pairwise_miscoding = miscoding.pairwise_miscoding_matrix()
 ```
 
-Subset analysis reports metrics, reliability, and selected-feature metadata without computing pairwise redundancy. For detailed selection and ranking reports, `include_redundancy=False` omits the `redundancy` field without changing metric values, reliability decisions, selection, or ranking paths. The functional `rank_features` and `select_features` helpers accept the same option. Fitted data and variable types are snapshots; refitting resets caches. Serialize concurrent access to a retained estimator, as its lazy caches are mutable.
+The pairwise miscoding matrix is symmetric, with values between zero and one and a zero diagonal. Low values indicate that the two features describe each other well; high values indicate little shared information. It compares features without using the target.
+
+Subset analysis reports metrics, reliability, and selected-feature metadata without computing pairwise miscoding. For detailed selection and ranking reports, `include_pairwise_miscoding=False` omits the `pairwise_miscoding` field without changing metric values, reliability decisions, selection, or ranking paths. The functional `rank_features` and `select_features` helpers accept the same option. Fitted data and variable types are snapshots; refitting resets caches. Serialize concurrent access to a retained estimator, as its lazy caches are mutable.
 
 #### Discretization
 
-Metrics and model searches resolve numeric discretization internally. `Miscoding` uses `max(2, floor(2 * n_samples**(1/3) / log2(d + 1)))` bins for a subset of `d` features, excluding the target. It applies that count consistently to joint and marginal distributions. Feature diagnostics use `d=1`; pairwise redundancy uses `d=2`.
+Metrics and model searches resolve numeric discretization internally. `Miscoding` uses `max(2, floor(2 * n_samples**(1/3) / log2(d + 1)))` bins for a subset of `d` features, excluding the target. It applies that count consistently to joint and marginal distributions. Feature diagnostics use `d=1`; pairwise miscoding uses `d=2`.
 
 `Inaccuracy` and `Surfeit` use the target-vector rule, `max(2, floor(2 * n_samples**(1/3)))`. Inaccuracy shares the count across target, prediction, and joint distributions. Regression anomaly detection uses the same vector rule with common target-domain bin edges. Nescience, AutoML, and time series delegate to these component policies.
 
@@ -105,9 +107,17 @@ report = inaccuracy.model_analysis(model)
 print(format_analysis(report))
 ```
 
+Inaccuracy reports contain the information-based score, empirical code lengths
+in bits, and joint-distribution diagnostics for both numeric and categorical
+targets.
+
 #### Surfeit
 
 `Surfeit` measures the unnecessary complexity contained in a model description. A model may predict the target accurately but still include redundant structure, accidental details, or overly complex rules that are not needed to describe the underlying regularities of the data. A model with low surfeit provides a compact and economical description, while a model with high surfeit may be memorizing details that do not improve understanding. In `mnplib`, surfeit captures the descriptive economy of a model.
+
+The library applies a fixed compression policy to canonical model descriptions,
+shared by standalone metrics, AutoML, and time-series searches. Analysis reports
+include raw, compressed, and reference code lengths in bits.
 
 ```python
 from sklearn.datasets import load_iris
@@ -176,8 +186,8 @@ print(format_analysis(miscoding.feature_analysis()))
 Functional analysis helpers return the same supported structures. Formatting
 does not fit or score a model, modify a report, or print automatically. Summaries
 include metric values, relevant context, and available reliability diagnostics.
-Code lengths are labeled in bits; accuracy is shown as a percentage. AutoML
-estimator scores are identified as training-data scores, not held-out results.
+Code lengths are labeled in bits. AutoML estimator scores are identified as
+training-data scores, not held-out results; classification scores use percentages.
 Model-description strings and prediction arrays are omitted, long feature lists
 are abbreviated, and tables show at most 20 rows. The structured report remains
 available for programmatic use.

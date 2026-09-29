@@ -7,7 +7,7 @@ name = "mnplib"
 dynamic = ["version"]
 description = "Machine learning with the Minimum Nescience Principle"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = { text = "GPL-3.0-only" }
 authors = [
     { name = "R. Garcia Leiva", email = "rgarcialeiva@gmail.com" },
@@ -25,7 +25,6 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -34,7 +33,7 @@ classifiers = [
 dependencies = [
     "numpy>=1.23",
     "pandas>=1.5",
-    "scikit-learn>=1.2",
+    "scikit-learn>=1.6",
     "statsmodels>=0.14",
 ]
 

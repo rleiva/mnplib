@@ -2,6 +2,7 @@
 
 import inspect
 import warnings
+import zlib
 
 import numpy as np
 import pandas as pd
@@ -18,6 +19,59 @@ from mnplib.utils import _auto_n_bins, empirical_distribution_vector
 
 
 CLASSES = (Miscoding, Inaccuracy, Surfeit, Nescience)
+
+
+@pytest.mark.parametrize("cls", [
+    Surfeit, Nescience, NescienceClassifier, NescienceRegressor, TimeSeries,
+])
+@pytest.mark.parametrize("parameter", ["zlib_level", "zlib_overhead"])
+def test_compression_policy_is_not_an_estimator_parameter(cls, parameter):
+    assert parameter not in inspect.signature(cls).parameters
+    assert parameter not in cls().get_params(deep=True)
+    with pytest.raises(TypeError, match=parameter):
+        cls(**{parameter: 1})
+    with pytest.raises(ValueError, match=parameter):
+        cls().set_params(**{parameter: 1})
+
+
+@pytest.mark.parametrize("module", [surfeit, nescience])
+def test_functional_metric_configuration_excludes_compression_settings(module):
+    for name, function in vars(module).items():
+        if name.startswith("_") or not inspect.isfunction(function) or function.__module__ != module.__name__:
+            continue
+        parameters = inspect.signature(function).parameters
+        assert "zlib_level" not in parameters
+        assert "zlib_overhead" not in parameters
+        assert not any(param.kind is inspect.Parameter.VAR_KEYWORD for param in parameters.values())
+
+
+@pytest.mark.parametrize("task", ["classification", "regression", "forecasting"])
+def test_candidate_surfeit_uses_the_fixed_compression_policy(task):
+    if task == "forecasting":
+        series = np.sin(np.arange(100) / 5) + np.arange(100) / 100
+        model = TimeSeries(
+            window_size=3, models=["autoregressive", "arima", "state_space"],
+            search_options={"arima": {"orders": [(1, 0, 0)]},
+                            "state_space": {"models": ["local_level"]}},
+        ).fit(series)
+        results = model.candidate_results_
+        target = model.y_supervised_
+    else:
+        X = np.tile([[0., 0.], [0., 1.], [1., 0.], [1., 1.]], (50, 1))
+        target = X[:, 0] + 2 * X[:, 1]
+        cls = NescienceClassifier if task == "classification" else NescienceRegressor
+        model = cls(models=["decision_tree"], random_state=0).fit(X, target)
+        results = model.results_
+    target_bits = empirical_distribution_vector(
+        target, numeric=task != "classification",
+    ).code_length
+    assert results
+    for result in results:
+        raw = result.artifacts.model_string.encode("utf-8")
+        compressed = zlib.compress(raw, level=9)
+        effective_bits = 8 * min(len(raw), max(0, len(compressed) - 6))
+        expected = 1 - min(target_bits, effective_bits) / (8 * len(raw))
+        assert result.components["surfeit"] == pytest.approx(expected)
 
 
 @pytest.fixture

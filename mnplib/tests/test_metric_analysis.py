@@ -1,4 +1,4 @@
-"""Analysis reports, conventional error context, and dimensionally valid surfeit."""
+"""Information-based analysis reports and dimensionally valid surfeit."""
 
 import zlib
 
@@ -8,6 +8,7 @@ import pytest
 from sklearn.dummy import DummyRegressor
 from sklearn.exceptions import NotFittedError
 from sklearn.linear_model import LinearRegression
+from sklearn.tree import DecisionTreeClassifier
 
 from mnplib import Inaccuracy, Nescience, Surfeit
 from mnplib.inaccuracy import model_analysis as inaccuracy_model_analysis
@@ -15,6 +16,14 @@ from mnplib.inaccuracy import prediction_analysis
 from mnplib.surfeit import description_analysis
 from mnplib.surfeit import model_analysis as surfeit_model_analysis
 from mnplib.utils import empirical_distribution_array
+
+
+INACCURACY_FIELDS = {
+    "inaccuracy", "n_samples", "y_type", "resolved_n_bins",
+    "target_code_length_bits", "prediction_code_length_bits", "joint_code_length_bits",
+    "n_observed_joint_states", "mean_joint_occupancy", "n_singleton_joint_states",
+    "singleton_fraction",
+}
 
 
 def test_categorical_prediction_analysis_reports_code_lengths_and_counts():
@@ -33,13 +42,12 @@ def test_categorical_prediction_analysis_reports_code_lengths_and_counts():
     assert report["mean_joint_occupancy"] == pytest.approx(4 / 3)
     assert report["n_singleton_joint_states"] == 2
     assert report["singleton_fraction"] == pytest.approx(2 / 3)
-    assert report["accuracy"] == 0.75
     assert report["inaccuracy"] == pytest.approx(metric.inaccuracy_predictions(predictions))
-    assert "mae" not in report and "rmse" not in report
+    assert set(report) == INACCURACY_FIELDS
     assert report == prediction_analysis(predictions, y=y)
 
 
-def test_numeric_prediction_analysis_reports_errors_and_resolved_bins():
+def test_numeric_prediction_analysis_reports_code_lengths_and_resolved_bins():
     expected_bins = 3
     y = np.array([0., 1., 2., 3.])
     predictions = np.array([0., 2., 1., 5.])
@@ -48,9 +56,8 @@ def test_numeric_prediction_analysis_reports_errors_and_resolved_bins():
 
     assert report["y_type"] == "numeric"
     assert report["resolved_n_bins"] == expected_bins
-    assert report["mae"] == pytest.approx(1.)
-    assert report["rmse"] == pytest.approx(np.sqrt(1.5))
-    assert "accuracy" not in report
+    assert set(report) == INACCURACY_FIELDS
+    assert report["inaccuracy"] == pytest.approx(metric.inaccuracy_predictions(predictions))
     for key, columns in [("target_code_length_bits", [y]),
                          ("prediction_code_length_bits", [predictions]),
                          ("joint_code_length_bits", [predictions, y])]:
@@ -59,13 +66,13 @@ def test_numeric_prediction_analysis_reports_errors_and_resolved_bins():
     assert report == prediction_analysis(predictions, y=y, y_type="numeric")
 
 
-def test_information_inaccuracy_and_classification_error_are_distinct():
+def test_label_permutation_preserves_target_information():
     y = np.array(["a", "a", "b", "b"])
     predictions = np.array(["b", "b", "a", "a"])
     report = Inaccuracy().fit_y(y).prediction_analysis(predictions)
 
     assert report["inaccuracy"] == 0.
-    assert report["accuracy"] == 0.
+    assert set(report) == INACCURACY_FIELDS
 
 
 def test_joint_sparsity_is_descriptive_for_prediction_analysis():
@@ -80,13 +87,37 @@ def test_joint_sparsity_is_descriptive_for_prediction_analysis():
     assert "failure_reason" not in report
 
 
-@pytest.mark.parametrize("predictions,inaccuracy,accuracy", [([1] * 4, 0., 1.), ([0] * 4, 1., 0.)])
-def test_constant_prediction_analysis(predictions, inaccuracy, accuracy):
+@pytest.mark.parametrize("predictions,inaccuracy", [([1] * 4, 0.), ([0] * 4, 1.)])
+def test_constant_prediction_analysis(predictions, inaccuracy):
     report = Inaccuracy().fit_y([1] * 4).prediction_analysis(predictions)
     assert report["inaccuracy"] == inaccuracy
-    assert report["accuracy"] == accuracy
+    assert set(report) == INACCURACY_FIELDS
     assert report["target_code_length_bits"] == 0.
     assert report["joint_code_length_bits"] == 0.
+
+
+@pytest.mark.parametrize("y_type", ["numeric", "categorical"])
+def test_inaccuracy_reports_contain_only_information_diagnostics(y_type):
+    X = np.arange(60).reshape(20, 3)
+    if y_type == "numeric":
+        y = X[:, 0] * 0.3 + np.sin(X[:, 1])
+        model = LinearRegression().fit(X, y)
+    else:
+        y = np.tile([0, 0, 1, 1], 5)
+        model = DecisionTreeClassifier(max_depth=1, random_state=0).fit(X, y)
+    predictions = model.predict(X)
+    metric = Inaccuracy(y_type=y_type).fit(X, y)
+    reports = [
+        metric.prediction_analysis(predictions),
+        metric.model_analysis(model),
+        prediction_analysis(predictions, y=y, y_type=y_type),
+        inaccuracy_model_analysis(model, X=X, y=y, y_type=y_type),
+    ]
+
+    for report in reports:
+        assert set(report) == INACCURACY_FIELDS
+        assert report == reports[0]
+        assert 0.0 <= report["inaccuracy"] <= 1.0
 
 
 def test_model_analysis_uses_fitted_feature_coordinates_and_labels():
@@ -145,17 +176,17 @@ def test_analysis_validates_predictions_and_models():
         Surfeit().fit_y([0, 1]).model_analysis(model)
 
 
-@pytest.mark.parametrize("n_samples,compressed_bytes,overhead,reference_source,reference_bits", [
-    (4, 12, 2, "target", 4),
-    (200, 12, 2, "compression", 80),
-    (80, 12, 2, "both", 80),
-    (200, 100, 2, "compression", 160),
-    (4, 12, 20, "compression", 0),
+@pytest.mark.parametrize("n_samples,compressed_bytes,reference_source,reference_bits", [
+    (4, 16, "target", 4),
+    (200, 16, "compression", 80),
+    (80, 16, "both", 80),
+    (200, 100, "compression", 160),
+    (4, 3, "compression", 0),
 ])
-def test_surfeit_reference_limits_use_bits(n_samples, compressed_bytes, overhead,
+def test_surfeit_reference_limits_use_bits(n_samples, compressed_bytes,
                                           reference_source, reference_bits, monkeypatch):
     y = np.tile([0, 1], n_samples // 2)
-    metric = Surfeit(zlib_overhead=overhead).fit_y(y)
+    metric = Surfeit().fit_y(y)
     monkeypatch.setattr(metric, "_compress_bytes", lambda data: b"x" * compressed_bytes)
     report = metric.description_analysis("x" * 20)
 
@@ -169,14 +200,14 @@ def test_surfeit_reference_limits_use_bits(n_samples, compressed_bytes, overhead
     assert metric.surfeit_string("x" * 20) == report["surfeit"]
 
 
-@pytest.mark.parametrize("level,overhead", [(0, 0), (1, 6), (9, 6), (9, 1000)])
-def test_description_analysis_matches_utf8_zlib_and_functional_api(level, overhead):
-    text = "predict: \u00e1\n" * 50
+@pytest.mark.parametrize("repetitions", [1, 2, 50, 500])
+def test_description_analysis_matches_utf8_zlib_and_functional_api(repetitions):
+    text = "predict: \u00e1\n" * repetitions
     y = np.tile([0, 1], 500)
     raw = text.encode("utf-8")
-    compressed = zlib.compress(raw, level=level)
-    effective_bits = 8 * min(len(raw), max(0, len(compressed) - overhead))
-    metric = Surfeit(zlib_level=level, zlib_overhead=overhead).fit_y(y)
+    compressed = zlib.compress(raw, level=9)
+    effective_bits = 8 * min(len(raw), max(0, len(compressed) - 6))
+    metric = Surfeit().fit_y(y)
     report = metric.description_analysis(text)
 
     assert report["model_code_length_bits"] == 8 * len(raw)
@@ -184,7 +215,7 @@ def test_description_analysis_matches_utf8_zlib_and_functional_api(level, overhe
     assert report["effective_compressed_code_length_bits"] == effective_bits
     assert report["reference_code_length_bits"] == min(1000, effective_bits)
     assert report["surfeit"] == pytest.approx(1 - min(1000, effective_bits) / (8 * len(raw)))
-    assert report == description_analysis(text, y=y, zlib_level=level, zlib_overhead=overhead)
+    assert report == description_analysis(text, y=y)
 
 
 def test_description_analysis_constant_target_and_compression_expansion():

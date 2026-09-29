@@ -73,16 +73,18 @@ def test_sparse_and_empty_subset_reports():
     assert "Joint distribution" not in empty
 
 
-def test_prediction_and_description_reports_include_units_and_conventional_scores():
+def test_prediction_and_description_reports_include_information_scores_and_units():
     numeric = Inaccuracy(y_type="numeric").fit_y([0., 1., 2., 3.])
     report = numeric.prediction_analysis([0., 2., 1., 5.])
     text = format_analysis(report)
-    assert "MAE" in text and "RMSE" in text and "Accuracy" not in text
+    assert "Inaccuracy Analysis" in text
+    assert "MAE" not in text and "RMSE" not in text and "Accuracy" not in text
     assert "Code lengths (bits)" in text
     assert "Subset reliability" not in text
     categorical = format_analysis(prediction_analysis([0, 1, 1, 1], y=[0, 0, 1, 1]))
-    assert "75.00%" in categorical
-    assert "MAE" not in categorical
+    assert "Inaccuracy Analysis" in categorical
+    assert "Code lengths (bits)" in categorical
+    assert "MAE" not in categorical and "RMSE" not in categorical and "Accuracy" not in categorical
     surfeit = format_analysis(description_analysis("predict: x0\n" * 30, y=[0, 0, 1, 1]))
     assert "Surfeit Analysis" in surfeit
     assert "Code lengths (bits)" in surfeit

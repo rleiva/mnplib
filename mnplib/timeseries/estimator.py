@@ -86,8 +86,8 @@ class TimeSeries(BaseEstimator):
         state_space accepts ``models`` and ``max_iter``. Structural model names
         are ``"local_level"`` and ``"local_linear_trend"``.
 
-    aggregation, weights, zlib_level, zlib_overhead :
-        Parameters forwarded to the current nescience component API.
+    aggregation, weights :
+        Parameters forwarded to the nescience component.
 
     random_state : int or None, default=None
         Stored for estimator reproducibility and future candidate families.
@@ -114,8 +114,6 @@ class TimeSeries(BaseEstimator):
         search_options: Mapping[str, Mapping[str, object]] | None = None,
         aggregation: Aggregation = "euclidean",
         weights: Mapping[str, float] | Sequence[float] | None = None,
-        zlib_level: int = 9,
-        zlib_overhead: int = 6,
         random_state: int | None = None,
         verbose: int = 0,
     ):
@@ -125,8 +123,6 @@ class TimeSeries(BaseEstimator):
         self.search_options = search_options
         self.aggregation = aggregation
         self.weights = weights
-        self.zlib_level = zlib_level
-        self.zlib_overhead = zlib_overhead
         self.random_state = random_state
         self.verbose = verbose
 
@@ -503,8 +499,6 @@ class TimeSeries(BaseEstimator):
             y_type="numeric",
             aggregation=self.aggregation,
             weights=self.weights,
-            zlib_level=self.zlib_level,
-            zlib_overhead=self.zlib_overhead,
         )
 
     def _make_fitted_aggregator(self) -> Nescience:
@@ -535,11 +529,7 @@ class TimeSeries(BaseEstimator):
 
     def _make_surfeit(self) -> Surfeit:
         """Return a Surfeit instance configured for canonical model strings."""
-        return Surfeit(
-            y_type="numeric",
-            zlib_level=self.zlib_level,
-            zlib_overhead=self.zlib_overhead,
-        )
+        return Surfeit(y_type="numeric")
 
     #
     # Configuration and helpers
@@ -705,7 +695,3 @@ class TimeSeries(BaseEstimator):
         improvement = self._search_options_["autoregressive"].get("min_improvement", 0.0)
         if not np.isfinite(improvement) or improvement < 0:
             raise ValueError("min_improvement must be finite and non-negative.")
-        if int(self.zlib_level) < 0 or int(self.zlib_level) > 9:
-            raise ValueError("zlib_level must be an integer between 0 and 9.")
-        if int(self.zlib_overhead) < 0:
-            raise ValueError("zlib_overhead must be non-negative.")

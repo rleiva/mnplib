@@ -56,7 +56,7 @@ def test_fit_resolves_one_feature_context_and_caches_compact_statistics(monkeypa
         assert 0 <= statistics.n_singletons <= statistics.n_states <= len(X)
         with pytest.raises(FrozenInstanceError):
             statistics.code_length = 0.0
-    assert metric._redundancy_matrix_ is None
+    assert metric._pairwise_miscoding_matrix_ is None
 
 
 @pytest.mark.parametrize("kind", ["numeric", "categorical", "mixed"])
@@ -112,7 +112,7 @@ def test_pair_and_subset_calculations_each_resolve_one_context(monkeypatch):
         return original(subset_size)
 
     monkeypatch.setattr(metric, "_resolve_n_bins_for_subset", resolve)
-    metric._feature_pair_redundancy(0, 1)
+    metric._feature_pair_miscoding(0, 1)
     assert resolutions == [2]
     report = metric.subset_analysis([0, 1, 2])
     assert report["is_reliable"]
@@ -161,7 +161,7 @@ def test_unreliable_joint_does_not_compute_or_retain_marginals(monkeypatch):
     assert calls == [(21, (True,) * 21, 2)]
     assert set(metric._empirical_cache_) - cached.keys() == {(tuple(range(20)), True, 2)}
     assert all(metric._empirical_cache_[key] is value for key, value in cached.items())
-    assert metric._redundancy_matrix_ is None
+    assert metric._pairwise_miscoding_matrix_ is None
 
     calls.clear()
     repeated = metric.subset_analysis(list(reversed(range(20))))
@@ -225,7 +225,7 @@ def test_distribution_arrays_are_released_after_extracting_statistics(monkeypatc
     X = np.random.default_rng(2).integers(0, 2, size=(200, 3))
     metric = Miscoding().fit(X, X[:, 0])
     metric.subset_analysis([0, 1])
-    metric.redundancy_matrix()
+    metric.pairwise_miscoding_matrix()
     gc.collect()
 
     assert metric._empirical_cache_
@@ -239,7 +239,7 @@ def test_search_path_diagnostics_match_subset_reports(method):
     X = rng.integers(0, 2, size=(400, 3))
     y = 4 * X[:, 0] + 2 * X[:, 1] + X[:, 2]
     metric = Miscoding().fit(X, y)
-    path = getattr(metric, method)(return_details=True, include_redundancy=False)["path"]
+    path = getattr(metric, method)(return_details=True, include_pairwise_miscoding=False)["path"]
     assert not path.empty
     for _, row in path.iterrows():
         report = metric.subset_analysis(list(row["selected_features"]))

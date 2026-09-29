@@ -10,7 +10,6 @@ layer and then delegate to the same string-based computation.
 
 @author:    Rafael Garcia Leiva
 @mail:      rgarcialeiva@gmail.com
-@copyright: GNU GPLv3
 """
 
 from __future__ import annotations
@@ -30,15 +29,19 @@ from .models.inputs import model_artifacts
 from .utils import _validate_vector, empirical_distribution_vector
 
 
+_ZLIB_LEVEL = 9
+_ZLIB_OVERHEAD_BYTES = 6
+
+
 class Surfeit(BaseEstimator):
     """
     Compute the surfeit of a model description or fitted estimator.
 
     Surfeit is estimated by comparing the raw length of a model description with
-    a compressed reference length. The compressed length is corrected by
-    subtracting the fixed zlib wrapper overhead, then bounded by the target code
-    length. This prevents the reference description from exceeding the amount of
-    information available in the target representation.
+    a compressed reference length using a fixed compression policy. The
+    compressed length is corrected by subtracting the fixed zlib wrapper
+    overhead, then bounded by the target code length. This prevents the reference
+    description from exceeding the information available in the target representation.
 
     Use ``surfeit_string()`` when a canonical model description is already
     available. Use ``surfeit_model()`` for a fitted estimator supported by the
@@ -52,33 +55,18 @@ class Surfeit(BaseEstimator):
     ----------
     y_type : {"auto", "numeric", "categorical"}, default="auto"
         Encoding strategy for the target variable.
-
-    zlib_level : int, default=9
-        Compression level passed to ``zlib.compress``. Must be between 0 and 9.
-
-    zlib_overhead : int, default=6
-        Estimated zlib wrapper overhead, in bytes, subtracted from the raw
-        compressed length.
     """
 
     _VALID_Y_TYPES = get_args(YType)
 
-    def __init__(
-        self,
-        y_type: YType = "auto",
-        zlib_level: int = 9,
-        zlib_overhead: int = 6,
-    ):
+    def __init__(self, y_type: YType = "auto"):
         """Initialize the estimator configuration."""
-        self._validate_init(
-            y_type=y_type,
-            zlib_level=zlib_level,
-            zlib_overhead=zlib_overhead,
-        )
-
+        if y_type not in self._VALID_Y_TYPES:
+            raise ValueError(
+                "Valid options for 'y_type' are {}. Got y_type={!r} instead."
+                .format(self._VALID_Y_TYPES, y_type)
+            )
         self.y_type = y_type
-        self.zlib_level = int(zlib_level)
-        self.zlib_overhead = int(zlib_overhead)
 
     def fit(self, X, y):
         """
@@ -385,15 +373,15 @@ class Surfeit(BaseEstimator):
         ``[0, model_length]`` so that compression never increases the reference
         description length.
         """
-        effective_length = int(compressed_length) - int(self.zlib_overhead)
+        effective_length = int(compressed_length) - _ZLIB_OVERHEAD_BYTES
         effective_length = max(0, effective_length)
         effective_length = min(int(model_length), effective_length)
 
         return effective_length
 
     def _compress_bytes(self, data: bytes) -> bytes:
-        """Compress bytes using the configured zlib level."""
-        return zlib.compress(data, level=self.zlib_level)
+        """Compress bytes using the fixed zlib policy."""
+        return zlib.compress(data, level=_ZLIB_LEVEL)
 
     @staticmethod
     def _validate_model_string(model_string: str) -> bytes:
@@ -438,40 +426,12 @@ class Surfeit(BaseEstimator):
             .format(target_type)
         )
 
-    @classmethod
-    def _validate_init(
-        cls,
-        *,
-        y_type,
-        zlib_level,
-        zlib_overhead,
-    ) -> None:
-        """Validate constructor arguments before storing them on the estimator."""
-        if y_type not in cls._VALID_Y_TYPES:
-            raise ValueError(
-                "Valid options for 'y_type' are {}. Got y_type={!r} instead."
-                .format(cls._VALID_Y_TYPES, y_type)
-            )
-
-        zlib_level = int(zlib_level)
-        if zlib_level < 0 or zlib_level > 9:
-            raise ValueError(
-                "zlib_level must be an integer between 0 and 9. "
-                f"Got zlib_level={zlib_level!r} instead."
-            )
-
-        zlib_overhead = int(zlib_overhead)
-        if zlib_overhead < 0:
-            raise ValueError("zlib_overhead must be non-negative.")
-
 
 def surfeit_string(
     model_string: str,
     *,
     y,
     y_type: YType = "auto",
-    zlib_level: int = 9,
-    zlib_overhead: int = 6,
 ) -> float:
     """
     Compute the surfeit of a model description string.
@@ -489,25 +449,12 @@ def surfeit_string(
     y_type : {"auto", "numeric", "categorical"}, default="auto"
         Encoding strategy for the target variable.
 
-    zlib_level : int, default=9
-        Compression level passed to ``zlib.compress``.
-
-    zlib_overhead : int, default=6
-        Estimated zlib wrapper overhead, in bytes.
-
     Returns
     -------
     float
         Surfeit value in the interval [0, 1].
     """
-    metric = Surfeit(
-        y_type=y_type,
-        zlib_level=zlib_level,
-        zlib_overhead=zlib_overhead,
-    )
-
-    metric.fit_y(y)
-
+    metric = Surfeit(y_type=y_type).fit_y(y)
     return metric.surfeit_string(model_string)
 
 
@@ -519,8 +466,6 @@ def surfeit_model(
     feature_names=None,
     feature_indices=None,
     y_type: YType = "auto",
-    zlib_level: int = 9,
-    zlib_overhead: int = 6,
 ) -> float:
     """
     Compute surfeit for a fitted estimator using a functional interface.
@@ -545,23 +490,12 @@ def surfeit_model(
     y_type : {"auto", "numeric", "categorical"}, default="auto"
         Encoding strategy for the target variable.
 
-    zlib_level : int, default=9
-        Compression level passed to ``zlib.compress``.
-
-    zlib_overhead : int, default=6
-        Estimated zlib wrapper overhead, in bytes.
-
     Returns
     -------
     float
         Surfeit value in the interval [0, 1].
     """
-    metric = Surfeit(
-        y_type=y_type,
-        zlib_level=zlib_level,
-        zlib_overhead=zlib_overhead,
-    )
-    metric.fit(X, y)
+    metric = Surfeit(y_type=y_type).fit(X, y)
     return metric.surfeit_model(
         model,
         feature_names=feature_names,
@@ -577,8 +511,6 @@ def model_analysis(
     feature_names=None,
     feature_indices=None,
     y_type: YType = "auto",
-    zlib_level: int = 9,
-    zlib_overhead: int = 6,
 ) -> dict[str, object]:
     """
     Return model-description diagnostics using a functional interface.
@@ -603,24 +535,13 @@ def model_analysis(
     y_type : {"auto", "numeric", "categorical"}, default="auto"
         Encoding strategy for the target variable.
 
-    zlib_level : int, default=9
-        Compression level passed to ``zlib.compress``.
-
-    zlib_overhead : int, default=6
-        Estimated zlib wrapper overhead, in bytes.
-
     Returns
     -------
     dict
         Canonical model string, model type, feature indices, and surfeit
         analysis with code lengths in bits.
     """
-    metric = Surfeit(
-        y_type=y_type,
-        zlib_level=zlib_level,
-        zlib_overhead=zlib_overhead,
-    )
-    metric.fit(X, y)
+    metric = Surfeit(y_type=y_type).fit(X, y)
     return metric.model_analysis(
         model,
         feature_names=feature_names,
@@ -633,10 +554,7 @@ def description_analysis(
     *,
     y,
     y_type: YType = "auto",
-    zlib_level: int = 9,
-    zlib_overhead: int = 6,
 ) -> dict[str, object]:
     """Analyze an explicit model description with all code lengths in bits."""
-    metric = Surfeit(y_type=y_type, zlib_level=zlib_level,
-                     zlib_overhead=zlib_overhead).fit_y(y)
+    metric = Surfeit(y_type=y_type).fit_y(y)
     return metric.description_analysis(model_string)

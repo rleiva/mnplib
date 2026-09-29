@@ -77,8 +77,6 @@ class NescienceClassifier(ClassifierMixin, BaseEstimator):
         Options keyed by model family, for example
         ``{"logistic_regression": {"max_iter": 1000}, "mlp": {"max_candidates": 5}}``.
         Unknown families and option names raise ValueError.
-    zlib_level, zlib_overhead : int, default=9, 6
-        Compression settings forwarded to Surfeit.
     verbose : int, default=0
         If nonzero, print evaluated candidate summaries during fitting.
     """
@@ -93,8 +91,6 @@ class NescienceClassifier(ClassifierMixin, BaseEstimator):
         max_feature_prefixes : int | None = None,
         random_state         = None,
         search_options      : Mapping[str, Mapping[str, object]] | None = None,
-        zlib_level          : int = 9,
-        zlib_overhead       : int = 6,
         verbose              : int = 0,
     ):
         self.models                     = models
@@ -105,8 +101,6 @@ class NescienceClassifier(ClassifierMixin, BaseEstimator):
         self.max_feature_prefixes       = max_feature_prefixes
         self.random_state               = random_state
         self.search_options            = search_options
-        self.zlib_level                 = zlib_level
-        self.zlib_overhead              = zlib_overhead
         self.verbose                    = verbose
 
         # Addtional private attributes
@@ -166,8 +160,6 @@ class NescienceClassifier(ClassifierMixin, BaseEstimator):
             y_type             = "categorical",
             aggregation        = self.aggregation,
             weights            = self.weights,
-            zlib_level         = self.zlib_level,
-            zlib_overhead      = self.zlib_overhead,
         )
         self.nescience_.fit(self.X_, self.y_)
 

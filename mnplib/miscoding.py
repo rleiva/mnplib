@@ -71,7 +71,7 @@ class Miscoding(BaseEstimator):
     ``max(2, floor(2 * n_samples**(1/3) / log2(|S| + 1)))`` bins. The subset
     size counts selected features, excluding the target. Joint and marginal
     distributions use the same resolved count. Feature diagnostics use a
-    subset size of one; pairwise redundancy uses two. Larger subsets use
+    subset size of one; pairwise miscoding uses two. Larger subsets use
     coarser bins to reduce joint sparsity.
 
     ``select_features()`` greedily selects features by requiring subset
@@ -79,9 +79,9 @@ class Miscoding(BaseEstimator):
     model construction while reliable candidate extensions remain.
 
     Feature-level diagnostics are computed during ``fit()``. Pairwise
-    redundancy is computed on demand and cached as a full matrix.
-    ``redundancy_matrix()`` and ``redundancy_`` request all pairs. Detailed
-    selection and ranking reports include the matrix by default.
+    miscoding is computed on demand and cached as a full matrix.
+    ``pairwise_miscoding_matrix()`` and ``pairwise_miscoding_`` request all
+    pairs. Detailed selection and ranking reports include the matrix by default.
 
     Code lengths and scalar state counts share a bin-aware cache. Distribution
     arrays are discarded after these statistics have been extracted.
@@ -125,7 +125,7 @@ class Miscoding(BaseEstimator):
 
         # self.is_fitted_                # Indicates whether fitting completed successfully.
         # self._empirical_cache_         # Caches scalar distribution statistics for each feature, target, and bin context.
-        # self._redundancy_matrix_       # Stores the complete feature redundancy matrix once it has been computed.
+        # self._pairwise_miscoding_matrix_ # Stores the complete pairwise miscoding matrix once it has been computed.
 
         # self.X_                        # Validated copy of the feature matrix used to fit the estimator.
         # self.y_                        # Validated copy of the target vector used to fit the estimator.
@@ -142,13 +142,13 @@ class Miscoding(BaseEstimator):
         # self.surplus_                  # Feature-level surplus values.
         # self.miscoding_                # Feature-level miscoding values, computed as max(deficiency, surplus).
 
-        # self.redundancy_               # Lazily computed public property returning the complete feature redundancy matrix.
+        # self.pairwise_miscoding_       # Lazily computed public property returning the complete pairwise miscoding matrix.
 
     def fit(self, X, y):
         """
         Store evaluation data and compute feature-level diagnostics.
 
-        Reset diagnostic caches and defer pairwise redundancy computations
+        Reset diagnostic caches and defer pairwise miscoding computations
         until requested. Input arrays are copied to isolate fitted results
         from changes to the supplied data.
 
@@ -168,7 +168,7 @@ class Miscoding(BaseEstimator):
         """
         self.is_fitted_ = False
         self._empirical_cache_ = {}
-        self._redundancy_matrix_ = None
+        self._pairwise_miscoding_matrix_ = None
         self._validate_init(X_type=self.X_type, y_type=self.y_type)
         if y is None:
             raise ValueError("Miscoding.fit requires a target vector y.")
@@ -305,31 +305,37 @@ class Miscoding(BaseEstimator):
         return float(values[feature])
 
     @property
-    def redundancy_(self) -> np.ndarray:
-        """Compute the full redundancy matrix on first access and return a copy."""
+    def pairwise_miscoding_(self) -> np.ndarray:
+        """Compute the pairwise miscoding matrix on first access and return a copy."""
         check_is_fitted(self)
-        if self._redundancy_matrix_ is None:
-            self._redundancy_matrix_ = self._feature_redundancy_matrix()
-        return self._redundancy_matrix_.copy()
+        if self._pairwise_miscoding_matrix_ is None:
+            self._pairwise_miscoding_matrix_ = self._compute_pairwise_miscoding_matrix()
+        return self._pairwise_miscoding_matrix_.copy()
 
-    def redundancy_matrix(self) -> pd.DataFrame:
+    def pairwise_miscoding_matrix(self) -> pd.DataFrame:
         """
-        Return the pairwise redundancy matrix between features.
+        Return the pairwise miscoding matrix between features.
 
         Compute any missing pairs and cache the complete matrix. Each call
-        returns an independent DataFrame.
+        returns an independent DataFrame. Each pair uses
+
+            (K(X_i, X_j) - min(K(X_i), K(X_j))) / max(K(X_i), K(X_j))
+
+        with a shared discretization for the joint and marginal distributions.
+        The diagonal and pairs with two zero code lengths are zero. Values are
+        clipped to [0, 1]. The target does not enter this calculation.
 
         Returns
         -------
         pandas.DataFrame
             Square matrix indexed and labeled by feature name. Values close to
-            one indicate highly redundant features. Values close to zero
-            indicate little shared information according to the empirical
-            code-length approximation.
+            zero indicate that each feature describes the other well. Values
+            close to one indicate little shared information according to the
+            empirical code-length approximation.
         """
         check_is_fitted(self)
         return pd.DataFrame(
-            self.redundancy_,
+            self.pairwise_miscoding_,
             index   = self.feature_names_in_,
             columns = self.feature_names_in_,
         )
@@ -422,8 +428,8 @@ class Miscoding(BaseEstimator):
         -------
         dict
             Dictionary containing deficiency, surplus, miscoding, selected
-            feature metadata, and reliability diagnostics. Pairwise redundancy
-            is available separately through ``redundancy_matrix()``.
+            feature metadata, and reliability diagnostics. Pairwise miscoding
+            is available separately through ``pairwise_miscoding_matrix()``.
             Reliability diagnostics include ``resolved_n_bins``, the numeric
             bin count for the subset, or None when no numeric discretization is
             applied, including an empty subset. Categorical variables retain
@@ -440,7 +446,7 @@ class Miscoding(BaseEstimator):
 
     def select_features(self, *, max_features: int | None = None,
                         min_improvement: float = 0.0, return_details: bool = False,
-                        include_redundancy: bool = True,
+                        include_pairwise_miscoding: bool = True,
     ):
         """
         Select features by strict subset-miscoding improvement.
@@ -463,10 +469,11 @@ class Miscoding(BaseEstimator):
             If ``False``, return a Boolean selection mask. If ``True``, return a
             dictionary with the mask, selected indices, selected names, selection
             path, and final subset diagnostics.
-        include_redundancy : bool, default=True
-            Include the full redundancy matrix in detailed output.
+        include_pairwise_miscoding : bool, default=True
+            Include the full matrix under ``pairwise_miscoding`` in detailed
+            output.
             False preserves the selection and path without computing pairwise
-            redundancy. Ignored when return_details=False.
+            miscoding. Ignored when return_details=False.
 
         Returns
         -------
@@ -543,7 +550,8 @@ class Miscoding(BaseEstimator):
             ]),
             "subset"                   : self._subset_measures(selected),
             "features"                 : self.feature_analysis(),
-            **({"redundancy": self.redundancy_matrix()} if include_redundancy else {}),
+            **({"pairwise_miscoding": self.pairwise_miscoding_matrix()}
+               if include_pairwise_miscoding else {}),
         }
 
     def rank_features(
@@ -552,7 +560,7 @@ class Miscoding(BaseEstimator):
         max_features: int | None = None,
         criterion: RankingCriterion = "deficiency",
         return_details: bool = False,
-        include_redundancy: bool = True,
+        include_pairwise_miscoding: bool = True,
     ):
         """
         Rank features for model construction.
@@ -579,10 +587,10 @@ class Miscoding(BaseEstimator):
             If ``False``, return ordered feature indices. If ``True``, return a
             dictionary with the feature order, feature names, ranking path, and
             supporting diagnostics.
-        include_redundancy : bool, default=True
-            Include the full redundancy matrix in detailed output. False
-            preserves the order and path without computing pairwise redundancy.
-            Ignored when return_details=False.
+        include_pairwise_miscoding : bool, default=True
+            Include the full matrix under ``pairwise_miscoding`` in detailed
+            output. False preserves the order and path without computing
+            pairwise miscoding. Ignored when return_details=False.
 
         Returns
         -------
@@ -642,7 +650,8 @@ class Miscoding(BaseEstimator):
                 "selected_features", "selected_feature_names",
             ]),
             "features": self.feature_analysis(),
-            **({"redundancy": self.redundancy_matrix()} if include_redundancy else {}),
+            **({"pairwise_miscoding": self.pairwise_miscoding_matrix()}
+               if include_pairwise_miscoding else {}),
         }
 
     #
@@ -755,33 +764,27 @@ class Miscoding(BaseEstimator):
         return statistics
 
     #
-    # Redundancy and empirical subset diagnostics
+    # Pairwise miscoding and empirical subset diagnostics
     #
 
-    def _feature_redundancy_matrix(self) -> np.ndarray:
-        """
-        Assemble pairwise redundancy for all features.
-
-        Redundancy is defined as ``1 - mu(X_i, X_j)``, where ``mu`` is the
-        symmetric normalized code-length distance between the two feature
-        strings. The diagonal is set to one.
-        """
-        redundancy = np.eye(self.n_features_in_, dtype=float)
+    def _compute_pairwise_miscoding_matrix(self) -> np.ndarray:
+        """Assemble symmetric pairwise miscoding with a zero diagonal."""
+        matrix = np.zeros((self.n_features_in_, self.n_features_in_), dtype=float)
 
         for i in range(self.n_features_in_):
             for j in range(i + 1, self.n_features_in_):
-                value = self._feature_pair_redundancy(i, j)
-                redundancy[i, j] = value
-                redundancy[j, i] = value
+                value = self._feature_pair_miscoding(i, j)
+                matrix[i, j] = value
+                matrix[j, i] = value
 
-        return redundancy
+        return matrix
 
-    def _feature_pair_redundancy(self, i: int, j: int) -> float:
+    def _feature_pair_miscoding(self, i: int, j: int) -> float:
         """
-        Compute symmetric redundancy using cached empirical statistics.
+        Compute symmetric miscoding using cached empirical statistics.
         """
         if i == j:
-            return 1.0
+            return 0.0
         n_bins = self._resolve_n_bins_for_subset(2)
         k_i = self._empirical_statistics_for_indices(features=[i], n_bins=n_bins).code_length
         k_j = self._empirical_statistics_for_indices(features=[j], n_bins=n_bins).code_length
@@ -789,11 +792,9 @@ class Miscoding(BaseEstimator):
 
         denominator = max(k_i, k_j)
         if denominator <= 0.0:
-            value = 1.0
-        else:
-            miscoding = (k_ij - min(k_i, k_j)) / denominator
-            value = float(np.clip(1.0 - miscoding, 0.0, 1.0))
-        return value
+            return 0.0
+        miscoding = (k_ij - min(k_i, k_j)) / denominator
+        return float(np.clip(miscoding, 0.0, 1.0))
 
     def _subset_measures(self, subset) -> dict[str, object]:
         """
@@ -1145,12 +1146,12 @@ def feature_analysis(*, X, y, X_type: XType = "auto", y_type: YType = "auto") ->
     return metric.feature_analysis()
 
 
-def redundancy_matrix(*, X, y, X_type: XType = "auto", y_type: YType = "auto") -> pd.DataFrame:
+def pairwise_miscoding_matrix(*, X, y, X_type: XType = "auto", y_type: YType = "auto") -> pd.DataFrame:
     """
-    Return pairwise feature redundancy using a functional interface.
+    Return pairwise feature miscoding using a functional interface.
     """
     metric = Miscoding(X_type=X_type, y_type=y_type).fit(X, y)
-    return metric.redundancy_matrix()
+    return metric.pairwise_miscoding_matrix()
 
 
 def miscoding_subset(subset, *, X, y, X_type: XType = "auto", y_type: YType = "auto") -> float:
@@ -1215,7 +1216,7 @@ def select_features(
     max_features: int | None = None,
     min_improvement: float = 0.0,
     return_details: bool = False,
-    include_redundancy: bool = True,
+    include_pairwise_miscoding: bool = True,
     X_type: XType = "auto",
     y_type: YType = "auto",
 ):
@@ -1224,10 +1225,10 @@ def select_features(
     """
     metric = Miscoding(X_type=X_type, y_type=y_type).fit(X, y)
     return metric.select_features(
-        max_features       = max_features,
-        min_improvement    = min_improvement,
-        return_details     = return_details,
-        include_redundancy = include_redundancy,
+        max_features              = max_features,
+        min_improvement           = min_improvement,
+        return_details            = return_details,
+        include_pairwise_miscoding = include_pairwise_miscoding,
     )
 
 
@@ -1238,7 +1239,7 @@ def rank_features(
     max_features: int | None = None,
     criterion: RankingCriterion = "deficiency",
     return_details: bool = False,
-    include_redundancy: bool = True,
+    include_pairwise_miscoding: bool = True,
     X_type: XType = "auto",
     y_type: YType = "auto",
 ):
@@ -1250,5 +1251,5 @@ def rank_features(
         max_features=max_features,
         criterion=criterion,
         return_details=return_details,
-        include_redundancy=include_redundancy,
+        include_pairwise_miscoding=include_pairwise_miscoding,
     )

@@ -14,9 +14,9 @@ from __future__ import annotations
 from typing import get_args
 
 import numpy as np
+import pandas as pd
 
 from sklearn.base import BaseEstimator
-from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.utils import check_X_y
 from sklearn.utils.multiclass import type_of_target
 from sklearn.utils.validation import check_is_fitted
@@ -37,12 +37,12 @@ class Inaccuracy(BaseEstimator):
 
     Inaccuracy is computed from empirical code lengths as
 
-        I(y, y_hat) = (L(y, y_hat) - min(L(y), L(y_hat))) / max(L(y), L(y_hat)),
+        I(y, y_hat) = (K(y, y_hat) - min(K(y), K(y_hat))) / max(K(y), K(y_hat)),
 
-    where L(y), L(y_hat), and L(y, y_hat) are empirical code lengths.
+    where K(y), K(y_hat), and K(y, y_hat) are empirical code lengths.
 
     ``prediction_analysis()`` and ``model_analysis()`` return flat reports with
-    code lengths, descriptive joint-state counts, and conventional error metrics.
+    inaccuracy, code lengths, and descriptive joint-state counts.
 
     Numeric targets use ``max(2, floor(2 * n_samples**(1/3)))`` uniform bins.
     This target-based count is shared by the target, predictions, and their
@@ -58,21 +58,17 @@ class Inaccuracy(BaseEstimator):
 
     def __init__(self, y_type: YType = "auto"):
         """Initialize the estimator configuration."""
-        if y_type not in self._VALID_Y_TYPES:
-            raise ValueError(
-                "Valid options for 'y_type' are {}. Got y_type={!r} instead."
-                .format(self._VALID_Y_TYPES, y_type)
-            )
-
         self.y_type = y_type
+        self._validate_y_type()
 
     def fit(self, X, y):
         """
         Fit the inaccuracy object with a dataset.
 
         The method stores the target values and computes their empirical code
-        length. The feature matrix X is stored so that trained models can later
-        be evaluated through ``inaccuracy_model(model)``.
+        length. Copies of X and y are stored so that trained models can later
+        be evaluated through ``inaccuracy_model(model)`` without depending on
+        subsequent changes to the supplied data.
 
         Parameters
         * X : array-like of shape (n_samples, n_features)
@@ -84,11 +80,15 @@ class Inaccuracy(BaseEstimator):
         * self : Inaccuracy
               Fitted estimator.
         """
+        self.is_fitted_ = False
         y = _validate_vector(y, name="y")
         self.X_, self.y_ = check_X_y(X, y, dtype=None, ensure_2d=True)
-        self._model_X_ = X
+        self.X_ = self.X_.copy()
+        self._model_X_ = X.copy(deep=True) if isinstance(X, pd.DataFrame) else self.X_
         self.feature_names_in_ = np.asarray(
-            getattr(X, "columns", [f"x{i}" for i in range(self.X_.shape[1])]), dtype=object)
+            getattr(X, "columns", [f"x{i}" for i in range(self.X_.shape[1])]),
+            dtype=object,
+        ).copy()
         self._fit_target(self.y_)
         self.n_features_in_ = self.X_.shape[1]
 
@@ -98,8 +98,8 @@ class Inaccuracy(BaseEstimator):
         """
         Fit the inaccuracy object with only a target vector.
 
-        This method is useful when predictions are already available and no
-        feature matrix or model object is needed.
+        Store a copy of the target. This method is useful when predictions are
+        already available and no feature matrix or model object is needed.
 
         Parameters
         * y : array-like of shape (n_samples,)
@@ -109,6 +109,7 @@ class Inaccuracy(BaseEstimator):
         * self : Inaccuracy
               Fitted estimator.
         """
+        self.is_fitted_ = False
         self.X_ = None
         for name in ("_model_X_", "feature_names_in_", "n_features_in_"):
             if hasattr(self, name):
@@ -116,6 +117,10 @@ class Inaccuracy(BaseEstimator):
         self._fit_target(y)
 
         return self
+
+    def __sklearn_is_fitted__(self) -> bool:
+        """Report whether fitting completed successfully."""
+        return getattr(self, "is_fitted_", False)
 
     def inaccuracy_model(self, model, *, X=None, feature_names=None, feature_indices=None) -> float:
         """
@@ -133,7 +138,6 @@ class Inaccuracy(BaseEstimator):
         predictions = self._predictions_from_model(
             model, X=X, feature_names=feature_names, feature_indices=feature_indices)
         return self.inaccuracy_predictions(predictions)
-
 
     def inaccuracy_predictions(self, predictions) -> float:
         """
@@ -154,46 +158,38 @@ class Inaccuracy(BaseEstimator):
         """Analyze predictions against the fitted target.
 
         Return inaccuracy, sample count, resolved ``y_type`` and numeric bin
-        count, and target, prediction, and joint code lengths in bits. Numeric
-        targets include ``mae`` and ``rmse`` in target units; categorical targets
-        include ``accuracy`` and use None for ``resolved_n_bins``.
+        count, and target, prediction, and joint code lengths in bits.
+        Categorical targets use None for ``resolved_n_bins``.
 
         Joint-state counts, mean occupancy, and singleton fraction describe
-        sparsity without imposing a reliability rejection threshold. Conventional
-        prediction errors are complementary to information-based inaccuracy.
+        sparsity without imposing a reliability rejection threshold.
         """
         check_is_fitted(self)
-        pred = self._validate_predictions(predictions)
+        pred               = self._validate_predictions(predictions)
         prediction_summary = self._empirical_summary(pred)
-        joint_summary = self._empirical_summary(pred, self.y_)
-        n_states = int(joint_summary.n_states)
-        n_singletons = int(np.count_nonzero(joint_summary.counts == 1))
-        report = {
+        joint_summary      = self._empirical_summary(pred, self.y_)
+        n_states           = int(joint_summary.n_states)
+        n_singletons       = int(np.count_nonzero(joint_summary.counts == 1))
+        return {
             "inaccuracy": self._inaccuracy_from_lengths(
-                len_pred=prediction_summary.code_length,
-                len_joint=joint_summary.code_length,
-                pred=pred,
+                len_pred   = prediction_summary.code_length,
+                len_joint  = joint_summary.code_length,
+                pred       = pred,
             ),
-            "n_samples": int(self.n_samples_in_),
-            "y_type": "numeric" if self.y_isnumeric_ else "categorical",
-            "resolved_n_bins": (
+            "n_samples"       : int(self.n_samples_in_),
+            "y_type"          : "numeric" if self.y_isnumeric_ else "categorical",
+            "resolved_n_bins" : (
                 _resolve_bins("auto", n_samples=self.n_samples_in_)
                 if self.y_isnumeric_ else None
             ),
-            "target_code_length_bits": float(self.len_y_),
-            "prediction_code_length_bits": float(prediction_summary.code_length),
-            "joint_code_length_bits": float(joint_summary.code_length),
-            "n_observed_joint_states": n_states,
-            "mean_joint_occupancy": float(self.n_samples_in_ / n_states),
-            "n_singleton_joint_states": n_singletons,
-            "singleton_fraction": float(n_singletons / n_states),
+            "target_code_length_bits"     : float(self.len_y_),
+            "prediction_code_length_bits" : float(prediction_summary.code_length),
+            "joint_code_length_bits"      : float(joint_summary.code_length),
+            "n_observed_joint_states"     : n_states,
+            "mean_joint_occupancy"        : float(self.n_samples_in_ / n_states),
+            "n_singleton_joint_states"    : n_singletons,
+            "singleton_fraction"          : float(n_singletons / n_states),
         }
-        if self.y_isnumeric_:
-            report["mae"] = float(mean_absolute_error(self.y_, pred))
-            report["rmse"] = float(np.sqrt(mean_squared_error(self.y_, pred)))
-        else:
-            report["accuracy"] = float(np.mean(self.y_ == pred))
-        return report
 
     def model_analysis(self, model, *, X=None, feature_names=None,
                        feature_indices=None) -> dict[str, object]:
@@ -219,11 +215,20 @@ class Inaccuracy(BaseEstimator):
 
     def _fit_target(self, y) -> None:
         """Fit target-dependent attributes."""
-        self.y_ = _validate_vector(y, name="y")
+        self._validate_y_type()
+        self.y_ = _validate_vector(y, name="y").copy()
         self.y_isnumeric_ = self._infer_y_isnumeric(self.y_)
         self.len_y_ = float(self._empirical_summary(self.y_).code_length)
         self.n_samples_in_ = self.y_.shape[0]
         self.is_fitted_ = True
+
+    def _validate_y_type(self) -> None:
+        """Validate the target encoding configured for fitting."""
+        if self.y_type not in self._VALID_Y_TYPES:
+            raise ValueError(
+                "Valid options for 'y_type' are {}. Got y_type={!r} instead."
+                .format(self._VALID_Y_TYPES, self.y_type)
+            )
 
     def _empirical_summary(self, *columns):
         """
@@ -261,7 +266,7 @@ class Inaccuracy(BaseEstimator):
 
         if denominator == 0.0:
             same_predictions = (
-                np.allclose(self.y_, pred)
+                np.allclose(np.asarray(self.y_, dtype=float), np.asarray(pred, dtype=float))
                 if self.y_isnumeric_
                 else np.array_equal(self.y_, pred)
             )
@@ -316,6 +321,9 @@ class Inaccuracy(BaseEstimator):
 
         return pred
 
+#
+# Functional interface
+#
 
 def inaccuracy_predictions(
     predictions,
@@ -339,7 +347,7 @@ def inaccuracy_model(model, *, X, y, feature_names=None, feature_indices=None,
 
 
 def prediction_analysis(predictions, *, y, y_type: YType = "auto") -> dict[str, object]:
-    """Analyze predictions using code lengths and conventional error metrics."""
+    """Analyze predictions using inaccuracy, code lengths, and joint-state counts."""
     return Inaccuracy(y_type=y_type).fit_y(y).prediction_analysis(predictions)
 
 

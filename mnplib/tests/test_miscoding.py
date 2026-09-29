@@ -8,14 +8,14 @@ These tests target empirical miscoding diagnostics:
     - deficiency_feature()
     - surplus_feature()
     - miscoding_feature()
-    - redundancy_matrix()
+    - pairwise_miscoding_matrix()
     - feature_analysis()
     - subset_analysis(subset)
     - miscoding_subset(subset)
     - select_features(...)
     - rank_features(...)
     - feature_analysis(X=X, y=y)
-    - redundancy_matrix(X=X, y=y)
+    - pairwise_miscoding_matrix(X=X, y=y)
     - miscoding_subset(subset, X=X, y=y)
     - select_features(X=X, y=y)
     - rank_features(X=X, y=y)
@@ -33,7 +33,7 @@ import mnplib.miscoding as miscoding_module
 from mnplib.miscoding import (
     Miscoding,
     feature_analysis,
-    redundancy_matrix,
+    pairwise_miscoding_matrix,
     miscoding_subset,
     rank_features,
     select_features,
@@ -193,7 +193,7 @@ def test_fit_sets_fitted_attributes_for_numpy_array():
     assert metric.n_features_in_ == X.shape[1]
     assert metric.target_code_length_ >= 0.0
     assert metric.feature_code_lengths_.shape == (X.shape[1],)
-    assert metric.redundancy_.shape == (X.shape[1], X.shape[1])
+    assert metric.pairwise_miscoding_.shape == (X.shape[1], X.shape[1])
     assert list(metric.feature_names_in_) == ["x0", "x1", "x2"]
     assert metric.X_isnumeric_ == [False, False, False]
     assert metric.y_isnumeric_ is False
@@ -274,27 +274,27 @@ def test_feature_analysis_returns_expected_columns_and_sorted_rows():
     assert table.iloc[0]["miscoding"] == pytest.approx(0.0)
 
 
-def test_feature_redundancy_returns_symmetric_dataframe():
+def test_feature_pairwise_miscoding_returns_symmetric_dataframe():
     X, y = make_simple_classification_data()
 
     metric = Miscoding(X_type="categorical", y_type="categorical").fit(X, y)
-    redundancy = metric.redundancy_matrix()
+    pairwise_miscoding = metric.pairwise_miscoding_matrix()
 
-    assert isinstance(redundancy, pd.DataFrame)
-    assert list(redundancy.index) == ["x0", "x1", "x2"]
-    assert list(redundancy.columns) == ["x0", "x1", "x2"]
-    assert np.allclose(redundancy.values, redundancy.values.T)
-    assert np.allclose(np.diag(redundancy), 1.0)
-    assert np.all((0.0 <= redundancy.values) & (redundancy.values <= 1.0))
+    assert isinstance(pairwise_miscoding, pd.DataFrame)
+    assert list(pairwise_miscoding.index) == ["x0", "x1", "x2"]
+    assert list(pairwise_miscoding.columns) == ["x0", "x1", "x2"]
+    assert np.allclose(pairwise_miscoding.values, pairwise_miscoding.values.T)
+    assert np.allclose(np.diag(pairwise_miscoding), 0.0)
+    assert np.all((0.0 <= pairwise_miscoding.values) & (pairwise_miscoding.values <= 1.0))
 
 
-def test_identical_features_have_high_pairwise_redundancy():
+def test_identical_features_have_zero_pairwise_miscoding():
     X, y = make_redundant_noisy_data()
 
     metric = Miscoding(X_type="categorical", y_type="categorical").fit(X, y)
-    redundancy = metric.redundancy_matrix()
+    pairwise_miscoding = metric.pairwise_miscoding_matrix()
 
-    assert redundancy.loc["x0", "x1"] == pytest.approx(1.0)
+    assert pairwise_miscoding.loc["x0", "x1"] == pytest.approx(0.0)
 
 
 @pytest.mark.parametrize("mode", ["deficiency", "surplus", "miscoding"])
@@ -784,7 +784,7 @@ def test_rank_features_return_details_has_expected_shape():
         "feature_names",
         "path",
         "features",
-        "redundancy",
+        "pairwise_miscoding",
     }
     assert len(details["feature_order"]) == 2
     assert len(details["feature_names"]) == 2
@@ -1051,13 +1051,13 @@ def test_select_features_return_details():
         "path",
         "subset",
         "features",
-        "redundancy",
+        "pairwise_miscoding",
     }
     assert details["mask"].shape == (X.shape[1],)
     assert isinstance(details["path"], pd.DataFrame)
     assert isinstance(details["subset"], dict)
     assert isinstance(details["features"], pd.DataFrame)
-    assert isinstance(details["redundancy"], pd.DataFrame)
+    assert isinstance(details["pairwise_miscoding"], pd.DataFrame)
 
 
 def test_select_features_with_adaptive_bins_returns_valid_mask():
@@ -1091,7 +1091,7 @@ def test_select_features_with_adaptive_bins_returns_details():
         "path",
         "subset",
         "features",
-        "redundancy",
+        "pairwise_miscoding",
     }
     assert details["subset"]["miscoding"] == pytest.approx(metric.miscoding_subset(details['selected_features']))
     assert details["subset"]["is_reliable"] is True
@@ -1161,7 +1161,7 @@ def test_methods_requiring_fit_raise_not_fitted_error():
         metric.miscoding_feature()
 
     with pytest.raises(NotFittedError):
-        metric.redundancy_matrix()
+        metric.pairwise_miscoding_matrix()
 
     with pytest.raises(NotFittedError):
         metric.feature_analysis()
@@ -1197,7 +1197,7 @@ def test_numeric_regression_target_is_supported():
     assert metric.y_isnumeric_ is True
     assert metric.X_isnumeric_ == [True, True]
     assert metric.miscoding_feature().shape == (2,)
-    assert metric.redundancy_matrix().shape == (2, 2)
+    assert metric.pairwise_miscoding_matrix().shape == (2, 2)
 
 
 def test_categorical_dataframe_values_are_supported():
@@ -1225,13 +1225,13 @@ def test_functional_feature_analysis_matches_estimator():
     pd.testing.assert_frame_equal(direct, estimator.feature_analysis())
 
 
-def test_functional_feature_redundancy_matches_estimator():
+def test_functional_feature_pairwise_miscoding_matches_estimator():
     X, y = make_simple_classification_data()
 
-    direct = redundancy_matrix(X=X, y=y, X_type="categorical", y_type="categorical")
+    direct = pairwise_miscoding_matrix(X=X, y=y, X_type="categorical", y_type="categorical")
     estimator = Miscoding(X_type="categorical", y_type="categorical").fit(X, y)
 
-    pd.testing.assert_frame_equal(direct, estimator.redundancy_matrix())
+    pd.testing.assert_frame_equal(direct, estimator.pairwise_miscoding_matrix())
 
 
 def test_functional_miscoding_subset_matches_estimator():
@@ -1384,7 +1384,7 @@ def test_search_accepts_integer_limits_and_caps_at_feature_count(method, limit):
     metric = Miscoding(X_type="categorical", y_type="categorical").fit(X, y)
 
     details = getattr(metric, method)(
-        max_features=limit, return_details=True, include_redundancy=False,
+        max_features=limit, return_details=True, include_pairwise_miscoding=False,
     )
     selected = details["selected_features" if method == "select_features" else "feature_order"]
     cap = X.shape[1] if limit is None else min(int(limit), X.shape[1])
@@ -1421,7 +1421,7 @@ def test_empty_subset_representations_have_consistent_diagnostics(subset):
 def test_empty_search_paths_preserve_report_columns(method, reason, functional):
     X, y = make_simple_classification_data()
     reference = getattr(Miscoding().fit(X, y), method)(
-        max_features=1, return_details=True, include_redundancy=False,
+        max_features=1, return_details=True, include_pairwise_miscoding=False,
     )["path"]
     assert not reference.empty
     limit = 0
@@ -1429,7 +1429,7 @@ def test_empty_search_paths_preserve_report_columns(method, reason, functional):
         X = np.arange(24).reshape(8, 3).astype(str)
         y = np.arange(8).astype(str)
         limit = None
-    options = dict(max_features=limit, return_details=True, include_redundancy=False)
+    options = dict(max_features=limit, return_details=True, include_pairwise_miscoding=False)
     details = (getattr(miscoding_module, method)(X=X, y=y, **options) if functional
                else getattr(Miscoding().fit(X, y), method)(**options))
     path = details["path"]
@@ -1446,7 +1446,7 @@ def test_selection_path_preserves_columns_when_no_candidate_improves(constant_ta
         y = np.zeros_like(y)
     details = Miscoding().fit(X, y).select_features(
         min_improvement=0.0 if constant_target else 1.0,
-        return_details=True, include_redundancy=False,
+        return_details=True, include_pairwise_miscoding=False,
     )
     assert details["selected_features"] == []
     assert details["path"].empty
