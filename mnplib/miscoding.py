@@ -34,6 +34,7 @@ from .utils import (
     _resolve_feature_names,
     _resolve_y_isnumeric,
     _validate_vector,
+    _validate_y_type,
     empirical_distribution_array,
 )
 from .models.inputs import model_artifacts
@@ -96,7 +97,6 @@ class Miscoding(BaseEstimator):
     """
 
     _VALID_X_TYPES = get_args(XType)
-    _VALID_Y_TYPES = get_args(YType)
     _VALID_RANKING_CRITERIA = get_args(RankingCriterion)
 
     def __init__(
@@ -115,10 +115,8 @@ class Miscoding(BaseEstimator):
         y_type : {"auto", "numeric", "categorical"}, default="auto"
             Encoding strategy for the target variable.
         """
-        self._validate_init(
-            X_type=X_type,
-            y_type=y_type,
-        )
+        self._validate_X_type(X_type)
+        _validate_y_type(y_type)
 
         self.X_type = X_type
         self.y_type = y_type
@@ -174,7 +172,7 @@ class Miscoding(BaseEstimator):
         self.is_fitted_ = False
         self._empirical_cache_ = {}
         self._pairwise_miscoding_matrix_ = None
-        self._validate_init(X_type=self.X_type, y_type=self.y_type)
+        self._validate_X_type(self.X_type)
         if y is None:
             raise ValueError("Miscoding.fit requires a target vector y.")
 
@@ -1095,24 +1093,12 @@ class Miscoding(BaseEstimator):
         return result
 
     @classmethod
-    def _validate_init(
-        cls,
-        *,
-        X_type,
-        y_type,
-    ):
-        """
-        Validate constructor arguments before storing them on the estimator.
-        """
+    def _validate_X_type(cls, X_type: XType) -> None:
+        """Validate the feature encoding policy before construction or fitting."""
         if X_type not in cls._VALID_X_TYPES:
             raise ValueError(
                 f"Valid options for 'X_type' are {cls._VALID_X_TYPES}. "
                 f"Got {X_type!r}."
-            )
-        if y_type not in cls._VALID_Y_TYPES:
-            raise ValueError(
-                f"Valid options for 'y_type' are {cls._VALID_Y_TYPES}. "
-                f"Got {y_type!r}."
             )
 
 

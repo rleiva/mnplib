@@ -1,11 +1,13 @@
 from dataclasses import fields
 from inspect import isfunction
+from typing import get_args
 
 import numpy as np
 import pandas as pd
 import pytest
 
 from mnplib import utils
+from mnplib._types import YType
 from mnplib.utils import (
     EmpiricalSummary,
     _as_1d_array,
@@ -13,6 +15,7 @@ from mnplib.utils import (
     _resolve_bins,
     _resolve_y_isnumeric,
     _validate_vector,
+    _validate_y_type,
     discretize_vector,
     empirical_distribution_array,
     empirical_distribution_vector,
@@ -46,6 +49,25 @@ def test_utils_public_api():
 # ---------------------------------------------------------------------------
 # Target encoding
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("y_type", [*get_args(YType), np.str_("numeric")])
+def test_validate_y_type_accepts_declared_policies(y_type):
+    assert _validate_y_type(y_type) is None
+
+
+@pytest.mark.parametrize("y_type", [
+    "invalid", None, True, 1, 1.5, ["auto"], ("auto",), {"auto": True},
+    np.array(["auto"]), np.array(["auto", "numeric"]), np.array("auto"),
+])
+def test_validate_y_type_rejects_invalid_values_consistently(y_type):
+    expected = f"Valid options for 'y_type' are {get_args(YType)}. Got y_type={y_type!r} instead."
+    with pytest.raises(ValueError) as error:
+        _validate_y_type(y_type)
+    assert str(error.value) == expected
+    with pytest.raises(ValueError) as error:
+        _resolve_y_isnumeric([0, 1], y_type=y_type)
+    assert str(error.value) == expected
 
 
 @pytest.mark.parametrize("y,expected", [

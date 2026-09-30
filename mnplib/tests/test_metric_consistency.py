@@ -14,7 +14,7 @@ from mnplib import (
     Inaccuracy, Miscoding, Nescience, Surfeit,
     NescienceClassifier, NescienceRegressor, TimeSeries, AnomalyDetector,
 )
-from mnplib import inaccuracy, miscoding, nescience, surfeit
+from mnplib import inaccuracy, miscoding, nescience, surfeit, utils
 from mnplib.utils import _auto_n_bins, empirical_distribution_vector
 
 
@@ -122,17 +122,53 @@ def test_metric_components_agree_on_target_encoding(values, y_type, expected):
 
 
 @pytest.mark.parametrize("cls", CLASSES)
-def test_metric_fitting_rejects_invalid_target_policy_after_set_params(cls, data):
-    metric = cls().set_params(y_type="invalid")
+@pytest.mark.parametrize("y_type", ["invalid", None, ["auto"], np.array(["numeric"])])
+def test_metric_construction_rejects_invalid_target_policy(cls, y_type):
+    with pytest.raises(ValueError, match="Valid options for 'y_type'"):
+        cls(y_type=y_type)
+
+
+@pytest.mark.parametrize("cls", CLASSES)
+@pytest.mark.parametrize("y_type", ["invalid", None, ["auto"], np.array(["numeric"])])
+def test_metric_fitting_rejects_invalid_target_policy_after_set_params(cls, y_type, data):
+    metric = cls().set_params(y_type=y_type)
     with pytest.raises(ValueError, match="y_type"):
         metric.fit(*data)
 
 
 @pytest.mark.parametrize("cls", [Inaccuracy, Surfeit])
-def test_target_only_fitting_rejects_invalid_policy_after_set_params(cls, data):
-    metric = cls().set_params(y_type="invalid")
+@pytest.mark.parametrize("y_type", ["invalid", None, ["auto"], np.array(["numeric"])])
+def test_target_only_fitting_rejects_invalid_policy_after_set_params(cls, y_type, data):
+    metric = cls().set_params(y_type=y_type)
     with pytest.raises(ValueError, match="y_type"):
         metric.fit_y(data[1])
+
+
+@pytest.mark.parametrize("cls,method", [
+    (Miscoding, "fit"), (Inaccuracy, "fit"), (Surfeit, "fit"),
+    (Inaccuracy, "fit_y"), (Surfeit, "fit_y"),
+])
+def test_fitting_validates_target_policy_once_per_component(cls, method, data, monkeypatch):
+    metric = cls(y_type="numeric")
+    validate = utils._validate_y_type
+    calls = []
+
+    def record_validation(y_type):
+        calls.append(y_type)
+        validate(y_type)
+
+    monkeypatch.setattr(utils, "_validate_y_type", record_validation)
+    if method == "fit":
+        metric.fit(*data)
+    else:
+        metric.fit_y(data[1])
+    assert calls == ["numeric"]
+
+
+def test_miscoding_fitting_validates_feature_policy_after_set_params(data):
+    metric = Miscoding().set_params(X_type="invalid")
+    with pytest.raises(ValueError, match="X_type"):
+        metric.fit(*data)
 
 
 @pytest.mark.parametrize("cls", CLASSES)

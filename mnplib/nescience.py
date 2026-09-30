@@ -48,7 +48,7 @@ from .surfeit import Surfeit
 from .mismodel import mismodel
 from .models.inputs import model_artifacts
 from ._diagnostics import warn_nan_model
-from .utils import _validate_vector
+from .utils import _validate_vector, _validate_y_type
 
 
 class Nescience(BaseEstimator):
@@ -92,7 +92,6 @@ class Nescience(BaseEstimator):
     component_names_ = ("deficiency", "surplus", "inaccuracy", "surfeit")
 
     _VALID_X_TYPES = get_args(XType)
-    _VALID_Y_TYPES = get_args(YType)
     _VALID_AGGREGATIONS = get_args(Aggregation)
 
     def __init__(
@@ -448,11 +447,7 @@ class Nescience(BaseEstimator):
                 .format(cls._VALID_X_TYPES, X_type)
             )
 
-        if y_type not in cls._VALID_Y_TYPES:
-            raise ValueError(
-                "Valid options for 'y_type' are {}. Got y_type={!r} instead."
-                .format(cls._VALID_Y_TYPES, y_type)
-            )
+        _validate_y_type(y_type)
 
         if aggregation not in cls._VALID_AGGREGATIONS:
             raise ValueError(

@@ -137,6 +137,15 @@ def _resolve_feature_names(
     return names
 
 
+def _validate_y_type(y_type: YType) -> None:
+    """Require a target encoding policy declared by ``YType``."""
+    valid_types = get_args(YType)
+    if not isinstance(y_type, str) or y_type not in valid_types:
+        raise ValueError(
+            f"Valid options for 'y_type' are {valid_types}. Got y_type={y_type!r} instead."
+        )
+
+
 def _resolve_y_isnumeric(y, *, y_type: YType = "auto") -> bool:
     """Resolve the encoding policy for a validated one-dimensional target.
 
@@ -144,10 +153,7 @@ def _resolve_y_isnumeric(y, *, y_type: YType = "auto") -> bool:
     treats binary and multiclass targets as categorical, including numeric
     class labels, and continuous targets as numeric.
     """
-    if y_type not in get_args(YType):
-        raise ValueError(
-            f"Valid options for 'y_type' are {get_args(YType)}. Got y_type={y_type!r} instead."
-        )
+    _validate_y_type(y_type)
     if y_type == "numeric":
         return True
     if y_type == "categorical":

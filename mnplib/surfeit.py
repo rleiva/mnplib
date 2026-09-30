@@ -15,7 +15,6 @@ layer and then delegate to the same string-based computation.
 from __future__ import annotations
 
 import zlib
-from typing import get_args
 
 import numpy as np
 
@@ -29,6 +28,7 @@ from .utils import (
     _resolve_feature_names,
     _resolve_y_isnumeric,
     _validate_vector,
+    _validate_y_type,
     empirical_distribution_vector,
 )
 
@@ -61,15 +61,9 @@ class Surfeit(BaseEstimator):
         Encoding strategy for the target variable.
     """
 
-    _VALID_Y_TYPES = get_args(YType)
-
     def __init__(self, y_type: YType = "auto"):
         """Initialize the estimator configuration."""
-        if y_type not in self._VALID_Y_TYPES:
-            raise ValueError(
-                "Valid options for 'y_type' are {}. Got y_type={!r} instead."
-                .format(self._VALID_Y_TYPES, y_type)
-            )
+        _validate_y_type(y_type)
         self.y_type = y_type
 
     def fit(self, X, y):
@@ -350,7 +344,7 @@ class Surfeit(BaseEstimator):
         return {
             "surfeit": float(np.clip(1.0 - reference_bits / model_bits, 0.0, 1.0)),
             "model_code_length_bits": model_bits,
-            "compressed_code_length_bits": 8 * compressed_length,
+            "compressed_code_length_bits" : 8 * compressed_length,
             "effective_compressed_code_length_bits": effective_bits,
             "target_code_length_bits": target_bits,
             "reference_code_length_bits": reference_bits,

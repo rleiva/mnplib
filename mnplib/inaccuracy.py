@@ -11,8 +11,6 @@ representation, using empirical code lengths as practical approximations.
 
 from __future__ import annotations
 
-from typing import get_args
-
 import numpy as np
 import pandas as pd
 
@@ -26,6 +24,7 @@ from .utils import (
     _resolve_feature_names,
     _resolve_y_isnumeric,
     _validate_vector,
+    _validate_y_type,
     empirical_distribution_array,
     empirical_distribution_vector,
 )
@@ -55,12 +54,10 @@ class Inaccuracy(BaseEstimator):
         Encoding strategy for the target variable.
     """
 
-    _VALID_Y_TYPES = get_args(YType)
-
     def __init__(self, y_type: YType = "auto"):
         """Initialize the estimator configuration."""
+        _validate_y_type(y_type)
         self.y_type = y_type
-        self._validate_y_type()
 
     def fit(self, X, y):
         """
@@ -213,20 +210,11 @@ class Inaccuracy(BaseEstimator):
 
     def _fit_target(self, y) -> None:
         """Fit target-dependent attributes."""
-        self._validate_y_type()
         self.y_ = _validate_vector(y, name="y").copy()
         self.y_isnumeric_ = _resolve_y_isnumeric(self.y_, y_type=self.y_type)
         self.len_y_ = float(self._empirical_summary(self.y_).code_length)
         self.n_samples_in_ = self.y_.shape[0]
         self.is_fitted_ = True
-
-    def _validate_y_type(self) -> None:
-        """Validate the target encoding configured for fitting."""
-        if self.y_type not in self._VALID_Y_TYPES:
-            raise ValueError(
-                "Valid options for 'y_type' are {}. Got y_type={!r} instead."
-                .format(self._VALID_Y_TYPES, self.y_type)
-            )
 
     def _empirical_summary(self, *columns):
         """

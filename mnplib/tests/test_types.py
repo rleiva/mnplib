@@ -27,6 +27,8 @@ from mnplib.models.serializers.tree import DecisionTreeSerializer
 from mnplib.timeseries.lagged import LaggedRepresentationBuilder, WindowSize
 from mnplib.timeseries.estimator import ModelName
 from mnplib.utils import (
+    _resolve_y_isnumeric,
+    _validate_y_type,
     discretize_vector,
     empirical_distribution_array,
     empirical_distribution_vector,
@@ -63,6 +65,11 @@ def test_discretization_annotations_use_shared_bin_spec(function):
     assert get_type_hints(function)["n_bins"] == BinSpec
 
 
+@pytest.mark.parametrize("function", [_validate_y_type, _resolve_y_isnumeric])
+def test_target_policy_helpers_use_shared_type(function):
+    assert get_type_hints(function)["y_type"] == YType
+
+
 def test_configured_and_resolved_task_annotations_are_distinct():
     assert get_type_hints(AnomalyDetector.__init__)["task"] == Task
     assert get_type_hints(AnomalyDetector._resolve_task)["return"] == ResolvedTask
@@ -84,13 +91,9 @@ def test_timeseries_window_annotations_share_the_lagged_representation_type():
 
 @pytest.mark.parametrize("cls,attribute,alias", [
     (Miscoding, "_VALID_X_TYPES", XType),
-    (Miscoding, "_VALID_Y_TYPES", YType),
     (Miscoding, "_VALID_RANKING_CRITERIA", RankingCriterion),
     (Nescience, "_VALID_X_TYPES", XType),
-    (Nescience, "_VALID_Y_TYPES", YType),
     (Nescience, "_VALID_AGGREGATIONS", Aggregation),
-    (Inaccuracy, "_VALID_Y_TYPES", YType),
-    (Surfeit, "_VALID_Y_TYPES", YType),
     (AnomalyDetector, "_VALID_TASKS", Task),
     (AnomalyDetector, "_VALID_X_TYPES", XType),
     (AnomalyDetector, "_VALID_KINDS", AnomalyKind),
@@ -117,7 +120,10 @@ def test_metric_validation_accepts_literal_choices_and_reports_invalid_values(cl
         assert getattr(metric, parameter) == value
     with pytest.raises(ValueError) as error:
         cls(**{parameter: "invalid"})
-    received = "'invalid'." if cls is Miscoding else f"{parameter}='invalid' instead."
+    received = (
+        "'invalid'." if cls is Miscoding and parameter == "X_type"
+        else f"{parameter}='invalid' instead."
+    )
     assert str(error.value) == (
         f"Valid options for '{parameter}' are {choices}. Got {received}"
     )
