@@ -66,6 +66,21 @@ class Surfeit(BaseEstimator):
         _validate_y_type(y_type)
         self.y_type = y_type
 
+        # Instance attributes
+
+        # self.y_type            # Configured target encoding policy: auto, numeric, or categorical.
+        # self.is_fitted_        # Indicates that fitting completed successfully.
+
+        # self.X_                # Validated feature matrix, or None when fitting only a target.
+        # self._model_X_         # Model-input matrix retained for serialization, preserving DataFrame labels.
+        # self.n_features_in_    # Number of input features supplied to fit().
+        # self.feature_names_in_ # Input feature labels, generated when column names are unavailable.
+
+        # self.y_                # Validated one-dimensional target vector.
+        # self.y_isnumeric_      # Whether the fitted target is encoded as numeric rather than categorical.
+        # self.len_y_            # Empirical code length of the fitted target, in bits.
+        # self.n_samples_in_     # Number of observations in the fitted target.
+
     def fit(self, X, y):
         """
         Fit the surfeit object with a dataset.
@@ -87,11 +102,11 @@ class Surfeit(BaseEstimator):
         self : Surfeit
             Fitted estimator.
         """
-        y = _validate_vector(y, name="y")
-        self.X_, self.y_ = check_X_y(X, y, dtype=None, ensure_2d=True)
+        y                      = _validate_vector(y, name="y")
+        self.X_, self.y_       = check_X_y(X, y, dtype=None, ensure_2d=True)
         self._fit_target(self.y_)
-        self.n_features_in_ = self.X_.shape[1]
-        self._model_X_ = X if hasattr(X, "columns") else self.X_
+        self.n_features_in_    = self.X_.shape[1]
+        self._model_X_         = X if hasattr(X, "columns") else self.X_
         self.feature_names_in_ = np.fromiter(_resolve_feature_names(X), dtype=object)
 
         return self
@@ -113,8 +128,12 @@ class Surfeit(BaseEstimator):
         self : Surfeit
             Fitted estimator.
         """
+        # Remove feature metadata when fitting with only a target vector.
         self.X_ = None
-        self._clear_feature_metadata()
+        for name in ("n_features_in_", "feature_names_in_", "_model_X_"):
+            if hasattr(self, name):
+                delattr(self, name)
+
         self._fit_target(y)
 
         return self
@@ -175,12 +194,13 @@ class Surfeit(BaseEstimator):
             Surfeit value in the interval [0, 1].
         """
         check_is_fitted(self)
-        model_string = self._model_string_from_model(
-            model,
-            X=X,
-            feature_names=feature_names,
-            feature_indices=feature_indices,
-        )
+
+        # Compute a canonical model description from the fitted estimator.
+        model_string = model_artifacts(
+            self, model, X=X, feature_names=feature_names,
+            feature_indices=feature_indices, allow_dummy=True,
+        ).model_string
+
         return self.surfeit_string(model_string)
 
     def model_analysis(
@@ -216,18 +236,16 @@ class Surfeit(BaseEstimator):
             the diagnostics returned by ``description_analysis()``.
         """
         check_is_fitted(self)
-        artifacts = self._model_artifacts_from_model(
-            model,
-            X=X,
-            feature_names=feature_names,
-            feature_indices=feature_indices,
+        artifacts = model_artifacts(
+            self, model, X=X, feature_names=feature_names,
+            feature_indices=feature_indices, allow_dummy=True,
         )
         return {
-            "model_string": artifacts.model_string,
+            "model_string"        : artifacts.model_string,
             **self.description_analysis(artifacts.model_string),
-            "model_type": artifacts.model_type,
-            "selected_features": list(artifacts.subset),
-            "n_selected_features": len(artifacts.subset),
+            "model_type"          : artifacts.model_type,
+            "selected_features"   : list(artifacts.subset),
+            "n_selected_features" : len(artifacts.subset),
         }
 
     def description_analysis(self, model_string: str) -> dict[str, object]:
@@ -243,97 +261,25 @@ class Surfeit(BaseEstimator):
         describes compression arithmetic, not a statistical test of overfitting.
         """
         check_is_fitted(self)
-        lengths = self.description_lengths(model_string)
-        return self._description_measures(
-            model_length=lengths["model_length"],
-            compressed_length=lengths["model_compressed_length"],
-        )
 
-    def description_lengths(self, model_string: str) -> dict[str, int]:
-        """
-        Return byte-length diagnostics for a model description string.
+        lengths           = self.description_lengths(model_string)
+        model_length      = lengths["model_length"]
+        compressed_length = lengths["model_compressed_length"]
 
-        Parameters
-        ----------
-        model_string : str
-            String representation of a model or description.
+        # The corrected compressed length is clipped to the interval [0, model_length]
+        # so that compression never increases the reference description length.
+        effective_length = int(compressed_length) - _ZLIB_OVERHEAD_BYTES
+        effective_length = max(0, effective_length)
+        effective_length = min(int(model_length), effective_length)
 
-        Returns
-        -------
-        dict
-            Raw UTF-8 byte length and zlib-compressed byte length.
-        """
-        model_bytes = self._validate_model_string(model_string)
-
-        return {
-            "model_length": len(model_bytes),
-            "model_compressed_length": len(zlib.compress(model_bytes, level=_ZLIB_LEVEL)),            
-        }
-
-    def _model_string_from_model(
-        self,
-        model,
-        *,
-        X=None,
-        feature_names=None,
-        feature_indices=None,
-    ) -> str:
-        """Return a canonical model description for a fitted estimator."""
-        return self._model_artifacts_from_model(
-            model,
-            X=X,
-            feature_names=feature_names,
-            feature_indices=feature_indices,
-        ).model_string
-
-    def _model_artifacts_from_model(
-        self,
-        model,
-        *,
-        X=None,
-        feature_names=None,
-        feature_indices=None,
-    ):
-        """Return serializer artifacts for a fitted estimator."""
-        return model_artifacts(self, model, X=X, feature_names=feature_names,
-                               feature_indices=feature_indices, allow_dummy=True)
-
-
-    def _clear_feature_metadata(self) -> None:
-        """Remove feature metadata when fitting with only a target vector."""
-        for name in ("n_features_in_", "feature_names_in_", "_model_X_"):
-            if hasattr(self, name):
-                delattr(self, name)
-
-    def _fit_target(self, y) -> None:
-        """Fit target-dependent attributes."""
-        self.y_ = _validate_vector(y, name="y")
-        self.y_isnumeric_ = _resolve_y_isnumeric(self.y_, y_type=self.y_type)
-        self.len_y_ = self._target_code_length()
-        self.n_samples_in_ = self.y_.shape[0]
-        self.is_fitted_ = True
-
-    def _target_code_length(self) -> float:
-        """Return the empirical code length of the fitted target in bits."""
-        return float(
-            empirical_distribution_vector(
-                self.y_,
-                numeric=self.y_isnumeric_,
-            ).code_length
-        )
-
-    def _description_measures(self, model_length: int,
-                              compressed_length: int) -> dict[str, object]:
-        """Convert byte counts to bits before comparing description lengths."""
-        effective_length = self._effective_compressed_length(
-            compressed_length=compressed_length,
-            model_length=model_length,
-        )
-
-        model_bits = 8 * model_length
+        # Convert byte counts to bits before comparing description lengths.
+        model_bits     = 8 * model_length
         effective_bits = 8 * effective_length
-        target_bits = float(self.len_y_)
+
+        target_bits    = float(self.len_y_)
         reference_bits = min(target_bits, effective_bits)
+        surfeit        = float(np.clip(1.0 - reference_bits / model_bits, 0.0, 1.0))
+
         if target_bits < effective_bits:
             reference_source = "target"
         elif target_bits > effective_bits:
@@ -342,29 +288,48 @@ class Surfeit(BaseEstimator):
             reference_source = "both"
 
         return {
-            "surfeit": float(np.clip(1.0 - reference_bits / model_bits, 0.0, 1.0)),
-            "model_code_length_bits": model_bits,
-            "compressed_code_length_bits" : 8 * compressed_length,
-            "effective_compressed_code_length_bits": effective_bits,
-            "target_code_length_bits": target_bits,
-            "reference_code_length_bits": reference_bits,
-            "compression_ratio": float(compressed_length / model_length),
-            "reference_source": reference_source,
+            "surfeit"                               : surfeit,
+            "model_code_length_bits"                : model_bits,
+            "compressed_code_length_bits"           : 8 * compressed_length,
+            "effective_compressed_code_length_bits" : effective_bits,
+            "target_code_length_bits"               : target_bits,
+            "reference_code_length_bits"            : reference_bits,
+            "compression_ratio"                     : float(compressed_length / model_length),
+            "reference_source"                      : reference_source
         }
 
-    def _effective_compressed_length(self, compressed_length: int, model_length: int) -> int:
-        """
-        Return zlib-compressed length after overhead correction.
+    def description_lengths(self, model_string: str) -> dict[str, int]:
+        """Return raw UTF-8 and zlib-compressed description lengths in bytes.
 
-        The corrected compressed length is clipped to the interval
-        ``[0, model_length]`` so that compression never increases the reference
-        description length.
-        """
-        effective_length = int(compressed_length) - _ZLIB_OVERHEAD_BYTES
-        effective_length = max(0, effective_length)
-        effective_length = min(int(model_length), effective_length)
+        This calculation requires only the model string, so fitting is not
+        required. Compression overhead correction and target-dependent surfeit
+        are reported separately by ``description_analysis()``.
 
-        return effective_length
+        Parameters
+        ----------
+        model_string : str
+            Non-empty model description.
+
+        Returns
+        -------
+        dict
+            Integer byte counts under ``model_length`` and
+            ``model_compressed_length``.
+        """
+        model_bytes = self._validate_model_string(model_string)
+        return {
+            "model_length": len(model_bytes),
+            "model_compressed_length": len(zlib.compress(model_bytes, level=_ZLIB_LEVEL)),
+        }
+
+    def _fit_target(self, y) -> None:
+        """Fit target-dependent attributes."""
+        self.y_            = _validate_vector(y, name="y")
+        self.y_isnumeric_  = _resolve_y_isnumeric(self.y_, y_type=self.y_type)
+        self.len_y_        = empirical_distribution_vector(self.y_,
+                                                           numeric=self.y_isnumeric_).code_length
+        self.n_samples_in_ = self.y_.shape[0]
+        self.is_fitted_    = True
 
     @staticmethod
     def _validate_model_string(model_string: str) -> bytes:

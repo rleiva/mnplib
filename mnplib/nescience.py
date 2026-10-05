@@ -26,7 +26,6 @@ Both interfaces share the same empirical metrics and aggregation policy.
 
 @author:    Rafael Garcia Leiva
 @mail:      rgarcialeiva@gmail.com
-@copyright: GNU GPLv3
 """
 
 from __future__ import annotations
@@ -108,10 +107,10 @@ class Nescience(BaseEstimator):
             aggregation=aggregation,
         )
 
-        self.X_type = X_type
-        self.y_type = y_type
+        self.X_type      = X_type
+        self.y_type      = y_type
         self.aggregation = aggregation
-        self.weights = weights
+        self.weights     = weights
 
     def fit(self, X, y):
         """
@@ -134,11 +133,12 @@ class Nescience(BaseEstimator):
         y = _validate_vector(y, name="y")
         X_checked, y_checked = check_X_y(X, y, dtype=None, ensure_2d=True)
 
-        self.X_ = X_checked
-        self._model_X_ = X
-        self.y_ = y_checked
-        self.n_samples_in_, self.n_features_in_ = X_checked.shape
-        self.weights_ = self._resolve_weights()
+        self.X_             = X_checked
+        self._model_X_      = X
+        self.y_             = y_checked
+        self.n_samples_in_  = X_checked.shape[0]
+        self.n_features_in_ = X_checked.shape[1]
+        self.weights_       = self._resolve_weights()
 
         self.miscoding_ = Miscoding(
             X_type=self.X_type,
@@ -311,7 +311,6 @@ class Nescience(BaseEstimator):
                                  surfeit=component_values["surfeit"]),
         }
 
-
     def aggregate_components(
         self,
         *,
@@ -381,7 +380,6 @@ class Nescience(BaseEstimator):
             raise RuntimeError(f"Unknown aggregation {self.aggregation!r}.")
 
         return float(value)
-
 
     def _resolve_weights(self) -> np.ndarray:
         """
@@ -455,6 +453,9 @@ class Nescience(BaseEstimator):
                 .format(cls._VALID_AGGREGATIONS, aggregation)
             )
 
+#
+# Functional interface
+#
 
 def nescience(
     *,

@@ -86,6 +86,22 @@ def test_fit_y_supports_string_only_usage():
     assert 0.0 <= value <= 1.0
 
 
+@pytest.mark.parametrize("as_dataframe", [False, True])
+def test_target_only_refitting_clears_feature_metadata(as_dataframe):
+    X, y, _ = _linear_regression_problem()
+    source = pd.DataFrame(X, columns=["a", "b", "c"]) if as_dataframe else X
+    metric = Surfeit().fit(source, y)
+    metric.fit_y(y)
+
+    assert metric.X_ is None
+    for name in ("n_features_in_", "feature_names_in_", "_model_X_"):
+        assert not hasattr(metric, name)
+
+    model = LinearRegression().fit(X[:, :1], y)
+    expected = Surfeit().fit_y(y).model_analysis(model)
+    assert metric.model_analysis(model) == expected
+
+
 def test_surfeit_string_returns_float_in_unit_interval():
     y = np.array([0, 0, 1, 1, 0, 1])
     model_string = "def model(x):\n    return int(x > 0)\n"
@@ -319,23 +335,16 @@ def test_description_lengths_reject_invalid_model_string():
         metric.description_lengths("")
 
 
-def test_effective_compressed_length_subtracts_overhead_and_clips():
-    metric = Surfeit()
+@pytest.mark.parametrize("compressed_bytes,effective_bytes", [(20, 14), (3, 0), (200, 100)])
+def test_description_analysis_corrects_overhead_and_clips(compressed_bytes, effective_bytes, monkeypatch):
+    metric = Surfeit().fit_y([0, 1])
+    monkeypatch.setattr(zlib, "compress", lambda data, *, level: b"x" * compressed_bytes)
 
-    assert metric._effective_compressed_length(
-        compressed_length=20,
-        model_length=100,
-    ) == 14
+    report = metric.description_analysis("x" * 100)
 
-    assert metric._effective_compressed_length(
-        compressed_length=3,
-        model_length=100,
-    ) == 0
-
-    assert metric._effective_compressed_length(
-        compressed_length=200,
-        model_length=100,
-    ) == 100
+    assert report["model_code_length_bits"] == 800
+    assert report["compressed_code_length_bits"] == 8 * compressed_bytes
+    assert report["effective_compressed_code_length_bits"] == 8 * effective_bytes
 
 
 def test_description_lengths_uses_fixed_compression_level(monkeypatch):
@@ -358,14 +367,12 @@ def test_description_lengths_uses_fixed_compression_level(monkeypatch):
     assert levels == [9]
 
 
-def test_description_measures_use_bits_for_the_target_reference():
+def test_description_analysis_uses_bits_for_the_target_reference(monkeypatch):
     y = np.array([0, 0, 1, 1])
     metric = Surfeit(y_type="categorical").fit_y(y)
 
-    report = metric._description_measures(
-        model_length=10,
-        compressed_length=1000,
-    )
+    monkeypatch.setattr(zlib, "compress", lambda data, *, level: b"x" * 1000)
+    report = metric.description_analysis("x" * 10)
 
     assert report["model_code_length_bits"] == 80
     assert report["target_code_length_bits"] == 4
