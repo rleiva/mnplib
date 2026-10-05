@@ -14,7 +14,7 @@ from mnplib import (
     Surfeit,
     TimeSeries,
 )
-from mnplib._types import Aggregation, BinSpec, ResolvedTask, Task, XType, YType
+from mnplib._types import BinSpec, ResolvedTask, Task, XType, YType
 from mnplib.anomalies import AnomalyKind
 from mnplib.automl.searchers.base import SearchContext
 from mnplib.miscoding import RankingCriterion
@@ -39,9 +39,6 @@ def test_shared_aliases_describe_supported_configuration_values():
     assert get_args(BinSpec) == (int, Literal["auto", "adaptive"])
     assert get_args(XType) == ("auto", "numeric", "categorical")
     assert YType is XType
-    assert get_args(Aggregation) == (
-        "euclidean", "arithmetic", "geometric", "harmonic", "maximum", "addition", "product"
-    )
     assert get_args(ResolvedTask) == ("classification", "regression")
     assert get_args(Task) == ("auto", "classification", "regression")
 
@@ -53,7 +50,7 @@ def test_shared_aliases_describe_supported_configuration_values():
 def test_estimator_configuration_annotations_use_shared_types(cls):
     hints = get_type_hints(cls.__init__)
     for parameter, alias in [("X_type", XType), ("y_type", YType),
-                             ("aggregation", Aggregation), ("task", Task)]:
+                             ("task", Task)]:
         if parameter in hints:
             assert hints[parameter] == alias
 
@@ -93,7 +90,6 @@ def test_timeseries_window_annotations_share_the_lagged_representation_type():
     (Miscoding, "_VALID_X_TYPES", XType),
     (Miscoding, "_VALID_RANKING_CRITERIA", RankingCriterion),
     (Nescience, "_VALID_X_TYPES", XType),
-    (Nescience, "_VALID_AGGREGATIONS", Aggregation),
     (AnomalyDetector, "_VALID_TASKS", Task),
     (AnomalyDetector, "_VALID_X_TYPES", XType),
     (AnomalyDetector, "_VALID_KINDS", AnomalyKind),
@@ -109,7 +105,6 @@ def test_runtime_validation_choices_match_literal_aliases(cls, attribute, alias)
     (Miscoding, "y_type", YType),
     (Nescience, "X_type", XType),
     (Nescience, "y_type", YType),
-    (Nescience, "aggregation", Aggregation),
     (Inaccuracy, "y_type", YType),
     (Surfeit, "y_type", YType),
 ])

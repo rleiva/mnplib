@@ -102,13 +102,13 @@ def test_explicit_subset_inputs_require_feature_coordinates(data):
             getattr(metric, method)(model, X=local_X)
 
 
-@pytest.mark.parametrize("aggregation", ["euclidean", "arithmetic", "harmonic", "geometric", "maximum", "addition", "product"])
-def test_unreliable_model_metrics_stay_nan(aggregation):
+@pytest.mark.parametrize("weights", [None, [0, 1], [1, 0], [1, 3]])
+def test_unreliable_model_metrics_stay_nan(weights):
     rng = np.random.default_rng(1)
     X = rng.normal(size=(20, 10))
     y = rng.normal(size=20)
     model = LinearRegression().fit(X, y)
-    metric = Nescience(aggregation=aggregation).fit(X, y)
+    metric = Nescience(weights=weights).fit(X, y)
     report = metric.model_analysis(model)
     assert report["is_reliable"] is False
     assert report["failure_reason"] == "joint_distribution_too_sparse"
@@ -144,14 +144,14 @@ def test_fit_y_allows_explicit_evaluation_inputs(data):
 def test_weights_and_search_options_survive_clone_and_reach_evaluation(data, cls, family):
     X, y = data
     target = (y > 1).astype(int) if cls is NescienceClassifier else y
-    weights = {"deficiency": 2., "surplus": 0.5, "inaccuracy": 3., "surfeit": 1.}
+    weights = {"miscoding": 2., "mismodel": 3.}
     options = {"decision_tree": {"n_jobs": 1}} if family == "decision_tree" else {family: {"patience": 2}}
     original = copy.deepcopy(options)
     estimator = clone(cls(models=[family], weights=weights, search_options=options)).fit(X, target)
     assert estimator.weights == weights
     assert is_classifier(estimator) if cls is NescienceClassifier else is_regressor(estimator)
     assert options == original
-    np.testing.assert_allclose(estimator.nescience_.weights_, [2., 0.5, 3., 1.])
+    np.testing.assert_allclose(estimator.nescience_.weights_, [2., 3.])
     metric = Nescience(weights=weights,
                        y_type="categorical" if cls is NescienceClassifier else "numeric").fit(X, target)
     assert metric.nescience_model(estimator) == pytest.approx(estimator.nescience())
@@ -159,6 +159,13 @@ def test_weights_and_search_options_survive_clone_and_reach_evaluation(data, cls
     assert row["candidate"] == estimator.best_candidate_name_
     assert row["n_selected_features"] == len(row["selected_features"])
     assert row["is_reliable"]
+    table = estimator.results_dataframe()
+    np.testing.assert_allclose(table["miscoding"], np.sqrt((table["deficiency"]**2 + table["surplus"]**2) / 2))
+    np.testing.assert_allclose(table["mismodel"], np.sqrt((table["inaccuracy"]**2 + table["surfeit"]**2) / 2))
+    np.testing.assert_allclose(table["nescience"], np.sqrt((2*table["miscoding"]**2 + 3*table["mismodel"]**2) / 5))
+    report = estimator.analysis()
+    assert report["weights"] == weights
+    assert report["nescience"] == pytest.approx(row["nescience"])
 
 
 @pytest.mark.parametrize("cls", [NescienceClassifier, NescienceRegressor, TimeSeries])

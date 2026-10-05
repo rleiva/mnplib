@@ -88,7 +88,7 @@ def test_feature_components_share_joint_and_marginal_code_lengths(kind, target):
         assert metric.feature_code_lengths_[j] == k_x
         assert metric.deficiency_feature(j) == pytest.approx(deficiency)
         assert metric.surplus_feature(j) == pytest.approx(surplus)
-        assert metric.miscoding_feature(j) == pytest.approx(max(deficiency, surplus))
+        assert metric.miscoding_feature(j) == pytest.approx(np.sqrt((deficiency**2 + surplus**2) / 2))
 
 
 def test_feature_scores_remain_finite_when_single_feature_subset_is_sparse():

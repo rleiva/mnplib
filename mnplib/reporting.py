@@ -20,6 +20,7 @@ _METRIC_FIELDS = {
         ("surplus", "Surplus", ".4f"),
         ("inaccuracy", "Inaccuracy", ".4f"),
         ("surfeit", "Surfeit", ".4f"),
+        ("miscoding", "Miscoding", ".4f"),
         ("mismodel", "Mismodel", ".4f"),
     ),
     "mismodel": (
@@ -157,16 +158,16 @@ def format_analysis(report: Mapping[str, object] | pd.DataFrame) -> str:
     sections.append(("Joint distribution", _rows(report, _JOINT_FIELDS)))
     sections.append(("Code lengths (bits)", _rows(report, _CODE_LENGTH_FIELDS.get(metric, ()))))
     if metric == "nescience":
-        aggregation = _rows(report, (("aggregation", "Method", None),))
+        weighting = []
         weights = report.get("weights")
         if weights is not None:
             if not isinstance(weights, Mapping):
                 raise ValueError("weights must be a mapping of nescience components.")
-            aggregation.append(("Weights", ", ".join(
+            weighting.append(("Weights", ", ".join(
                 f"{key}={_value(weights[key], '.4g', key=key)}"
-                for key in ("deficiency", "surplus", "inaccuracy", "surfeit") if key in weights
+                for key in ("miscoding", "mismodel") if key in weights
             )))
-        sections.append(("Aggregation", aggregation))
+        sections.append(("RMS weights", weighting))
     return _render(title, sections)
 
 

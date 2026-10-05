@@ -179,7 +179,7 @@ def test_lag_analysis_methods_without_exogenous_data():
 
 def test_exogenous_data_feature_names_forecast_and_cross_lag_analysis():
     y, X = make_exogenous_series()
-    ts = TimeSeries(window_size=4).fit(y, X)
+    ts = TimeSeries(window_size=4, models=["autoregressive"]).fit(y, X)
 
     assert list(ts.exogenous_feature_names_) == ["temperature", "demand"]
     assert "temperature_lag_1" in list(ts.feature_names_in_)
@@ -308,7 +308,9 @@ def test_candidate_components_are_computed_from_explicit_artifacts():
     }
 
     assert result.components == pytest.approx(direct_components)
-    assert result.nescience == pytest.approx(ts.nescience_.aggregate_components(**direct_components))
+    assert result.nescience == pytest.approx(ts.nescience_.aggregate_components(
+        miscoding=np.sqrt((direct_components["deficiency"]**2 + direct_components["surplus"]**2) / 2),
+        mismodel=np.sqrt((direct_components["inaccuracy"]**2 + direct_components["surfeit"]**2) / 2)))
 
 
 def test_candidate_results_include_subset_reliability_diagnostics():

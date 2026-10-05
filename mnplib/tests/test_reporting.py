@@ -115,7 +115,7 @@ def test_automl_reports_label_training_scores_and_only_recorded_parameters(
     assert text.startswith(f"{task} Analysis\n")
     assert report["candidate"] in text
     assert "Training data" in text and label in text
-    assert "Aggregation" in text and "Weights" in text
+    assert "RMS weights" in text and "Weights" in text
     for key in report["hyperparameters"]:
         assert key in text
     assert "warm_start" not in text

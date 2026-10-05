@@ -104,9 +104,11 @@ def test_pairwise_values_match_empirical_formulas(kind):
             X.iloc[:, [i, j]], numeric=[metric.X_isnumeric_[i], metric.X_isnumeric_[j]],
             n_bins=bins,
         ).code_length
-        denominator = max(lengths[i], lengths[j])
-        value = (0.0 if denominator == 0 else
-                 np.clip((joint - min(lengths[i], lengths[j])) / denominator, 0, 1))
+        deficiency = (0.0 if lengths[j] == 0 else
+                      np.clip((joint - lengths[i]) / lengths[j], 0, 1))
+        surplus = (0.0 if lengths[i] == 0 else
+                   np.clip((joint - lengths[j]) / lengths[i], 0, 1))
+        value = np.sqrt((deficiency**2 + surplus**2) / 2)
         expected[i, j] = expected[j, i] = value
 
     assert metric._pairwise_miscoding_matrix_ is None
@@ -132,7 +134,7 @@ def test_pairwise_miscoding_for_independent_duplicate_and_constant_features(X_ty
     assert matrix.loc["a", "copy_a"] == pytest.approx(0.0)
     assert matrix.loc["a", "inverse_a"] == pytest.approx(0.0)
     assert matrix.loc["constant_1", "constant_2"] == pytest.approx(0.0)
-    assert matrix.loc["a", "constant_1"] == pytest.approx(1.0)
+    assert matrix.loc["a", "constant_1"] == pytest.approx(1 / np.sqrt(2))
 
 
 @pytest.mark.parametrize("constant", [False, True])

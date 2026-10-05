@@ -9,6 +9,7 @@ from dataclasses import replace
 from typing import Any
 
 from mnplib.models import ModelArtifacts, sklearn_model_artifacts
+from mnplib.mismodel import mismodel
 
 from .results import CandidateResult
 
@@ -110,7 +111,10 @@ class CandidateEvaluator:
                 model_string=artifacts.model_string,
             ),
         }
-        value = self.nescience.aggregate_components(**components)
+        value = self.nescience.aggregate_components(
+            miscoding=subset_diagnostics["miscoding"],
+            mismodel=mismodel(inaccuracy=components["inaccuracy"], surfeit=components["surfeit"]),
+        )
         native_score = (
             float(estimator_score)
             if estimator_score is not None

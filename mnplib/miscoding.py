@@ -29,6 +29,7 @@ from sklearn.utils import check_X_y
 from sklearn.utils.validation import check_is_fitted
 
 from ._types import XType, YType
+from ._rms import _rms_pair
 from .utils import (
     _resolve_bins,
     _resolve_feature_names,
@@ -44,6 +45,15 @@ from ._diagnostics import warn_nan_model
 RankingCriterion = Literal["deficiency", "miscoding"]
 
 _SPARSE_JOINT_FAILURE = "joint_distribution_too_sparse"
+
+
+def miscoding(*, deficiency: float, surplus: float) -> float:
+    """Return equal-weight RMS of deficiency and surplus.
+
+    Nonfinite components produce NaN. Finite components must be nonnegative.
+    Normalized inputs yield a scalar in [0, 1].
+    """
+    return float(_rms_pair(float(deficiency), float(surplus)))
 
 
 @dataclass(frozen=True)
@@ -64,14 +74,14 @@ class Miscoding(BaseEstimator):
 
         deficiency_j = K(Y | X_j) / K(Y)
         surplus_j    = K(X_j | Y) / K(X_j)
-        miscoding_j  = max(deficiency_j, surplus_j)
+        miscoding_j  = sqrt((deficiency_j**2 + surplus_j**2) / 2)
 
     For a subset of features ``S``, the estimator computes empirical subset
     quantities:
 
         deficiency(S) = (K(X_S, Y) - K(X_S)) / K(Y)
         surplus(S)    = (K(X_S, Y) - K(Y)) / K(X_S)
-        miscoding(S)  = max(deficiency(S), surplus(S))
+        miscoding(S)  = sqrt((deficiency(S)**2 + surplus(S)**2) / 2)
 
     Numeric variables use uniform discretization with
     ``max(2, floor(2 * n_samples**(1/3) / log2(|S| + 1)))`` bins. The subset
@@ -143,7 +153,7 @@ class Miscoding(BaseEstimator):
         # self.feature_code_lengths_     # Empirical code length of each individual feature.
         # self.deficiency_               # Feature-level deficiency values.
         # self.surplus_                  # Feature-level surplus values.
-        # self.miscoding_                # Feature-level miscoding values, computed as max(deficiency, surplus).
+        # self.miscoding_                # Equal-weight RMS of feature deficiency and surplus.
 
         # self.pairwise_miscoding_       # Lazily computed public property returning the complete pairwise miscoding matrix.
 
@@ -228,7 +238,10 @@ class Miscoding(BaseEstimator):
             1.0,
         )
 
-        self.miscoding_ = np.maximum(self.deficiency_, self.surplus_)
+        self.miscoding_ = np.array([
+            self.aggregate_components(deficiency=d, surplus=s)
+            for d, s in zip(self.deficiency_, self.surplus_)
+        ])
 
         self.is_fitted_ = True
         return self
@@ -236,6 +249,11 @@ class Miscoding(BaseEstimator):
     def __sklearn_is_fitted__(self) -> bool:
         """Report whether fitting completed successfully."""
         return getattr(self, "is_fitted_", False)
+
+    @staticmethod
+    def aggregate_components(*, deficiency: float, surplus: float) -> float:
+        """Combine supplied primitive components without fitting."""
+        return miscoding(deficiency=deficiency, surplus=surplus)
 
     #
     # Public feature-level diagnostics
@@ -287,7 +305,7 @@ class Miscoding(BaseEstimator):
         Returns
         -------
         float or numpy.ndarray of shape (n_features,)
-            Values of ``max(deficiency, surplus)`` for each feature.
+            Equal-weight RMS of deficiency and surplus for each feature.
         """
         check_is_fitted(self)
         return self._feature_value(self.miscoding_, feature)
@@ -322,11 +340,14 @@ class Miscoding(BaseEstimator):
         Compute any missing pairs and cache the complete matrix. Each call
         returns an independent DataFrame. Each pair uses
 
-            (K(X_i, X_j) - min(K(X_i), K(X_j))) / max(K(X_i), K(X_j))
+            d = (K(X_i, X_j) - K(X_i)) / K(X_j)
+            s = (K(X_i, X_j) - K(X_j)) / K(X_i)
+            miscoding = sqrt((d**2 + s**2) / 2)
 
         with a shared discretization for the joint and marginal distributions.
-        The diagonal and pairs with two zero code lengths are zero. Values are
-        clipped to [0, 1]. The target does not enter this calculation.
+        A zero denominator contributes zero to its primitive component.
+        Primitive values are clipped to [0, 1]. The diagonal is zero, and the
+        target does not enter this calculation.
 
         Returns
         -------
@@ -771,11 +792,9 @@ class Miscoding(BaseEstimator):
         k_j = self._empirical_statistics_for_indices(features=[j], n_bins=n_bins).code_length
         k_ij = self._empirical_statistics_for_indices(features=[i, j], n_bins=n_bins).code_length
 
-        denominator = max(k_i, k_j)
-        if denominator <= 0.0:
-            return 0.0
-        miscoding = (k_ij - min(k_i, k_j)) / denominator
-        return float(np.clip(miscoding, 0.0, 1.0))
+        deficiency = 0.0 if k_j <= 0.0 else float(np.clip((k_ij - k_i) / k_j, 0.0, 1.0))
+        surplus = 0.0 if k_i <= 0.0 else float(np.clip((k_ij - k_j) / k_i, 0.0, 1.0))
+        return self.aggregate_components(deficiency=deficiency, surplus=surplus)
 
     def _subset_measures(self, subset) -> dict[str, object]:
         """
@@ -808,7 +827,7 @@ class Miscoding(BaseEstimator):
             return {
                 "deficiency"               : deficiency,
                 "surplus"                  : 0.0,
-                "miscoding"                : deficiency,
+                "miscoding"                : self.aggregate_components(deficiency=deficiency, surplus=0.0),
                 "is_reliable"              : True,
                 "failure_reason"           : None,
                 "resolved_n_bins"          : None,
@@ -859,7 +878,7 @@ class Miscoding(BaseEstimator):
         return {
             "deficiency" : deficiency,
             "surplus"    : surplus,
-            "miscoding"  : max(deficiency, surplus),
+            "miscoding"  : self.aggregate_components(deficiency=deficiency, surplus=surplus),
             **reliability,
         }
 

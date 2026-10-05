@@ -19,7 +19,7 @@ from sklearn.tree import DecisionTreeClassifier
 from sklearn.utils import check_X_y, check_array
 from sklearn.utils.validation import check_is_fitted
 
-from ._types import Aggregation, XType
+from ._types import XType
 from .automl import CandidateEvaluator, CandidateResult
 from .automl.descriptions import describe_candidate_model
 from .automl.configuration import validated_search_options
@@ -59,11 +59,9 @@ class NescienceClassifier(ClassifierMixin, BaseEstimator):
     X_type : {"auto", "numeric", "categorical"}, default="numeric"
         Type policy used when fitting the nescience components on the input
         representation.
-    aggregation : {"euclidean", "arithmetic", "geometric", "harmonic", \
-            "maximum", "addition", "product"}, default="euclidean"
-        Aggregation rule used by the underlying ``Nescience`` object.
-    weights : mapping, optional
-        Named deficiency, surplus, inaccuracy, and surfeit weights.
+    weights : mapping or sequence of two floats, optional
+        Top-level RMS weight ratios in (miscoding, mismodel) order.
+        Missing mapping keys default to one.
     feature_ranking_criterion : {"deficiency", "miscoding"}, default="deficiency"
         Criterion used to rank features for model-family prefix search.
     max_feature_prefixes : int or None, default=None
@@ -86,8 +84,7 @@ class NescienceClassifier(ClassifierMixin, BaseEstimator):
         self,
         models               : Sequence[str] | None = None,
         X_type               : XType = "numeric",
-        aggregation          : Aggregation = "euclidean",
-        weights              : Mapping[str, float] | None = None,
+        weights              : Mapping[str, float] | Sequence[float] | None = None,
         feature_ranking_criterion : str = "deficiency",
         max_feature_prefixes : int | None = None,
         random_state         = None,
@@ -96,7 +93,6 @@ class NescienceClassifier(ClassifierMixin, BaseEstimator):
     ):
         self.models                     = models
         self.X_type                     = X_type
-        self.aggregation                = aggregation
         self.weights                    = weights
         self.feature_ranking_criterion  = feature_ranking_criterion
         self.max_feature_prefixes       = max_feature_prefixes
@@ -158,7 +154,6 @@ class NescienceClassifier(ClassifierMixin, BaseEstimator):
         self.nescience_ = Nescience(
             X_type             = self.X_type,
             y_type             = "categorical",
-            aggregation        = self.aggregation,
             weights            = self.weights,
         )
         self.nescience_.fit(self.X_, self.y_)

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import math
-
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator
@@ -11,6 +9,7 @@ from sklearn.utils import check_X_y
 from sklearn.utils.validation import check_is_fitted
 
 from ._types import YType
+from ._rms import _rms_pair
 from .inaccuracy import Inaccuracy
 from .models.inputs import model_artifacts
 from .surfeit import Surfeit
@@ -24,12 +23,7 @@ def mismodel(*, inaccuracy: float, surfeit: float) -> float:
     Normalized inputs yield a value in [0, 1]. This estimate is not an exact
     computation of non-computable theoretical quantities.
     """
-    values = (float(inaccuracy), float(surfeit))
-    if not all(math.isfinite(value) for value in values):
-        return float("nan")
-    if any(value < 0 for value in values):
-        raise ValueError("Mismodel components must be nonnegative.")
-    return math.sqrt((values[0] ** 2 + values[1] ** 2) / 2.0)
+    return float(_rms_pair(float(inaccuracy), float(surfeit)))
 
 
 class Mismodel(BaseEstimator):

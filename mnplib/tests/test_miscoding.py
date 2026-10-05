@@ -240,7 +240,7 @@ def test_feature_diagnostics_have_expected_shape_and_range():
     assert np.all((0.0 <= deficiency) & (deficiency <= 1.0))
     assert np.all((0.0 <= surplus) & (surplus <= 1.0))
     assert np.all((0.0 <= miscoding) & (miscoding <= 1.0))
-    assert np.allclose(miscoding, np.maximum(deficiency, surplus))
+    assert np.allclose(miscoding, np.sqrt((deficiency**2 + surplus**2) / 2))
 
 
 def test_feature_diagnostic_methods_return_copies():
@@ -336,7 +336,7 @@ def test_empty_subset_has_full_deficiency_and_zero_surplus():
 
     assert details["deficiency"] == pytest.approx(1.0)
     assert details["surplus"] == pytest.approx(0.0)
-    assert details["miscoding"] == pytest.approx(1.0)
+    assert details["miscoding"] == pytest.approx(1 / np.sqrt(2))
     assert details["is_reliable"] is True
     assert details["failure_reason"] is None
     assert details["n_samples"] == X.shape[0]
@@ -440,7 +440,7 @@ def test_miscoding_subset_matches_subset_analysis_with_adaptive_bins(mode):
         details[mode]
     )
     assert details["miscoding"] == pytest.approx(
-        max(details["deficiency"], details["surplus"])
+        np.sqrt((details["deficiency"]**2 + details["surplus"]**2) / 2)
     )
 
 
@@ -470,7 +470,7 @@ def test_empirical_subset_formulas_match_manual_code_lengths():
 
     assert details["deficiency"] == pytest.approx(deficiency)
     assert details["surplus"] == pytest.approx(surplus)
-    assert details["miscoding"] == pytest.approx(max(deficiency, surplus))
+    assert details["miscoding"] == pytest.approx(np.sqrt((deficiency**2 + surplus**2) / 2))
 
 
 def test_subset_analysis_includes_reliability_diagnostics():
@@ -652,7 +652,7 @@ def test_one_feature_subset_uses_vector_bin_policy(mode):
     deficiency = (k_xy - k_x) / k_y
     surplus = (k_xy - k_y) / k_x
     expected = {"deficiency": deficiency, "surplus": surplus,
-                "miscoding": max(deficiency, surplus)}
+                "miscoding": np.sqrt((deficiency**2 + surplus**2) / 2)}
     report = metric.subset_analysis([0])
     assert report["is_reliable"]
     assert report["resolved_n_bins"] == bins
@@ -1012,14 +1012,17 @@ def test_rank_features_stops_when_remaining_candidates_are_unreliable():
 
 
 def test_select_features_stops_when_remaining_candidates_are_unreliable():
-    X, y = make_sparse_subset_data()
+    y = np.tile([0, 1], 15)
+    X = np.column_stack([y, np.arange(len(y)), np.arange(len(y)) + 100])
 
-    metric = Miscoding(X_type="numeric", y_type="categorical").fit(X, y)
+    metric = Miscoding(X_type="categorical", y_type="categorical").fit(X, y)
     details = metric.select_features(return_details=True)
 
     assert len(details["selected_features"]) == 1
     assert details["subset"]["is_reliable"] is True
     assert details["path"]["is_reliable"].all()
+    candidates = metric._candidate_extensions(details["selected_features"], details["subset"])
+    assert not candidates["is_reliable"].any()
 
 
 def test_rank_and_select_stop_when_no_reliable_candidate_exists():

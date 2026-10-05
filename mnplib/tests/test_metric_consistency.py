@@ -263,7 +263,7 @@ def test_nescience_model_analysis_has_flat_components(data):
     assert all(name in report for name in metric.component_names_)
     assert report["nescience"] == metric.nescience_model(model)
     assert report["nescience"] == metric.aggregate_components(
-        **{name: report[name] for name in metric.component_names_})
+        miscoding=report["miscoding"], mismodel=report["mismodel"])
     functional = nescience.model_analysis(model, X=X, y=y)
     for key in report:
         np.testing.assert_equal(functional[key], report[key])

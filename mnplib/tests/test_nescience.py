@@ -2,7 +2,6 @@
 Tests for fitted-model metrics, explicit artifacts, and nescience aggregation.
 """
 
-import math
 import warnings
 
 import numpy as np
@@ -53,9 +52,8 @@ def test_constructor_defaults():
 
     assert metric.X_type == "auto"
     assert metric.y_type == "auto"
-    assert metric.aggregation == "euclidean"
     assert metric.weights is None
-    assert set(metric.get_params()) == {"X_type", "y_type", "aggregation", "weights"}
+    assert set(metric.get_params()) == {"X_type", "y_type", "weights"}
 
 
 def test_default_model_nescience_is_finite_for_iris_tree():
@@ -145,7 +143,6 @@ def test_sparse_diagnostics_and_candidate_evaluation_are_quiet():
         ({"X_type": "mixed"}, "X_type"),
         ({"X_type": "invalid"}, "X_type"),
         ({"y_type": "invalid"}, "y_type"),
-        ({"aggregation": "invalid"}, "aggregation"),
     ],
 )
 def test_constructor_rejects_invalid_configuration(kwargs, message):
@@ -159,7 +156,7 @@ def test_fit_sets_attributes_and_component_estimators():
     assert metric.is_fitted_ is True
     assert metric.n_samples_in_ == X.shape[0]
     assert metric.n_features_in_ == X.shape[1]
-    assert metric.weights_.shape == (4,)
+    assert metric.weights_.shape == (2,)
     assert hasattr(metric, "miscoding_")
     assert hasattr(metric, "mismodel_")
     assert hasattr(metric.mismodel_, "inaccuracy_")
@@ -219,7 +216,9 @@ def test_nescience_matches_aggregate_components():
         subset=[0],
         predictions=y.copy(),
         model_string=make_model_string(),
-    ) == pytest.approx(metric.aggregate_components(**values))
+    ) == pytest.approx(metric.aggregate_components(
+        miscoding=np.sqrt((values["deficiency"]**2 + values["surplus"]**2) / 2),
+        mismodel=np.sqrt((values["inaccuracy"]**2 + values["surfeit"]**2) / 2)))
 
 
 def test_analysis_and_scalar_nescience_agree():
@@ -242,13 +241,13 @@ def test_analysis_returns_numerical_report():
     metric, _, y = fitted_metric()
     report = metric.analysis(subset=[0], predictions=y.copy(), model_string=make_model_string())
     assert set(report) == set(metric.miscoding_.subset_analysis([0])) | {
-        "nescience", "aggregation", "weights", "mismodel", *metric.component_names_,
+        "nescience", "weights", "mismodel", *metric.component_names_,
     }
     assert report["mismodel"] == pytest.approx(
         np.sqrt((report["inaccuracy"] ** 2 + report["surfeit"] ** 2) / 2)
     )
     assert report["nescience"] == pytest.approx(metric.aggregate_components(
-        **{key: report[key] for key in metric.component_names_}
+        miscoding=report["miscoding"], mismodel=report["mismodel"]
     ))
 
 
@@ -377,178 +376,3 @@ def test_methods_requiring_fit_raise_not_fitted_error(method_name):
 
     with pytest.raises(NotFittedError):
         getattr(metric, method_name)(**kwargs)
-
-
-@pytest.mark.parametrize(
-    "aggregation",
-    [
-        "euclidean",
-        "arithmetic",
-        "geometric",
-        "harmonic",
-        "maximum",
-        "addition",
-        "product",
-    ],
-)
-def test_all_aggregation_modes_return_float(aggregation):
-    metric = Nescience(aggregation=aggregation)
-
-    value = metric.aggregate_components(
-        deficiency=0.2,
-        surplus=0.3,
-        inaccuracy=0.4,
-        surfeit=0.5,
-    )
-
-    assert isinstance(value, float)
-    assert value >= 0.0
-
-
-def test_euclidean_aggregation_formula():
-    metric = Nescience(aggregation="euclidean")
-
-    value = metric.aggregate_components(
-        deficiency=0.2,
-        surplus=0.3,
-        inaccuracy=0.4,
-        surfeit=0.5,
-    )
-
-    expected = math.sqrt((0.2**2 + 0.3**2 + 0.4**2 + 0.5**2) / 4.0)
-    assert value == pytest.approx(expected)
-
-
-def test_arithmetic_aggregation_formula():
-    metric = Nescience(aggregation="arithmetic")
-
-    value = metric.aggregate_components(
-        deficiency=0.2,
-        surplus=0.3,
-        inaccuracy=0.4,
-        surfeit=0.5,
-    )
-
-    assert value == pytest.approx((0.2 + 0.3 + 0.4 + 0.5) / 4.0)
-
-
-def test_maximum_aggregation_formula():
-    metric = Nescience(aggregation="maximum")
-
-    value = metric.aggregate_components(
-        deficiency=0.2,
-        surplus=0.3,
-        inaccuracy=0.4,
-        surfeit=0.5,
-    )
-
-    assert value == pytest.approx(0.5)
-
-
-def test_addition_aggregation_formula():
-    metric = Nescience(aggregation="addition")
-
-    value = metric.aggregate_components(
-        deficiency=0.2,
-        surplus=0.3,
-        inaccuracy=0.4,
-        surfeit=0.5,
-    )
-
-    assert value == pytest.approx(1.4)
-
-
-def test_product_aggregation_formula():
-    metric = Nescience(aggregation="product")
-
-    value = metric.aggregate_components(
-        deficiency=0.2,
-        surplus=0.3,
-        inaccuracy=0.4,
-        surfeit=0.5,
-    )
-
-    assert value == pytest.approx(0.2 * 0.3 * 0.4 * 0.5)
-
-
-def test_geometric_and_harmonic_return_zero_when_any_active_component_is_zero():
-    geometric = Nescience(aggregation="geometric")
-    harmonic = Nescience(aggregation="harmonic")
-
-    kwargs = {
-        "deficiency": 0.0,
-        "surplus": 0.3,
-        "inaccuracy": 0.4,
-        "surfeit": 0.5,
-    }
-
-    assert geometric.aggregate_components(**kwargs) == pytest.approx(0.0)
-    assert harmonic.aggregate_components(**kwargs) == pytest.approx(0.0)
-
-
-def test_weights_sequence_changes_aggregation():
-    metric = Nescience(
-        aggregation="arithmetic",
-        weights=[1.0, 0.0, 0.0, 0.0],
-    )
-
-    value = metric.aggregate_components(
-        deficiency=0.2,
-        surplus=0.3,
-        inaccuracy=0.4,
-        surfeit=0.5,
-    )
-
-    assert value == pytest.approx(0.2)
-
-
-def test_weights_mapping_defaults_missing_keys_to_one():
-    metric = Nescience(
-        aggregation="arithmetic",
-        weights={"deficiency": 2.0},
-    )
-
-    weights = metric._resolve_weights()
-
-    assert weights.tolist() == pytest.approx([2.0, 1.0, 1.0, 1.0])
-
-
-def test_maximum_ignores_zero_weighted_components():
-    metric = Nescience(
-        aggregation="maximum",
-        weights=[1.0, 0.0, 0.0, 0.0],
-    )
-
-    value = metric.aggregate_components(
-        deficiency=0.2,
-        surplus=0.9,
-        inaccuracy=0.8,
-        surfeit=0.7,
-    )
-
-    assert value == pytest.approx(0.2)
-
-
-@pytest.mark.parametrize(
-    "weights, message",
-    [
-        ([1.0, 2.0, 3.0], "sequence of four"),
-        ([1.0, -1.0, 1.0, 1.0], "non-negative"),
-        ([0.0, 0.0, 0.0, 0.0], "positive"),
-        ([1.0, float("nan"), 1.0, 1.0], "finite"),
-        ("bad", "mapping or a sequence"),
-        ({"unknown": 1.0}, "Unknown weight keys"),
-    ],
-)
-def test_invalid_weights_are_rejected(weights, message):
-    metric = Nescience(weights=weights)
-
-    with pytest.raises(ValueError, match=message):
-        metric._resolve_weights()
-
-
-def test_invalid_weights_are_rejected_during_fit():
-    X, y = make_simple_data()
-
-    with pytest.raises(ValueError, match="positive"):
-        Nescience(weights=[0.0, 0.0, 0.0, 0.0]).fit(X, y)

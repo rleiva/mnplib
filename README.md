@@ -30,7 +30,20 @@ Use `Nescience.analysis(subset=..., predictions=..., model_string=...)` for expl
 
 ### Core Concepts
 
-The `mnplib` library is built around the notion of **nescience**, which combines several complementary quantities: `miscoding`, `inaccuracy`, and `surfeit`.
+The library combines four primitive components through three standard scalar metrics:
+
+```text
+miscoding = sqrt((deficiency**2 + surplus**2) / 2)
+mismodel  = sqrt((inaccuracy**2 + surfeit**2) / 2)
+nescience = sqrt((wm * miscoding**2 + wp * mismodel**2) / (wm + wp))
+```
+
+The first two metrics always use equal-weight root mean square (RMS). Only the
+final combination accepts decision weights: `wm` for miscoding and `wp` for
+mismodel. Both default to 1. For the same primitive values, default nescience
+equals `sqrt((deficiency**2 + surplus**2 + inaccuracy**2 + surfeit**2) / 4)`.
+These scalar computations are practical estimates, not exact computations of
+the theory's non-computable quantities.
 
 #### Miscoding
 
@@ -53,10 +66,10 @@ miscoding.feature_analysis()
 
 ```text
 	feature_index	feature_name	is_numeric	code_length_bits	deficiency	surplus	miscoding
-0	3	petal width (cm)	True	429.162687	0.109141	0.506488	0.506488
-1	2	petal length (cm)	True	426.897505	0.147596	0.525286	0.525286
-2	0	sepal length (cm)	True	466.167349	0.542982	0.766922	0.766922
-3	1	sepal width (cm)	True	426.921835	0.725199	0.846968	0.846968
+0	3	petal width (cm)	True	429.162687	0.109141	0.506488	0.366362
+1	2	petal length (cm)	True	426.897505	0.147596	0.525286	0.385817
+2	0	sepal length (cm)	True	466.167349	0.542982	0.766922	0.664454
+3	1	sepal width (cm)	True	426.921835	0.725199	0.846968	0.788438
 ```
 
 For interactive applications, fit once and request only the needed diagnostics:
@@ -74,6 +87,16 @@ pairwise_miscoding = miscoding.pairwise_miscoding_matrix()
 ```
 
 The pairwise miscoding matrix is symmetric, with values between zero and one and a zero diagonal. Low values indicate that the two features describe each other well; high values indicate little shared information. It compares features without using the target.
+
+Every feature, subset, fitted-model, and pairwise miscoding score is the RMS of
+its own deficiency and surplus. Pairwise comparisons treat one feature as the
+representation and the other as the target; exchanging them swaps the two
+components without changing the RMS. A constant versus a nonconstant feature
+has components 0 and 1 and therefore miscoding `1 / sqrt(2)`.
+The empty subset also has this miscoding when the target has positive code
+length; all three values are zero for a constant target. The scalar
+`mnplib.miscoding.miscoding(deficiency=..., surplus=...)` helper combines
+already-computed components without fitting.
 
 Subset analysis reports metrics, reliability, and selected-feature metadata without computing pairwise miscoding. For detailed selection and ranking reports, `include_pairwise_miscoding=False` omits the `pairwise_miscoding` field without changing metric values, reliability decisions, selection, or ranking paths. The functional `rank_features` and `select_features` helpers accept the same option. Fitted data and variable types are snapshots; refitting resets caches. Serialize concurrent access to a retained estimator, as its lazy caches are mutable.
 
@@ -199,14 +222,13 @@ predictions and invalid descriptions still raise validation errors. The scalar
 `mismodel()` helper and `Mismodel.aggregate_components()` work without fitting;
 finite negative component values are rejected.
 
-Nescience owns a fitted `mismodel_` coordinator and continues to aggregate the
-four primitive components for its final score. Its weights do not change the
-reported inaccuracy, surfeit, or equal-weight mismodel. Unreliable miscoding
+Nescience owns a fitted `mismodel_` coordinator. Top-level weights do not change
+the reported inaccuracy, surfeit, or equal-weight mismodel. Unreliable miscoding
 subsets do not prevent independent mismodel diagnostics.
 
 #### Nescience
 
-`Nescience` measures how well a dataset, a target variable, and a model together describe a learning problem. It combines the quality of the data representation, the accuracy of the predictions, and the economy of the model description. In `mnplib`, nescience is built from `miscoding`, `inaccuracy`, and `surfeit`: a good model should use relevant data, make informative predictions, and avoid unnecessary complexity. Lower nescience indicates a better balance between data, prediction, and model simplicity.
+`Nescience` measures how well a dataset, a target variable, and a model together describe a learning problem. It combines representation quality (`miscoding`) with predictive and descriptive quality (`mismodel`) using weighted RMS. Lower nescience indicates a better balance between these two dimensions.
 
 ```python
 from sklearn.datasets import load_iris
@@ -225,6 +247,34 @@ nescience.fit(X, y)
 report = nescience.model_analysis(model)
 print(format_analysis(report))
 ```
+
+For an advanced comparison, give the model dimension three times the weight of
+the representation dimension:
+
+```python
+weighted = Nescience(weights={"miscoding": 1.0, "mismodel": 3.0}).fit(X, y)
+report = weighted.model_analysis(model)
+print(format_analysis(report))
+```
+
+Weights may be a mapping or a two-value sequence in `(miscoding, mismodel)`
+order. Missing mapping keys default to 1. Values must be finite and nonnegative,
+with at least one positive value. Scoring normalizes a copy, so multiplying both
+weights by the same positive factor does not affect the score. Reports expose
+the resolved ratios, not normalized probabilities. The same weight convention
+applies to `NescienceClassifier`, `NescienceRegressor`, and `TimeSeries`.
+
+A zero weight removes that dimension's numerical contribution. A zero weighted
+score therefore need not mean that every primitive is zero. Nonfinite estimates
+remain visible: either nonfinite primitive makes its derived metric NaN, and
+either nonfinite derived metric makes nescience NaN, even with zero weight.
+An unavailable metric does not erase the other metric's diagnostics.
+
+`components(...)` returns exactly deficiency, surplus, inaccuracy, and surfeit.
+`analysis(...)` and `model_analysis(...)` additionally return miscoding,
+mismodel, nescience, resolved weights, and reliability diagnostics. When the two
+derived scores are already available, use
+`Nescience(weights=...).aggregate_components(miscoding=..., mismodel=...)`.
 
 #### Text Reports
 

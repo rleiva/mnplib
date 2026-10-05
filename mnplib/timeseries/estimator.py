@@ -28,7 +28,7 @@ from mnplib.automl.descriptions import describe_candidate_model
 from mnplib.automl.configuration import validated_search_options
 from mnplib.automl.results import candidate_results_dataframe
 
-from .._types import Aggregation, XType
+from .._types import XType
 from ..miscoding import Miscoding
 from ..nescience import Nescience
 from .lagged import LaggedRepresentationBuilder, WindowSize
@@ -84,8 +84,9 @@ class TimeSeries(BaseEstimator):
         state_space accepts ``models`` and ``max_iter``. Structural model names
         are ``"local_level"`` and ``"local_linear_trend"``.
 
-    aggregation, weights :
-        Parameters forwarded to the nescience component.
+    weights : mapping or sequence of two floats, optional
+        Top-level RMS weight ratios in (miscoding, mismodel) order.
+        Missing mapping keys default to one.
 
     random_state : int or None, default=None
         Stored for estimator reproducibility and future candidate families.
@@ -110,7 +111,6 @@ class TimeSeries(BaseEstimator):
         window_size: WindowSize = "auto",
         models: Sequence[ModelName] | None = None,
         search_options: Mapping[str, Mapping[str, object]] | None = None,
-        aggregation: Aggregation = "euclidean",
         weights: Mapping[str, float] | Sequence[float] | None = None,
         random_state: int | None = None,
         verbose: int = 0,
@@ -119,7 +119,6 @@ class TimeSeries(BaseEstimator):
         self.window_size = window_size
         self.models = models
         self.search_options = search_options
-        self.aggregation = aggregation
         self.weights = weights
         self.random_state = random_state
         self.verbose = verbose
@@ -470,7 +469,7 @@ class TimeSeries(BaseEstimator):
                 "feature_name": f"{prefix}_lag_{lag}",
                 "deficiency": deficiency,
                 "surplus": surplus,
-                "miscoding": float(diagnostic.get("miscoding", max(deficiency, surplus))),
+                "miscoding": float(diagnostic["miscoding"]),
             }
             if attribute is not None:
                 row["attribute"] = attribute
@@ -495,7 +494,6 @@ class TimeSeries(BaseEstimator):
         return Nescience(
             X_type=self.X_type,
             y_type="numeric",
-            aggregation=self.aggregation,
             weights=self.weights,
         )
 

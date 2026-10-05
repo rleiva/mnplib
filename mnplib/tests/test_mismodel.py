@@ -313,7 +313,7 @@ def test_nescience_weights_do_not_change_mismodel(data, monkeypatch):
     X, y = data
     model = DecisionTreeClassifier(random_state=1).fit(X, y)
     standalone = Mismodel().fit(X, y).model_analysis(model)
-    for weights in (None, [2, 3, 4, 5], {"inaccuracy": 0}):
+    for weights in (None, [2, 3], {"mismodel": 0}):
         metric = Nescience(weights=weights).fit(X, y)
         components = Mock(wraps=metric.mismodel_.components)
         monkeypatch.setattr(metric.mismodel_, "components", components)
