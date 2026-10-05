@@ -13,7 +13,7 @@ from .sklearn import sklearn_model_artifacts
 def model_input(metric, model, *, X=None, feature_indices=None, allow_dummy=False):
     """Return estimator input columns, preserving DataFrame labels."""
     check_is_fitted(metric)
-    source = X if X is not None else getattr(metric, "_model_X_", metric.X_)
+    source = X if X is not None else getattr(metric, "_model_X_", getattr(metric, "X_", None))
     if source is None:
         if not allow_dummy:
             raise ValueError("Provide X or fit the metric with X and y.")
@@ -46,7 +46,9 @@ def model_artifacts(metric, model, *, X=None, feature_names=None,
     """Describe a fitted estimator using the canonical serializer layer."""
     source = model_input(metric, model, X=X, feature_indices=feature_indices,
                          allow_dummy=allow_dummy)
-    if not allow_dummy and feature_indices is None and np.shape(source)[1] != metric.n_features_in_:
+    n_features = getattr(metric, "n_features_in_", None)
+    if (not allow_dummy and feature_indices is None and n_features is not None
+            and np.shape(source)[1] != n_features):
         raise ValueError("feature_indices is required when X contains a selected feature subset.")
     if hasattr(model, "best_artifacts_"):
         if feature_indices is not None:

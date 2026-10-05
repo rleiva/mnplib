@@ -26,7 +26,7 @@ The library returns numerical metrics and factual diagnostics. Applications own 
 
 Use `Nescience.analysis(subset=..., predictions=..., model_string=...)` for explicit artifacts, `model_analysis(model)` for fitted estimators, and `analysis()` on `NescienceClassifier`, `NescienceRegressor`, `TimeSeries`, or `AnomalyDetector`. These reports do not assign qualitative profiles. Canonical model descriptions remain in mnplib because their compressed lengths determine surfeit.
 
-`from mnplib.mismodel import mismodel` provides `mismodel(inaccuracy=..., surfeit=...)`, the root-mean-square of the two components. It is also included in nescience analysis reports and AutoML result dataframes; it does not change minimum-nescience model selection.
+`Mismodel` evaluates predictions and a model description through inaccuracy and surfeit. `from mnplib.mismodel import mismodel` provides the scalar `mismodel(inaccuracy=..., surfeit=...)` helper when these components are already available. Both interfaces use their equal-weight root mean square. Mismodel is also included in nescience analysis reports and AutoML result dataframes.
 
 ### Core Concepts
 
@@ -137,6 +137,73 @@ report = surfeit.model_analysis(model)
 print(format_analysis(report))
 ```
 
+#### Mismodel
+
+`Mismodel` coordinates `Inaccuracy` and `Surfeit`: the former measures mismatch
+between targets and predictions, and the latter measures redundancy in the
+model description. Its practical scalar estimate is
+`sqrt((inaccuracy**2 + surfeit**2) / 2)`, not an exact computation of the theory's
+non-computable quantities. There are no internal weights or alternative
+aggregation rules.
+
+Use `fit_y(y)` when predictions and a model-description string are available:
+
+```python
+from mnplib import Mismodel
+from mnplib.reporting import format_analysis
+
+y = [0, 0, 1, 1, 0, 1]
+predictions = [0, 1, 1, 1, 0, 1]
+model_string = "def predict(x):\n    return x[0]\n"
+
+metric = Mismodel(y_type="categorical").fit_y(y)
+components = metric.components(predictions=predictions, model_string=model_string)
+value = metric.mismodel(predictions=predictions, model_string=model_string)
+report = metric.analysis(predictions=predictions, model_string=model_string)
+print(format_analysis(report))
+```
+
+Use `fit(X, y)` to retain evaluation inputs for an already-fitted supported
+estimator. Mismodel does not train the supplied model or compute feature
+relevance. Its model methods obtain predictions and the description from the
+same canonical artifact layer used by Nescience and AutoML:
+
+```python
+from sklearn.linear_model import LinearRegression
+from mnplib import Mismodel
+
+X = [[0], [1], [2], [3], [4], [5]]
+y = [1, 3, 5, 7, 9, 11]
+model = LinearRegression().fit(X, y)
+
+metric = Mismodel(y_type="numeric").fit(X, y)
+value = metric.mismodel_model(model)
+report = metric.model_analysis(model)
+assert value == report["mismodel"]
+print(report)
+```
+
+All evaluation methods require successful fitting. After `fit_y(y)`, supply
+`X` explicitly to model methods. Its sample count and row order must match the
+fitted target; row order cannot be verified automatically. `feature_names` and
+`feature_indices` follow canonical artifact conventions: explicit X contains
+estimator input columns, whereas indices select columns from stored X.
+DataFrame labels and mixed feature types are preserved when retaining inputs.
+Refitting replaces evaluation state; a failed fit leaves the metric unfitted.
+
+`components()` returns exactly `inaccuracy` and `surfeit`; `analysis()` adds
+their `mismodel`. `model_analysis()` also supplies `model_type` and `model_string`.
+Normalized finite components yield a mismodel in [0, 1]; exact zero components
+remain zero. A NaN or infinite component yields NaN mismodel. Malformed
+predictions and invalid descriptions still raise validation errors. The scalar
+`mismodel()` helper and `Mismodel.aggregate_components()` work without fitting;
+finite negative component values are rejected.
+
+Nescience owns a fitted `mismodel_` coordinator and continues to aggregate the
+four primitive components for its final score. Its weights do not change the
+reported inaccuracy, surfeit, or equal-weight mismodel. Unreliable miscoding
+subsets do not prevent independent mismodel diagnostics.
+
 #### Nescience
 
 `Nescience` measures how well a dataset, a target variable, and a model together describe a learning problem. It combines the quality of the data representation, the accuracy of the predictions, and the economy of the model description. In `mnplib`, nescience is built from `miscoding`, `inaccuracy`, and `surfeit`: a good model should use relevant data, make informative predictions, and avoid unnecessary complexity. Lower nescience indicates a better balance between data, prediction, and model simplicity.
@@ -178,6 +245,7 @@ print(format_analysis(miscoding.feature_analysis()))
 | `Miscoding` | `subset_analysis()`, `model_analysis()`, `feature_analysis()` |
 | `Inaccuracy` | `prediction_analysis()`, `model_analysis()` |
 | `Surfeit` | `description_analysis()`, `model_analysis()` |
+| `Mismodel` | `analysis()`, `model_analysis()` |
 | `Nescience` | `analysis()`, `model_analysis()` |
 | `NescienceClassifier`, `NescienceRegressor` | `analysis()` |
 | `TimeSeries` | `analysis()`, `lag_analysis()` |

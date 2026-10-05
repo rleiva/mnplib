@@ -29,10 +29,8 @@ from mnplib.automl.configuration import validated_search_options
 from mnplib.automl.results import candidate_results_dataframe
 
 from .._types import Aggregation, XType
-from ..inaccuracy import Inaccuracy
 from ..miscoding import Miscoding
 from ..nescience import Nescience
-from ..surfeit import Surfeit
 from .lagged import LaggedRepresentationBuilder, WindowSize
 from .searchers import (
     ARIMASearcher,
@@ -142,10 +140,10 @@ class TimeSeries(BaseEstimator):
         self.feature_names_in_ = np.asarray(representation.feature_names, dtype=object)
         self.feature_metadata_ = tuple(representation.feature_metadata)
 
-        self.miscoding_ = self._make_miscoding().fit(self.X_supervised_, self.y_supervised_)
-        self.inaccuracy_ = self._make_inaccuracy().fit_y(self.y_supervised_)
-        self.surfeit_ = self._make_surfeit().fit(self.X_supervised_, self.y_supervised_)
-        self.nescience_ = self._make_fitted_aggregator()
+        self.nescience_ = self._make_aggregator().fit(self.X_supervised_, self.y_supervised_)
+        self.nescience_.feature_names_in_ = self.feature_names_in_.copy()
+        self.miscoding_ = self.nescience_.miscoding_
+        self.mismodel_ = self.nescience_.mismodel_
 
         self.evaluator_ = CandidateEvaluator(
             X=self.X_supervised_,
@@ -287,7 +285,7 @@ class TimeSeries(BaseEstimator):
             self.candidate_results_,
             candidate,
             best_result=self.best_result_,
-            surfeit=self.surfeit_,
+            surfeit=self.mismodel_.surfeit_,
         )
 
     def results_dataframe(self) -> pd.DataFrame:
@@ -493,7 +491,7 @@ class TimeSeries(BaseEstimator):
     #
 
     def _make_aggregator(self) -> Nescience:
-        """Return an unfitted Nescience instance used only for aggregation."""
+        """Return the metric coordinator for the lagged evaluation data."""
         return Nescience(
             X_type=self.X_type,
             y_type="numeric",
@@ -501,35 +499,12 @@ class TimeSeries(BaseEstimator):
             weights=self.weights,
         )
 
-    def _make_fitted_aggregator(self) -> Nescience:
-        """Return an aggregation object with fitted component metrics attached."""
-        metric = self._make_aggregator()
-        metric.X_ = self.X_supervised_
-        metric._model_X_ = self.X_supervised_
-        metric.feature_names_in_ = self.feature_names_in_.copy()
-        metric.y_ = self.y_supervised_
-        metric.n_samples_in_, metric.n_features_in_ = self.X_supervised_.shape
-        metric.weights_ = metric._resolve_weights()
-        metric.miscoding_ = self.miscoding_
-        metric.inaccuracy_ = self.inaccuracy_
-        metric.surfeit_ = self.surfeit_
-        metric.is_fitted_ = True
-        return metric
-
     def _make_miscoding(self) -> Miscoding:
         """Return the miscoding metric for the lagged representation."""
         return Miscoding(
             X_type=self.X_type,
             y_type="numeric",
         )
-
-    def _make_inaccuracy(self) -> Inaccuracy:
-        """Return an Inaccuracy instance configured for the target series."""
-        return Inaccuracy(y_type="numeric")
-
-    def _make_surfeit(self) -> Surfeit:
-        """Return a Surfeit instance configured for canonical model strings."""
-        return Surfeit(y_type="numeric")
 
     #
     # Configuration and helpers

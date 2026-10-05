@@ -312,7 +312,7 @@ class NescienceClassifier(ClassifierMixin, BaseEstimator):
             self.results_,
             candidate,
             best_result=self.best_result_,
-            surfeit=self.nescience_.surfeit_,
+            surfeit=self.nescience_.mismodel_.surfeit_,
         )
 
     def _resolve_model_names(self) -> list[str]:

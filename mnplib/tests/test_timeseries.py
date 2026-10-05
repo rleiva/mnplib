@@ -303,8 +303,8 @@ def test_candidate_components_are_computed_from_explicit_artifacts():
     direct_components = {
         "deficiency": ts.miscoding_.deficiency_subset(result.artifacts.subset),
         "surplus": ts.miscoding_.surplus_subset(result.artifacts.subset),
-        "inaccuracy": ts.inaccuracy_.inaccuracy_predictions(result.artifacts.predictions),
-        "surfeit": ts.surfeit_.surfeit_string(result.artifacts.model_string),
+        "inaccuracy": ts.mismodel_.inaccuracy_.inaccuracy_predictions(result.artifacts.predictions),
+        "surfeit": ts.mismodel_.surfeit_.surfeit_string(result.artifacts.model_string),
     }
 
     assert result.components == pytest.approx(direct_components)

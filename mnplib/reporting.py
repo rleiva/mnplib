@@ -22,6 +22,11 @@ _METRIC_FIELDS = {
         ("surfeit", "Surfeit", ".4f"),
         ("mismodel", "Mismodel", ".4f"),
     ),
+    "mismodel": (
+        ("mismodel", "Mismodel", ".4f"),
+        ("inaccuracy", "Inaccuracy", ".4f"),
+        ("surfeit", "Surfeit", ".4f"),
+    ),
     "miscoding": (
         ("deficiency", "Deficiency", ".4f"),
         ("surplus", "Surplus", ".4f"),
@@ -77,7 +82,7 @@ _CODE_LENGTH_FIELDS = {
 def format_analysis(report: Mapping[str, object] | pd.DataFrame) -> str:
     """Return an aligned text summary without modifying or evaluating its input.
 
-    Accept analysis dictionaries from Miscoding, Inaccuracy, Surfeit, Nescience,
+    Accept analysis dictionaries from Miscoding, Inaccuracy, Surfeit, Mismodel, Nescience,
     NescienceClassifier, NescienceRegressor, TimeSeries, and AnomalyDetector.
     This includes subset, prediction, and description analysis dictionaries.
     Feature-analysis and lag-analysis DataFrames are also supported. Functional

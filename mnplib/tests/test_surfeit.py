@@ -268,7 +268,7 @@ def test_surfeit_model_matches_automl_candidate_artifact_surfeit():
     result = automl.best_result_
     selected = list(result.artifacts.subset)
 
-    value = automl.nescience_.surfeit_.surfeit_model(
+    value = automl.nescience_.mismodel_.surfeit_.surfeit_model(
         result.model.estimator,
         X=X[:, selected],
         feature_indices=selected,
@@ -276,7 +276,7 @@ def test_surfeit_model_matches_automl_candidate_artifact_surfeit():
 
     assert value == pytest.approx(result.components["surfeit"])
     assert value == pytest.approx(
-        automl.nescience_.surfeit_.surfeit_string(result.artifacts.model_string)
+        automl.nescience_.mismodel_.surfeit_.surfeit_string(result.artifacts.model_string)
     )
 
 

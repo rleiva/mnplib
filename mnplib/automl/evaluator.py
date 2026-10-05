@@ -105,15 +105,9 @@ class CandidateEvaluator:
         components = {
             "deficiency": float(subset_diagnostics["deficiency"]),
             "surplus": float(subset_diagnostics["surplus"]),
-            "inaccuracy": float(
-                self.nescience.inaccuracy_.inaccuracy_predictions(
-                    artifacts.predictions
-                )
-            ),
-            "surfeit": float(
-                self.nescience.surfeit_.surfeit_string(
-                    artifacts.model_string
-                )
+            **self.nescience.mismodel_.components(
+                predictions=artifacts.predictions,
+                model_string=artifacts.model_string,
             ),
         }
         value = self.nescience.aggregate_components(**components)

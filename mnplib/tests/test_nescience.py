@@ -161,8 +161,9 @@ def test_fit_sets_attributes_and_component_estimators():
     assert metric.n_features_in_ == X.shape[1]
     assert metric.weights_.shape == (4,)
     assert hasattr(metric, "miscoding_")
-    assert hasattr(metric, "inaccuracy_")
-    assert hasattr(metric, "surfeit_")
+    assert hasattr(metric, "mismodel_")
+    assert hasattr(metric.mismodel_, "inaccuracy_")
+    assert hasattr(metric.mismodel_, "surfeit_")
 
 
 def test_fit_preserves_dataframe_feature_names_through_miscoding():

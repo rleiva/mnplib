@@ -2,18 +2,15 @@
 Nescience aggregation for fitted models and explicit model descriptions.
 
 This module implements the nescience component of the library as a small
-coordinator around three independent metrics:
+coordinator around two independent metrics:
 
 ``Miscoding``
     Computes feature deficiency and feature surplus from a selected subset of
     input variables.
 
-``Inaccuracy``
-    Computes the mismatch between the target representation and a vector of
-    model predictions.
-
-``Surfeit``
-    Computes the redundancy of an explicit model description string.
+``Mismodel``
+    Coordinates prediction inaccuracy and model-description surfeit, and
+    reports their equal-weight RMS independently of nescience weights.
 
 Fitted models are evaluated through canonical serializers. Explicit evaluation
 uses three artifacts:
@@ -42,9 +39,7 @@ from sklearn.utils.validation import check_is_fitted
 
 from ._types import Aggregation, XType, YType
 from .miscoding import Miscoding
-from .inaccuracy import Inaccuracy
-from .surfeit import Surfeit
-from .mismodel import mismodel
+from .mismodel import Mismodel
 from .models.inputs import model_artifacts
 from ._diagnostics import warn_nan_model
 from .utils import _validate_vector, _validate_y_type
@@ -147,13 +142,7 @@ class Nescience(BaseEstimator):
         self.miscoding_.fit(X, y_checked)
         self.feature_names_in_ = self.miscoding_.feature_names_in_.copy()
 
-        self.inaccuracy_ = Inaccuracy(
-            y_type=self.y_type,
-        )
-        self.inaccuracy_.fit_y(y_checked)
-
-        self.surfeit_ = Surfeit(y_type=self.y_type)
-        self.surfeit_.fit_y(y_checked)
+        self.mismodel_ = Mismodel(y_type=self.y_type).fit_y(y_checked)
 
         self.is_fitted_ = True
         return self
@@ -225,11 +214,8 @@ class Nescience(BaseEstimator):
             "surplus": float(
                 self.miscoding_.surplus_subset(subset)
             ),
-            "inaccuracy": float(
-                self.inaccuracy_.inaccuracy_predictions(predictions)
-            ),
-            "surfeit": float(
-                self.surfeit_.surfeit_string(model_string)
+            **self.mismodel_.components(
+                predictions=predictions, model_string=model_string,
             ),
         }
 
@@ -307,8 +293,10 @@ class Nescience(BaseEstimator):
             "aggregation": self.aggregation,
             "weights": dict(zip(self.component_names_, self.weights_)),
             **component_values,
-            "mismodel": mismodel(inaccuracy=component_values["inaccuracy"],
-                                 surfeit=component_values["surfeit"]),
+            "mismodel": self.mismodel_.aggregate_components(
+                inaccuracy=component_values["inaccuracy"],
+                surfeit=component_values["surfeit"],
+            ),
         }
 
     def aggregate_components(

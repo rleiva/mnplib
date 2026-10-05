@@ -110,13 +110,13 @@ def test_metric_components_agree_on_target_encoding(values, y_type, expected):
     inaccuracy_metric = Inaccuracy(y_type=y_type).fit(X, y)
     surfeit_metric = Surfeit(y_type=y_type).fit(X, y)
     for component in (
-        metric.miscoding_, metric.inaccuracy_, metric.surfeit_,
+        metric.miscoding_, metric.mismodel_.inaccuracy_, metric.mismodel_.surfeit_,
         miscoding_metric, inaccuracy_metric, surfeit_metric,
     ):
         assert component.y_isnumeric_ is expected
     target_length = empirical_distribution_vector(y, numeric=expected).code_length
     assert metric.miscoding_.target_code_length_ == target_length
-    assert metric.inaccuracy_.len_y_ == metric.surfeit_.len_y_ == target_length
+    assert metric.mismodel_.inaccuracy_.len_y_ == metric.mismodel_.surfeit_.len_y_ == target_length
     assert miscoding_metric.target_code_length_ == target_length
     assert inaccuracy_metric.len_y_ == surfeit_metric.len_y_ == target_length
 
@@ -186,8 +186,8 @@ def test_component_target_code_lengths_share_vector_policy(n_samples, y_type):
     expected = empirical_distribution_vector(y, numeric=y_type == "numeric").code_length
     metric = Nescience(y_type=y_type).fit(X, y)
     assert metric.miscoding_.target_code_length_ == expected
-    assert metric.inaccuracy_.len_y_ == expected
-    assert metric.surfeit_.len_y_ == expected
+    assert metric.mismodel_.inaccuracy_.len_y_ == expected
+    assert metric.mismodel_.surfeit_.len_y_ == expected
     assert Inaccuracy(y_type=y_type).fit_y(y).len_y_ == expected
     assert Surfeit(y_type=y_type).fit_y(y).len_y_ == expected
 
