@@ -12,7 +12,7 @@ from sklearn.tree import DecisionTreeRegressor
 
 from mnplib import (
     Inaccuracy, Miscoding, Nescience, Surfeit,
-    NescienceClassifier, NescienceRegressor, TimeSeries, AnomalyDetector,
+    NescienceClassifier, NescienceRegressor, TimeSeries, ResidualAnalysis,
 )
 from mnplib import inaccuracy, miscoding, nescience, surfeit, utils
 from mnplib.utils import _auto_n_bins, empirical_distribution_vector
@@ -81,7 +81,7 @@ def data():
 
 
 @pytest.mark.parametrize("cls", CLASSES + (
-    NescienceClassifier, NescienceRegressor, TimeSeries, AnomalyDetector,
+    NescienceClassifier, NescienceRegressor, TimeSeries, ResidualAnalysis,
 ))
 def test_high_level_configuration_exposes_only_estimator_options(cls):
     assert "n_bins" not in inspect.signature(cls).parameters

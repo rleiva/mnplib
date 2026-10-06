@@ -10,7 +10,7 @@ import pytest
 from sklearn.tree import DecisionTreeClassifier
 
 from mnplib import (
-    AnomalyDetector, Inaccuracy, Miscoding, Nescience, NescienceClassifier,
+    ResidualAnalysis, Inaccuracy, Miscoding, Nescience, NescienceClassifier,
     NescienceRegressor, Surfeit, TimeSeries,
 )
 from mnplib.inaccuracy import prediction_analysis
@@ -150,26 +150,25 @@ def test_anomaly_reports_cover_explanation_states(classification_data, patterns,
         predictions[y == 0] = 1
     elif patterns == "multiple":
         predictions = (y + 1) % 4
-    model = AnomalyDetector(task="classification").fit(X, y, predictions=predictions)
+    model = ResidualAnalysis(task="classification").fit(X, y, predictions=predictions)
     report = model.analysis()
     before = pickle.dumps(report)
     text = format_analysis(report)
-    assert text.startswith("Anomaly Analysis\n")
-    assert status in text
-    assert "Analyzed anomalies" in text and "Anomaly rate" in text
-    assert "Information (all anomalies)" in text
-    assert ("Selected anomaly subset" in text) == (patterns == "multiple")
+    assert text.startswith("Residual Analysis\n")
+    assert model.feature_analysis()["status"] == status
+    assert "Anomalies" in text and "Anomaly rate" in text
+    assert "Empirical common-state code lengths (bits)" in text
     assert pickle.dumps(report) == before
 
 
 def test_regression_anomaly_report_labels_kind_and_overall_detection(classification_data):
     X, y, _ = classification_data
     predictions = y.astype(float) + np.where(np.arange(len(y)) % 2, 5., -5.)
-    model = AnomalyDetector(task="regression").fit(X, y, predictions=predictions)
-    text = format_analysis(model.analysis(kind="under_predicted"))
-    assert "under_predicted" in text
-    assert "Detection (all samples)" in text
-    assert "Bin mismatches" in text and "Numeric bins" in text
+    model = ResidualAnalysis(task="regression").fit(X, y, predictions=predictions)
+    text = format_analysis(model.analysis())
+    assert "common_target_bins" in text
+    assert "all_samples" in text
+    assert "independent_numeric_bins" in text
 
 
 def test_feature_table_and_empty_table(classification_data):

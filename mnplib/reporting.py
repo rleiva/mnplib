@@ -84,7 +84,7 @@ def format_analysis(report: Mapping[str, object] | pd.DataFrame) -> str:
     """Return an aligned text summary without modifying or evaluating its input.
 
     Accept analysis dictionaries from Miscoding, Inaccuracy, Surfeit, Mismodel, Nescience,
-    NescienceClassifier, NescienceRegressor, TimeSeries, and AnomalyDetector.
+    NescienceClassifier, NescienceRegressor, TimeSeries, and ResidualAnalysis.
     This includes subset, prediction, and description analysis dictionaries.
     Feature-analysis and lag-analysis DataFrames are also supported. Functional
     analysis helpers return the same supported report structures.
@@ -114,11 +114,11 @@ def format_analysis(report: Mapping[str, object] | pd.DataFrame) -> str:
         return _format_table(report)
     if not isinstance(report, Mapping):
         raise TypeError("report must be an analysis mapping or DataFrame.")
-    if "anomaly_rate" in report and "n_anomalies" in report:
-        return _format_anomalies(report)
+    if report.get("report_kind") == "residuals":
+        return _format_residuals(report)
     metric = next((key for key in _METRIC_FIELDS if key in report), None)
     if metric is None:
-        raise ValueError("report must contain a recognized metric or anomaly analysis.")
+        raise ValueError("report must contain a recognized metric or residual analysis.")
     _value(report[metric], ".4f", key=metric)
 
     task = report.get("task")
@@ -171,35 +171,24 @@ def format_analysis(report: Mapping[str, object] | pd.DataFrame) -> str:
     return _render(title, sections)
 
 
-def _format_anomalies(report):
-    _value(report["n_anomalies"], "d", key="n_anomalies")
-    _value(report["anomaly_rate"], ".2%", key="anomaly_rate")
-    context = _rows(report, _CONTEXT_FIELDS + (
-        ("task", "Task", None), ("n_features", "Input features", "d"),
-        ("kind", "Anomaly kind", None), ("n_anomalies", "Analyzed anomalies", "d"),
-        ("n_correction_patterns", "Correction patterns", "d"),
-        ("status", "Explanation status", None),
-    )) + _selected_features(report)
-    sections = [(None, context), ("Detection (all samples)", _rows(report, (
-        ("anomaly_rate", "Anomaly rate", ".2%"),
-        ("n_misclassified", "Misclassified", "d"),
-        ("n_bin_mismatches", "Bin mismatches", "d"),
-        ("n_under_predicted", "Under-predicted", "d"),
-        ("n_over_predicted", "Over-predicted", "d"),
-        ("n_bins", "Numeric bins", "d"),
-        ("model_nescience", "Model nescience", ".4f"),
-    ))), ("Information (all anomalies)", _rows(report, (
-        ("anomaly_compressibility", "Compressibility", ".4f"),
-        ("anomaly_compression_ratio", "Compression ratio", ".4f"),
-        ("anomaly_optimal_code_length", "Optimal code length (bits)", ".3f"),
-        ("anomaly_uniform_code_length", "Uniform code length (bits)", ".3f"),
-    )))]
-    subset = report.get("subset_analysis")
-    if isinstance(subset, Mapping):
-        sections.append(("Selected anomaly subset", _reliability(subset) + _rows(
-            subset, _METRIC_FIELDS["miscoding"] + _JOINT_FIELDS,
-        )))
-    return _render("Anomaly Analysis", sections)
+def _format_residuals(report):
+    return _render("Residual Analysis", [
+        (None, _rows(report, _CONTEXT_FIELDS + (
+            ("task", "Task", None), ("scope", "Scope", None),
+            ("inaccuracy", "Inaccuracy", ".4f"),
+            ("inaccuracy_encoding", "Inaccuracy encoding", None),
+            ("correction_encoding", "Correction encoding", None),
+            ("n_anomalies", "Anomalies", "d"), ("anomaly_rate", "Anomaly rate", ".2%"),
+            ("n_correction_patterns", "Correction patterns", "d"),
+        ))),
+        ("Empirical common-state code lengths (bits)", _rows(report, (
+            ("target_code_length_bits", "Target", ".3f"),
+            ("prediction_code_length_bits", "Predictions", ".3f"),
+            ("joint_code_length_bits", "Joint", ".3f"),
+            ("target_conditional_code_length_bits", "Target given predictions", ".3f"),
+            ("prediction_conditional_code_length_bits", "Predictions given target", ".3f"),
+        ))), ("Joint distribution", _rows(report, _JOINT_FIELDS)),
+    ])
 
 
 def _format_table(report):

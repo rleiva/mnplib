@@ -1,13 +1,13 @@
 """
-Model-relative anomaly detection with the Minimum Nescience Principle.
+Model-relative residual and correction analysis with the Minimum Nescience Principle.
 
 The detector identifies observations that are not reconstructed by a predictive
 model. Classification anomalies are misclassified samples. Regression anomalies
 are samples whose observed and predicted target values fall in different bins of
 a common uniform discretization of the target domain.
 
-Mismatch is the anomaly criterion. Information-theoretic quantities are used
-only to characterize identified anomalies. The class also applies supervised
+Mismatch is the anomaly criterion. Information-theoretic quantities characterize
+all observations. The class also applies supervised
 miscoding to the anomalous subset to identify attributes associated with
 systematic anomaly patterns, and measures how compressible the predicted target
 states of anomalous observations are.
@@ -19,8 +19,8 @@ states of anomalous observations are.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Any, Literal, get_args
+from copy import deepcopy
+from typing import Literal, get_args
 
 import numpy as np
 import pandas as pd
@@ -30,156 +30,97 @@ from sklearn.utils import check_X_y
 from sklearn.utils.validation import check_is_fitted
 
 from ._types import ResolvedTask, Task, XType
-from .classifier import NescienceClassifier
+from .inaccuracy import Inaccuracy
 from .miscoding import Miscoding
-from .regressor import NescienceRegressor
 from .utils import _resolve_bins, _resolve_feature_names, _resolve_y_isnumeric
 
 
 AnomalyKind = Literal["all", "misclassified", "under_predicted", "over_predicted"]
 
 
-class AnomalyDetector(BaseEstimator):
-    """
-    Detect and explain model-relative anomalies.
+class ResidualAnalysis(BaseEstimator):
+    """Analyze empirical correction information for explicit model predictions.
 
-    Parameters
-    ----------
-    task : {"auto", "classification", "regression"}, default="auto"
-        Predictive task. If ``"auto"``, the task is inferred from ``y``.
+    No model is trained by this class. Classification anomalies are label
+    mismatches; regression anomalies are mismatches under common target-derived
+    uniform bins, including separate out-of-range prediction states. Local
+    information characterizes all samples; it is not an anomaly threshold.
 
-    X_type : {"auto", "numeric", "categorical"}, default="auto"
-        Feature encoding strategy passed to the nescience-based auto estimators
-        and to ``Miscoding`` during anomaly explanation.
-
-    auto_model_kwargs : mapping, optional
-        Additional keyword arguments passed to ``NescienceClassifier`` or
-        ``NescienceRegressor`` when no model and no predictions are supplied.
-
-    random_state : int, optional
-        Random seed passed to the nescience-based auto estimators.
-
-    Notes
-    -----
-    Anomaly detection is intentionally threshold-free. A classification sample
-    is anomalous exactly when its predicted class differs from the observed
-    class. A regression sample is anomalous exactly when its observed and
-    predicted values fall in different bins of one common discretization.
-    Numeric targets use ``max(2, floor(2 * n_samples**(1/3)))`` uniform bins;
-    a constant target has one observed bin. Feature explanations use the
-    subset-adaptive discretization of ``Miscoding``.
-
-    Local correction information and negative local explanatory gain are
-    diagnostics computed after anomaly detection. They never affect the anomaly
-    mask.
+    Inaccuracy retains the library's own encoding (independent numeric edges).
+    Correction information uses common target states and is NOT a decomposition
+    of that inaccuracy. Empirical conditional lengths omit codebook costs and
+    do not measure generalization. Feature explanations are computed lazily.
     """
 
     _VALID_TASKS = get_args(Task)
     _VALID_X_TYPES = get_args(XType)
     _VALID_KINDS = get_args(AnomalyKind)
 
-    def __init__(
-        self,
-        task: Task = "auto",
-        X_type: XType = "auto",
-        auto_model_kwargs: Mapping[str, Any] | None = None,
-        random_state: int | None = None,
-    ):
+    def __init__(self, task: Task = "auto", X_type: XType = "auto"):
         self.task = task
         self.X_type = X_type
-        self.auto_model_kwargs = auto_model_kwargs
-        self.random_state = random_state
 
-    # ------------------------------------------------------------------
-    # Fitting
-    # ------------------------------------------------------------------
+    def fit(self, X, y, *, predictions, sample_ids=None):
+        """Fit with optional explanatory attributes; predictions must align with y.
 
-    def fit(self, X, y, *, model=None, predictions=None):
-        """
-        Fit the anomaly detector.
-
-        Parameters
-        ----------
-        X : array-like or pandas.DataFrame of shape (n_samples, n_features)
-            Feature matrix.
-
-        y : array-like of shape (n_samples,)
-            Observed target values.
-
-        model : object, optional
-            Predictive model implementing ``predict(X)``. If omitted and
-            ``predictions`` is also omitted, the appropriate nescience-based
-            auto estimator is fitted.
-
-        predictions : array-like of shape (n_samples,), optional
-            Precomputed predictions.
-
-        Returns
-        -------
-        self : AnomalyDetector
-            Fitted detector.
+        All attributes in X are available for correction-pattern explanation,
+        not necessarily just those used by the predictive model.
         """
         self._validate_configuration()
-        X_checked, y_checked, feature_names, X_frame = self._prepare_X_y(X, y)
-
-        self.X_ = X_checked
-        self.X_frame_ = X_frame
-        self.y_ = y_checked
-        self.feature_names_in_ = np.fromiter(feature_names, dtype=object)
+        for name in list(vars(self)):
+            if name.endswith("_"):
+                delattr(self, name)
+        y = self._vector(y, "y")
+        predictions = self._vector(predictions, "predictions")
+        if len(y) != len(predictions):
+            raise ValueError("predictions and y must have the same number of samples.")
+        self.task_ = self._resolve_task(y)
+        if self.task_ == "regression":
+            y = self._numeric_vector(y, name="y")
+            predictions = self._numeric_vector(predictions, name="predictions")
+        if X is None:
+            self.X_frame_ = pd.DataFrame(index=np.arange(len(y)))
+            self.X_ = self.X_frame_.to_numpy()
+            names = []
+        else:
+            self.X_, _, names, self.X_frame_ = self._prepare_X_y(X, y)
+        self.y_, self.y_pred_ = y.copy(), predictions.copy()
         self.n_samples_in_, self.n_features_in_ = self.X_.shape
-        self.n_bins_ = _resolve_bins("auto", self.n_samples_in_)
-        self.task_ = self._resolve_task(self.y_)
-        self.model_ = None
-
-        self.y_pred_ = self._resolve_predictions(
-            X=self.X_frame_,
-            y=self.y_,
-            model=model,
-            predictions=predictions,
-        )
-
+        self.feature_names_in_ = np.fromiter(names, dtype=object)
+        ids = np.arange(len(y)) if sample_ids is None else self._vector(sample_ids, "sample_ids")
+        if len(ids) != len(y) or not pd.Index(ids).is_unique:
+            raise ValueError("sample_ids must be unique and aligned with y.")
+        self.sample_ids_ = ids.copy()
+        self.n_bins_ = _resolve_bins("auto", len(y))
         self._compute_anomalies()
         self._compute_information_diagnostics()
-        self.anomaly_compressibility_ = self._compute_anomaly_compressibility()
+        self.inaccuracy_analysis_ = Inaccuracy(
+            y_type="numeric" if self.task_ == "regression" else "categorical"
+        ).fit_y(self.y_).prediction_analysis(self.y_pred_)
+        self._explanations_ = {}
         self.is_fitted_ = True
-
         return self
 
+    def fit_y(self, y, *, predictions, sample_ids=None):
+        """Fit prediction diagnostics without explanatory attributes."""
+        return self.fit(None, y, predictions=predictions, sample_ids=sample_ids)
 
-    def _resolve_predictions(self, *, X, y, model, predictions) -> np.ndarray:
-        """Return validated predictions and store a fitted model when present."""
-        if predictions is not None and model is not None:
-            raise ValueError("Provide either model or predictions, not both.")
+    def __sklearn_is_fitted__(self):
+        return getattr(self, "is_fitted_", False)
 
-        if predictions is not None:
-            return self._validate_predictions(predictions)
-
-        if model is None:
-            model = self._fit_auto_model(X, y)
-
-        if not hasattr(model, "predict"):
-            raise TypeError("model must implement a predict(X) method.")
-
-        self.model_ = model
-        return self._validate_predictions(model.predict(X))
-
-    def _fit_auto_model(self, X, y):
-        """Fit the appropriate nescience-based auto estimator."""
-        kwargs = dict(self.auto_model_kwargs or {})
-        kwargs.setdefault("X_type", self.X_type)
-        kwargs.setdefault("random_state", self.random_state)
-
-        if self.task_ == "classification":
-            model = NescienceClassifier(**kwargs)
-            model.fit(X, y)
-            return model
-
-        model = NescienceRegressor(**kwargs)
-        model.fit(X, y)
-        return model
+    @staticmethod
+    def _vector(values, name):
+        array = np.asarray(values)
+        if array.ndim != 1 or not array.size:
+            raise ValueError(f"{name} must be a nonempty one-dimensional vector.")
+        if pd.isna(array).any():
+            raise ValueError(f"{name} must not contain missing values.")
+        if any(isinstance(v, (float, np.floating)) and not np.isfinite(v) for v in array):
+            raise ValueError(f"{name} must contain only finite values.")
+        return array
 
     # ------------------------------------------------------------------
-    # Public anomaly outputs
+    # Public reports
     # ------------------------------------------------------------------
 
     def anomalies(self, kind: AnomalyKind = "all") -> np.ndarray:
@@ -197,16 +138,15 @@ class AnomalyDetector(BaseEstimator):
         check_is_fitted(self)
         return np.flatnonzero(self._mask_for_kind(kind)).astype(int)
 
-    def results_dataframe(self, *, only_anomalies: bool = True) -> pd.DataFrame:
+    def results_dataframe(self, *, only_anomalies: bool = False) -> pd.DataFrame:
         """
-        Return row-level anomaly diagnostics.
+        Return row-level correction and anomaly diagnostics.
 
         Parameters
         ----------
-        only_anomalies : bool, default=True
+        only_anomalies : bool, default=False
             If ``True``, return only anomalous samples. Otherwise return every
-            sample. Information diagnostics are defined only for identified
-            anomalies and are ``NaN`` for regular observations.
+            sample. Information diagnostics use empirical probabilities from all samples.
 
         Returns
         -------
@@ -218,6 +158,10 @@ class AnomalyDetector(BaseEstimator):
         table = pd.DataFrame(
             {
                 "sample_index": np.arange(self.n_samples_in_, dtype=int),
+                "sample_id": self.sample_ids_,
+                "pattern_id": self.correction_state_,
+                "observed_state": self.y_true_state_,
+                "predicted_state": self.y_pred_state_,
                 "y_true": self.y_,
                 "y_pred": self.y_pred_,
                 "is_anomaly": self.anomaly_mask_,
@@ -241,71 +185,120 @@ class AnomalyDetector(BaseEstimator):
 
         return table.reset_index(drop=True)
 
-    def _summary(self) -> dict[str, object]:
-        """Return compact summary statistics for the fitted detector."""
+    def analysis(self) -> dict[str, object]:
+        """Return full-population numerical diagnostics without feature fitting."""
         check_is_fitted(self)
-
-        anomaly_values = self.local_correction_information_[self.anomaly_mask_]
-        negative_gain_values = self.negative_local_explanatory_gain_[self.anomaly_mask_]
-        compressibility = self.anomaly_compressibility_
-
-        result: dict[str, object] = {
-            "task": self.task_,
-            "n_samples": int(self.n_samples_in_),
-            "n_features": int(self.n_features_in_),
-            "n_anomalies": int(np.sum(self.anomaly_mask_)),
-            "anomaly_rate": float(np.mean(self.anomaly_mask_)),
-            "model_type": None if self.model_ is None else type(self.model_).__name__,
-            "mean_local_correction_information": self._safe_mean(anomaly_values),
-            "mean_negative_local_explanatory_gain": self._safe_mean(negative_gain_values),
-            "anomaly_compressibility": float(compressibility["compressibility"]),
-            "anomaly_compression_ratio": float(compressibility["compression_ratio"]),
-            "anomaly_optimal_code_length": float(
-                compressibility["optimal_code_length"]
-            ),
-            "anomaly_uniform_code_length": float(
-                compressibility["uniform_code_length"]
-            ),
-            "n_target_states": int(compressibility["n_states"]),
-            "n_anomaly_predicted_states": int(
-                compressibility["n_anomaly_predicted_states"]
-            ),
+        true_counts = np.array(list(self._state_count_dict(self.y_true_state_).values()))
+        pred_counts = np.array(list(self._state_count_dict(self.y_pred_state_).values()))
+        pair_counts = np.array(list(self._pair_count_dict(self.y_pred_state_, self.y_true_state_).values()))
+        target = self._code_length(true_counts)
+        predicted = self._code_length(pred_counts)
+        joint = self._code_length(pair_counts)
+        return {
+            "report_kind": "residuals", "scope": "all_samples", "task": self.task_,
+            "n_samples": self.n_samples_in_, "n_features": self.n_features_in_,
+            "n_anomalies": int(self.anomaly_mask_.sum()),
+            "anomaly_rate": float(self.anomaly_mask_.mean()),
+            "n_correction_patterns": int(len(pair_counts)),
+            "inaccuracy": float(self.inaccuracy_analysis_["inaccuracy"]),
+            "inaccuracy_analysis": deepcopy(self.inaccuracy_analysis_),
+            "inaccuracy_encoding": "independent_numeric_bins" if self.task_ == "regression" else "categorical",
+            "correction_encoding": "common_target_bins" if self.task_ == "regression" else "common_labels",
+            "bin_edges": getattr(self, "bin_edges_", np.array([])).copy(),
+            "states": self._state_labels(),
+            "target_code_length_bits": target,
+            "prediction_code_length_bits": predicted,
+            "joint_code_length_bits": joint,
+            "target_conditional_code_length_bits": max(0., joint - predicted),
+            "prediction_conditional_code_length_bits": max(0., joint - target),
+            "mean_local_correction_information": float(self.local_correction_information_.mean()),
+            "mean_negative_local_explanatory_gain": float(self.negative_local_explanatory_gain_.mean()),
+            "n_observed_joint_states": len(pair_counts),
+            "mean_joint_occupancy": float(self.n_samples_in_ / len(pair_counts)),
+            "singleton_fraction": float(np.sum(pair_counts == 1) / self.n_samples_in_),
         }
 
-        if hasattr(self.model_, "nescience"):
-            result["model_nescience"] = float(self.model_.nescience())
+    def patterns_dataframe(self, *, only_anomalies=False, kind: AnomalyKind = "all"):
+        """Count common-state transitions; local probabilities always use all samples."""
+        table = self.results_dataframe()
+        if only_anomalies:
+            table = table.loc[self._mask_for_kind(kind)]
+        elif kind != "all":
+            raise ValueError("kind requires only_anomalies=True.")
+        return table.groupby(
+            ["pattern_id", "predicted_state", "observed_state", "is_anomaly"], sort=False
+        ).agg(count=("sample_index", "size"),
+              local_correction_information=("local_correction_information", "first"),
+              negative_local_explanatory_gain=("negative_local_explanatory_gain", "first")
+        ).reset_index().sort_values("count", ascending=False, kind="stable").reset_index(drop=True)
 
+    def feature_analysis(self, *, kind: AnomalyKind = "all", max_features=None):
+        """Lazily explain variation BETWEEN anomaly correction patterns."""
+        check_is_fitted(self)
+        self._mask_for_kind(kind)
+        if max_features is not None and (isinstance(max_features, bool) or not isinstance(max_features, int) or max_features < 1):
+            raise ValueError("max_features must be a positive integer or None.")
+        key = (kind, max_features)
+        if key not in self._explanations_:
+            self._explanations_[key] = self._explain_features(kind=kind, max_features=max_features)
+        return deepcopy(self._explanations_[key])
+
+    def compressibility(self, *, kind: AnomalyKind = "all"):
+        """Empirical predicted-state compression within the requested anomalies."""
+        check_is_fitted(self)
+        return self._compute_anomaly_compressibility(self._mask_for_kind(kind))
+
+    def _state_labels(self):
         if self.task_ == "classification":
-            result["n_misclassified"] = int(np.sum(self.anomaly_mask_))
-        else:
-            result.update(
-                {
-                    "n_bins": int(self.n_bins_),
-                    "n_bin_mismatches": int(np.sum(self.anomaly_mask_)),
-                    "n_under_predicted": int(
-                        np.sum(self.anomaly_mask_ & self._under_prediction_mask())
-                    ),
-                    "n_over_predicted": int(
-                        np.sum(self.anomaly_mask_ & self._over_prediction_mask())
-                    ),
-                }
-            )
+            _, labels = pd.factorize(np.concatenate([self.y_, self.y_pred_]), sort=False)
+            return [{"state": i, "value": value} for i, value in enumerate(labels)]
+        edges = self.bin_edges_
+        states = [{"state": i, "lower": float(edges[i]), "upper": float(edges[i + 1]),
+                   "upper_inclusive": i == self.n_bins_ - 1} for i in range(self.n_bins_)]
+        if np.any(self.y_pred_state_ < 0):
+            states.insert(0, {"state": -1, "upper": float(edges[0]), "outside": "below"})
+        if np.any(self.y_pred_state_ >= self.n_bins_):
+            states.append({"state": self.n_bins_, "lower": float(edges[-1]), "outside": "above"})
+        return states
 
-        return result
+    def attribute_distribution(self, attribute, *, kind: AnomalyKind = "all"):
+        """Return shared-bin counts for all observations and selected anomalies.
 
-    # ------------------------------------------------------------------
-    # Miscoding-based anomaly explanation
-    # ------------------------------------------------------------------
-
-    def analysis(self, *, kind: AnomalyKind = "all", max_features: int | None = None) -> dict[str, object]:
-        """Return summary, correction-pattern analysis, and compressibility.
-
-        Detection is model-relative. Information diagnostics characterize
-        mismatches without introducing a separate anomaly threshold.
+        All categorical levels are preserved. Numeric edges use the complete
+        fitted attribute range, never a separately fitted anomaly histogram.
         """
-        return {**self._summary(),
-                "compressibility": dict(self.anomaly_compressibility_),
-                **self._explain_features(kind=kind, max_features=max_features)}
+        check_is_fitted(self)
+        if attribute not in self.X_frame_.columns:
+            raise ValueError(f"Unknown explanatory attribute: {attribute!r}.")
+        mask = self._mask_for_kind(kind)
+        values = self.X_frame_[attribute]
+        if pd.api.types.is_numeric_dtype(values) and not pd.api.types.is_bool_dtype(values):
+            data = values.to_numpy(dtype=float)
+            if not np.isfinite(data).all():
+                raise ValueError("Numeric attributes must be finite.")
+            lo, hi = float(data.min()), float(data.max())
+            count = 1 if lo == hi else min(12, _resolve_bins("auto", len(data)))
+            edges = np.linspace(lo, hi, count + 1)
+            codes = np.digitize(data, edges[1:-1])
+            states = [{"lower": float(edges[i]), "upper": float(edges[i + 1])}
+                      for i in range(count)]
+            encoding = "numeric"
+        else:
+            codes, labels = pd.factorize(values, sort=False)
+            states = [{"value": value} for value in labels]
+            encoding = "categorical"
+        totals = np.bincount(codes, minlength=len(states))
+        anomaly_counts = np.bincount(codes[mask], minlength=len(states))
+        bins = []
+        for i, state in enumerate(states):
+            bins.append({**state, "total_count": int(totals[i]),
+                         "anomaly_count": int(anomaly_counts[i])})
+        return {"attribute": attribute, "kind": encoding, "anomaly_kind": kind,
+                "n_samples": self.n_samples_in_, "n_anomalies": int(mask.sum()), "bins": bins}
+
+    @staticmethod
+    def _code_length(counts):
+        return max(0., float(-np.sum(counts * np.log2(counts / counts.sum()))))
 
     def _explain_features(
         self,
@@ -357,6 +350,10 @@ class AnomalyDetector(BaseEstimator):
             "n_anomalies": int(indices.size),
             "n_correction_patterns": n_patterns,
         }
+
+        if not self.n_features_in_:
+            return {**base, "status": "no_attributes", "feature_analysis": self._empty_feature_analysis(),
+                    "selected_features": [], "selection_path": pd.DataFrame()}
 
         if indices.size < 2:
             return {
@@ -462,8 +459,7 @@ class AnomalyDetector(BaseEstimator):
         Compute correction information and negative explanatory gain.
 
         Probabilities are estimated from the complete fitted sample. Diagnostic
-        values are retained only for observations already identified as
-        anomalous by mismatch.
+        values are retained for every observation; mismatch alone identifies anomalies.
         """
         true_state = np.asarray(self.y_true_state_, dtype=int)
         pred_state = np.asarray(self.y_pred_state_, dtype=int)
@@ -476,7 +472,7 @@ class AnomalyDetector(BaseEstimator):
         correction = np.full(n_samples, np.nan, dtype=float)
         negative_gain = np.full(n_samples, np.nan, dtype=float)
 
-        for i in np.flatnonzero(self.anomaly_mask_):
+        for i in range(n_samples):
             observed = int(true_state[i])
             predicted = int(pred_state[i])
 
@@ -493,7 +489,7 @@ class AnomalyDetector(BaseEstimator):
         self.local_correction_information_ = correction
         self.negative_local_explanatory_gain_ = negative_gain
 
-    def _compute_anomaly_compressibility(self) -> dict[str, object]:
+    def _compute_anomaly_compressibility(self, mask) -> dict[str, object]:
         """
         Compute compressibility of anomalous predicted target states.
 
@@ -503,7 +499,7 @@ class AnomalyDetector(BaseEstimator):
         reference distribution.
         """
         predicted = np.asarray(
-            self.y_pred_state_[self.anomaly_mask_],
+            self.y_pred_state_[mask],
             dtype=int,
         )
         n_anomalies = int(predicted.size)
@@ -511,6 +507,7 @@ class AnomalyDetector(BaseEstimator):
 
         if n_anomalies == 0:
             return {
+                "scope": "anomalous_predicted_states", "status": "no_anomalies",
                 "n_anomalies": 0,
                 "n_states": int(n_states),
                 "n_anomaly_predicted_states": 0,
@@ -543,6 +540,7 @@ class AnomalyDetector(BaseEstimator):
             compressibility = 1.0 - compression_ratio
 
         return {
+            "scope": "anomalous_predicted_states", "status": "ok",
             "n_anomalies": n_anomalies,
             "n_states": int(n_states),
             "n_anomaly_predicted_states": int(counts.size),
@@ -703,18 +701,6 @@ class AnomalyDetector(BaseEstimator):
             source_frame,
         )
 
-    def _validate_predictions(self, predictions) -> np.ndarray:
-        """Validate prediction vector against the fitted target."""
-        pred = np.ravel(np.asarray(predictions))
-
-        if pred.shape[0] != self.n_samples_in_:
-            raise ValueError(
-                "predictions and y must have the same number of samples. "
-                f"Got {pred.shape[0]} predictions and {self.n_samples_in_} targets."
-            )
-
-        return pred
-
     def _resolve_task(self, y: np.ndarray) -> ResolvedTask:
         """Resolve the configured task from the target vector."""
         if self.task in get_args(ResolvedTask):
@@ -767,19 +753,3 @@ class AnomalyDetector(BaseEstimator):
                 "miscoding",
             ]
         )
-
-    @staticmethod
-    def _safe_mean(values: np.ndarray) -> float | None:
-        """Return the finite mean of a diagnostic vector, or None if empty."""
-        values = np.asarray(values, dtype=float)
-        values = values[np.isfinite(values)]
-        if values.size == 0:
-            return None
-        return float(np.mean(values))
-
-
-def results_dataframe(X, y, predictions, *, task: Task = "auto", **kwargs) -> pd.DataFrame:
-    """Return an anomaly table directly from a prediction vector."""
-    detector = AnomalyDetector(task=task, **kwargs)
-    detector.fit(X, y, predictions=predictions)
-    return detector.results_dataframe()

@@ -8,9 +8,9 @@ from .nescience import Nescience
 from .classifier import NescienceClassifier
 from .regressor import NescienceRegressor
 from .timeseries import TimeSeries
-from .anomalies import AnomalyDetector
+from .residuals import ResidualAnalysis
 
 __all__ = [
     "Miscoding", "Inaccuracy", "Surfeit", "Mismodel", "Nescience",
-    "NescienceClassifier", "NescienceRegressor", "TimeSeries", "AnomalyDetector",
+    "NescienceClassifier", "NescienceRegressor", "TimeSeries", "ResidualAnalysis",
 ]

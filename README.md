@@ -24,9 +24,68 @@ pip install -e .
 
 The library returns numerical metrics and factual diagnostics. Applications own interpretation thresholds, qualitative labels, recommendations, and explanatory wording. Reliability decisions and machine-readable failure codes remain part of the numerical API.
 
-Use `Nescience.analysis(subset=..., predictions=..., model_string=...)` for explicit artifacts, `model_analysis(model)` for fitted estimators, and `analysis()` on `NescienceClassifier`, `NescienceRegressor`, `TimeSeries`, or `AnomalyDetector`. These reports do not assign qualitative profiles. Canonical model descriptions remain in mnplib because their compressed lengths determine surfeit.
+Use `Nescience.analysis(subset=..., predictions=..., model_string=...)` for explicit artifacts, `model_analysis(model)` for fitted estimators, and `analysis()` on `NescienceClassifier`, `NescienceRegressor`, `TimeSeries`, or `ResidualAnalysis`. These reports do not assign qualitative profiles. Canonical model descriptions remain in mnplib because their compressed lengths determine surfeit.
 
 `Mismodel` evaluates predictions and a model description through inaccuracy and surfeit. `from mnplib.mismodel import mismodel` provides the scalar `mismodel(inaccuracy=..., surfeit=...)` helper when these components are already available. Both interfaces use their equal-weight root mean square. Mismodel is also included in nescience analysis reports and AutoML result dataframes.
+
+### Residual and Correction Analysis
+
+`ResidualAnalysis` analyzes explicit predictions without training or selecting a
+model. It combines full-population correction information with model-relative
+anomaly detection, optional attribute explanations, and predicted-state
+compressibility.
+
+```python
+from mnplib import ResidualAnalysis, format_analysis
+
+diagnostics = ResidualAnalysis(task="regression").fit(
+    X, y, predictions=fitted_model.predict(X),
+)
+print(format_analysis(diagnostics.analysis()))
+samples = diagnostics.results_dataframe()  # all evaluated observations
+patterns = diagnostics.patterns_dataframe(only_anomalies=True)
+attributes = diagnostics.feature_analysis(kind="under_predicted")  # lazy, cached
+distribution = diagnostics.attribute_distribution(X.columns[0])
+compression = diagnostics.compressibility()
+```
+
+Use `fit_y(y, predictions=...)` when no explanatory attributes are available.
+Optional `sample_ids` must be unique and aligned with y. Predictions must be
+finite, non-missing, one-dimensional and aligned; no rows are silently dropped.
+Returned reports are independent copies. Refitting invalidates cached details.
+
+Classification anomalies are label mismatches. Regression anomalies are
+mismatches in common uniform bins learned from the observed target (one bin for
+a constant target), with separate out-of-range prediction states. This is not
+an information threshold. Local correction information is
+`-log2 p(observed_state | predicted_state)`; negative local explanatory gain is
+`max(0, -log2[p(observed_state | predicted_state) / p(observed_state)])`.
+Probabilities always use the full fitted population, including when reporting
+only anomalies.
+
+`analysis()` reports empirical code lengths K(target), K(predictions), K(joint),
+K(target | predictions) and K(predictions | target), without codebook costs.
+These are empirical Shannon descriptions, not exact Kolmogorov complexity or
+generalization estimates. Joint occupancy and singleton-sample fraction expose
+sparsity; deterministic wrong mappings may have zero conditional information.
+The independently computed `inaccuracy` retains Inaccuracy's encoding, which
+fits numeric edges independently. Common-state correction lengths are therefore
+**not a decomposition of that score**. Model selection and metric formulas are
+unchanged.
+
+`feature_analysis()` uses all supplied attributes to describe variation between
+correction patterns within a requested anomaly group. It does not explain
+anomaly membership or establish causality. Empty/insufficient anomaly groups,
+single patterns, and missing attributes have machine-readable statuses.
+Reliability and NaN behavior are delegated to Miscoding. The optional
+`max_features` bounds the greedy selection; returned DataFrames preserve names.
+
+`compressibility()` concerns predicted states among the requested anomalies,
+relative to a uniform code over the complete target alphabet. It does not
+measure numerical-residual compression or surfeit. Empty groups return
+`status="no_anomalies"`; their numeric zero convention is not evidence of
+compression. `attribute_distribution()` returns all-population and anomaly
+counts using shared bins. Qualitative interpretations belong to applications.
 
 ### Core Concepts
 
@@ -299,7 +358,7 @@ print(format_analysis(miscoding.feature_analysis()))
 | `Nescience` | `analysis()`, `model_analysis()` |
 | `NescienceClassifier`, `NescienceRegressor` | `analysis()` |
 | `TimeSeries` | `analysis()`, `lag_analysis()` |
-| `AnomalyDetector` | `analysis()` |
+| `ResidualAnalysis` | `analysis()` |
 
 Functional analysis helpers return the same supported structures. Formatting
 does not fit or score a model, modify a report, or print automatically. Summaries

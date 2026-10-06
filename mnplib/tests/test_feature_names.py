@@ -7,7 +7,7 @@ from scipy.sparse import csr_matrix
 from sklearn.tree import DecisionTreeRegressor
 
 from mnplib import (
-    AnomalyDetector,
+    ResidualAnalysis,
     Inaccuracy,
     Miscoding,
     Nescience,
@@ -75,7 +75,7 @@ def test_feature_dimension_is_required_and_must_match_names_and_input():
 
 @pytest.mark.parametrize("cls", [
     Miscoding, Inaccuracy, Surfeit, Nescience,
-    NescienceClassifier, NescienceRegressor, AnomalyDetector,
+    NescienceClassifier, NescienceRegressor, ResidualAnalysis,
 ])
 @pytest.mark.parametrize("input_kind", ["array", "list", "strings", "integers", "multiindex"])
 def test_fitted_estimators_share_feature_names(cls, input_kind):
@@ -95,7 +95,7 @@ def test_fitted_estimators_share_feature_names(cls, input_kind):
 
     if cls in (NescienceClassifier, NescienceRegressor):
         metric = cls(models=["decision_tree"], random_state=0).fit(X, y)
-    elif cls is AnomalyDetector:
+    elif cls is ResidualAnalysis:
         metric = cls().fit(X, y, predictions=y)
         assert list(metric.X_frame_.columns) == names
     else:

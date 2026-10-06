@@ -5,7 +5,7 @@ from typing import Literal, get_args, get_type_hints
 import pytest
 
 from mnplib import (
-    AnomalyDetector,
+    ResidualAnalysis,
     Inaccuracy,
     Miscoding,
     Nescience,
@@ -15,7 +15,7 @@ from mnplib import (
     TimeSeries,
 )
 from mnplib._types import BinSpec, ResolvedTask, Task, XType, YType
-from mnplib.anomalies import AnomalyKind
+from mnplib.residuals import AnomalyKind
 from mnplib.automl.searchers.base import SearchContext
 from mnplib.miscoding import RankingCriterion
 from mnplib.models.serializers.base import SklearnSerializer
@@ -44,7 +44,7 @@ def test_shared_aliases_describe_supported_configuration_values():
 
 
 @pytest.mark.parametrize("cls", [
-    AnomalyDetector, Inaccuracy, Miscoding, Nescience,
+    ResidualAnalysis, Inaccuracy, Miscoding, Nescience,
     NescienceClassifier, NescienceRegressor, Surfeit, TimeSeries,
 ])
 def test_estimator_configuration_annotations_use_shared_types(cls):
@@ -68,8 +68,8 @@ def test_target_policy_helpers_use_shared_type(function):
 
 
 def test_configured_and_resolved_task_annotations_are_distinct():
-    assert get_type_hints(AnomalyDetector.__init__)["task"] == Task
-    assert get_type_hints(AnomalyDetector._resolve_task)["return"] == ResolvedTask
+    assert get_type_hints(ResidualAnalysis.__init__)["task"] == Task
+    assert get_type_hints(ResidualAnalysis._resolve_task)["return"] == ResolvedTask
     assert get_type_hints(SearchContext)["task"] == ResolvedTask
 
 
@@ -90,9 +90,9 @@ def test_timeseries_window_annotations_share_the_lagged_representation_type():
     (Miscoding, "_VALID_X_TYPES", XType),
     (Miscoding, "_VALID_RANKING_CRITERIA", RankingCriterion),
     (Nescience, "_VALID_X_TYPES", XType),
-    (AnomalyDetector, "_VALID_TASKS", Task),
-    (AnomalyDetector, "_VALID_X_TYPES", XType),
-    (AnomalyDetector, "_VALID_KINDS", AnomalyKind),
+    (ResidualAnalysis, "_VALID_TASKS", Task),
+    (ResidualAnalysis, "_VALID_X_TYPES", XType),
+    (ResidualAnalysis, "_VALID_KINDS", AnomalyKind),
     (TimeSeries, "_VALID_X_TYPES", XType),
     (TimeSeries, "_VALID_MODELS", ModelName),
 ])
@@ -125,8 +125,8 @@ def test_metric_validation_accepts_literal_choices_and_reports_invalid_values(cl
 
 
 @pytest.mark.parametrize("cls,parameter,alias", [
-    (AnomalyDetector, "X_type", XType),
-    (AnomalyDetector, "task", Task),
+    (ResidualAnalysis, "X_type", XType),
+    (ResidualAnalysis, "task", Task),
     (TimeSeries, "X_type", XType),
 ])
 def test_deferred_validation_uses_literal_choices(cls, parameter, alias):
@@ -140,7 +140,7 @@ def test_deferred_validation_uses_literal_choices(cls, parameter, alias):
 
 @pytest.mark.parametrize("task", get_args(ResolvedTask))
 def test_explicit_anomaly_task_does_not_require_inference(task):
-    assert AnomalyDetector(task=task)._resolve_task([0, 1]) == task
+    assert ResidualAnalysis(task=task)._resolve_task([0, 1]) == task
 
 
 @pytest.mark.parametrize("family", get_args(ModelName))

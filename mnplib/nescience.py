@@ -52,8 +52,8 @@ class Nescience(BaseEstimator):
     """
 
     component_names_ = ("deficiency", "surplus", "inaccuracy", "surfeit")
-    weight_names_ = ("miscoding", "mismodel")
-    _VALID_X_TYPES = get_args(XType)
+    weight_names_    = ("miscoding", "mismodel")
+    _VALID_X_TYPES   = get_args(XType)
 
     def __init__(
         self,
