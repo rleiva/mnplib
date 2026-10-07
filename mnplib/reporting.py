@@ -158,16 +158,7 @@ def format_analysis(report: Mapping[str, object] | pd.DataFrame) -> str:
     sections.append(("Joint distribution", _rows(report, _JOINT_FIELDS)))
     sections.append(("Code lengths (bits)", _rows(report, _CODE_LENGTH_FIELDS.get(metric, ()))))
     if metric == "nescience":
-        weighting = []
-        weights = report.get("weights")
-        if weights is not None:
-            if not isinstance(weights, Mapping):
-                raise ValueError("weights must be a mapping of nescience components.")
-            weighting.append(("Weights", ", ".join(
-                f"{key}={_value(weights[key], '.4g', key=key)}"
-                for key in ("miscoding", "mismodel") if key in weights
-            )))
-        sections.append(("RMS weights", weighting))
+        sections.append(("RMS weighting", _rows(report, (("weight", "Miscoding weight", ".4g"),))))
     return _render(title, sections)
 
 

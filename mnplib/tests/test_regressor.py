@@ -302,8 +302,8 @@ def test_dataframe_feature_names_are_preserved(regression_data):
     assert not hasattr(reg.best_artifacts_, "metadata")
 
 
-def test_component_weights_and_sklearn_clone_support():
-    assert "weights" in inspect.signature(NescienceRegressor).parameters
+def test_component_weight_and_sklearn_clone_support():
+    assert "weight" in inspect.signature(NescienceRegressor).parameters
     assert "serialization_config" not in inspect.signature(NescienceRegressor).parameters
 
     reg = NescienceRegressor(random_state=42, verbose=0, search_options={'mlp': FAST_MLP})

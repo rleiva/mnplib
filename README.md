@@ -94,12 +94,12 @@ The library combines four primitive components through three standard scalar met
 ```text
 miscoding = sqrt((deficiency**2 + surplus**2) / 2)
 mismodel  = sqrt((inaccuracy**2 + surfeit**2) / 2)
-nescience = sqrt((wm * miscoding**2 + wp * mismodel**2) / (wm + wp))
+nescience = sqrt(weight * miscoding**2 + (1 - weight) * mismodel**2)
 ```
 
 The first two metrics always use equal-weight root mean square (RMS). Only the
-final combination accepts decision weights: `wm` for miscoding and `wp` for
-mismodel. Both default to 1. For the same primitive values, default nescience
+final combination accepts `weight` in [0, 1] for miscoding; mismodel receives
+`1 - weight`. The default is `weight=0.5`. For the same primitive values, default nescience
 equals `sqrt((deficiency**2 + surplus**2 + inaccuracy**2 + surfeit**2) / 4)`.
 These scalar computations are practical estimates, not exact computations of
 the theory's non-computable quantities.
@@ -281,7 +281,7 @@ predictions and invalid descriptions still raise validation errors. The scalar
 `mismodel()` helper and `Mismodel.aggregate_components()` work without fitting;
 finite negative component values are rejected.
 
-Nescience owns a fitted `mismodel_` coordinator. Top-level weights do not change
+Nescience owns a fitted `mismodel_` coordinator. The top-level weight does not change
 the reported inaccuracy, surfeit, or equal-weight mismodel. Unreliable miscoding
 subsets do not prevent independent mismodel diagnostics.
 
@@ -311,16 +311,16 @@ For an advanced comparison, give the model dimension three times the weight of
 the representation dimension:
 
 ```python
-weighted = Nescience(weights={"miscoding": 1.0, "mismodel": 3.0}).fit(X, y)
+weighted = Nescience(weight=0.25).fit(X, y)
 report = weighted.model_analysis(model)
 print(format_analysis(report))
 ```
 
-Weights may be a mapping or a two-value sequence in `(miscoding, mismodel)`
-order. Missing mapping keys default to 1. Values must be finite and nonnegative,
-with at least one positive value. Scoring normalizes a copy, so multiplying both
-weights by the same positive factor does not affect the score. Reports expose
-the resolved ratios, not normalized probabilities. The same weight convention
+`weight` must be a finite real number between 0 and 1, inclusive. It controls
+miscoding's contribution; mismodel's coefficient is always `1 - weight`.
+The default `0.5` balances both dimensions. Set `weight=0` to score only mismodel
+or `weight=1` to score only miscoding. Reports expose the single `weight` value.
+The same weight convention
 applies to `NescienceClassifier`, `NescienceRegressor`, and `TimeSeries`.
 
 A zero weight removes that dimension's numerical contribution. A zero weighted
@@ -331,9 +331,9 @@ An unavailable metric does not erase the other metric's diagnostics.
 
 `components(...)` returns exactly deficiency, surplus, inaccuracy, and surfeit.
 `analysis(...)` and `model_analysis(...)` additionally return miscoding,
-mismodel, nescience, resolved weights, and reliability diagnostics. When the two
+mismodel, nescience, weight, and reliability diagnostics. When the two
 derived scores are already available, use
-`Nescience(weights=...).aggregate_components(miscoding=..., mismodel=...)`.
+`Nescience(weight=...).aggregate_components(miscoding=..., mismodel=...)`.
 
 #### Text Reports
 

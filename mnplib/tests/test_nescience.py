@@ -52,8 +52,8 @@ def test_constructor_defaults():
 
     assert metric.X_type == "auto"
     assert metric.y_type == "auto"
-    assert metric.weights is None
-    assert set(metric.get_params()) == {"X_type", "y_type", "weights"}
+    assert metric.weight == 0.5
+    assert set(metric.get_params()) == {"X_type", "y_type", "weight"}
 
 
 def test_default_model_nescience_is_finite_for_iris_tree():
@@ -156,7 +156,7 @@ def test_fit_sets_attributes_and_component_estimators():
     assert metric.is_fitted_ is True
     assert metric.n_samples_in_ == X.shape[0]
     assert metric.n_features_in_ == X.shape[1]
-    assert metric.weights_.shape == (2,)
+    assert metric.weight == 0.5
     assert hasattr(metric, "miscoding_")
     assert hasattr(metric, "mismodel_")
     assert hasattr(metric.mismodel_, "inaccuracy_")
@@ -241,7 +241,7 @@ def test_analysis_returns_numerical_report():
     metric, _, y = fitted_metric()
     report = metric.analysis(subset=[0], predictions=y.copy(), model_string=make_model_string())
     assert set(report) == set(metric.miscoding_.subset_analysis([0])) | {
-        "nescience", "weights", "mismodel", *metric.component_names_,
+        "nescience", "weight", "mismodel", *metric.component_names_,
     }
     assert report["mismodel"] == pytest.approx(
         np.sqrt((report["inaccuracy"] ** 2 + report["surfeit"] ** 2) / 2)

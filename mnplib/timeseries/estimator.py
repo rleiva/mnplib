@@ -84,9 +84,8 @@ class TimeSeries(BaseEstimator):
         state_space accepts ``models`` and ``max_iter``. Structural model names
         are ``"local_level"`` and ``"local_linear_trend"``.
 
-    weights : mapping or sequence of two floats, optional
-        Top-level RMS weight ratios in (miscoding, mismodel) order.
-        Missing mapping keys default to one.
+    weight : float, default=0.5
+        Miscoding's RMS coefficient in [0, 1]. Mismodel receives 1 - weight.
 
     random_state : int or None, default=None
         Stored for estimator reproducibility and future candidate families.
@@ -111,7 +110,7 @@ class TimeSeries(BaseEstimator):
         window_size: WindowSize = "auto",
         models: Sequence[ModelName] | None = None,
         search_options: Mapping[str, Mapping[str, object]] | None = None,
-        weights: Mapping[str, float] | Sequence[float] | None = None,
+        weight: float = 0.5,
         random_state: int | None = None,
         verbose: int = 0,
     ):
@@ -119,7 +118,7 @@ class TimeSeries(BaseEstimator):
         self.window_size = window_size
         self.models = models
         self.search_options = search_options
-        self.weights = weights
+        self.weight = weight
         self.random_state = random_state
         self.verbose = verbose
 
@@ -494,7 +493,7 @@ class TimeSeries(BaseEstimator):
         return Nescience(
             X_type=self.X_type,
             y_type="numeric",
-            weights=self.weights,
+            weight=self.weight,
         )
 
     def _make_miscoding(self) -> Miscoding:

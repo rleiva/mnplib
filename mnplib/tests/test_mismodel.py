@@ -309,12 +309,12 @@ def test_each_component_is_fitted_once(data, monkeypatch, fit_kind):
     assert counts == {"inaccuracy": 1, "surfeit": 1}
 
 
-def test_nescience_weights_do_not_change_mismodel(data, monkeypatch):
+def test_nescience_weight_do_not_change_mismodel(data, monkeypatch):
     X, y = data
     model = DecisionTreeClassifier(random_state=1).fit(X, y)
     standalone = Mismodel().fit(X, y).model_analysis(model)
-    for weights in (None, [2, 3], {"mismodel": 0}):
-        metric = Nescience(weights=weights).fit(X, y)
+    for weight in (0.5, 0.4, 1):
+        metric = Nescience(weight=weight).fit(X, y)
         components = Mock(wraps=metric.mismodel_.components)
         monkeypatch.setattr(metric.mismodel_, "components", components)
         report = metric.model_analysis(model)

@@ -58,9 +58,8 @@ class NescienceRegressor(RegressorMixin, BaseEstimator):
     X_type : {"auto", "numeric", "categorical"}, default="numeric"
         Type policy used when fitting the nescience components on the input
         representation.
-    weights : mapping or sequence of two floats, optional
-        Top-level RMS weight ratios in (miscoding, mismodel) order.
-        Missing mapping keys default to one.
+    weight : float, default=0.5
+        Miscoding's RMS coefficient in [0, 1]. Mismodel receives 1 - weight.
     feature_ranking_criterion : {"deficiency", "miscoding"}, default="deficiency"
         Criterion used to rank features for model-family prefix search.
     max_feature_prefixes : int or None, default=None
@@ -80,7 +79,7 @@ class NescienceRegressor(RegressorMixin, BaseEstimator):
         self,
         models: Sequence[str] | None = None,
         X_type: XType = "numeric",
-        weights: Mapping[str, float] | Sequence[float] | None = None,
+        weight: float = 0.5,
         feature_ranking_criterion: str = "deficiency",
         max_feature_prefixes: int | None = None,
         random_state=None,
@@ -89,7 +88,7 @@ class NescienceRegressor(RegressorMixin, BaseEstimator):
     ):
         self.models = models
         self.X_type = X_type
-        self.weights = weights
+        self.weight = weight
         self.feature_ranking_criterion = feature_ranking_criterion
         self.max_feature_prefixes = max_feature_prefixes
         self.random_state = random_state
@@ -112,7 +111,7 @@ class NescienceRegressor(RegressorMixin, BaseEstimator):
         self.nescience_ = Nescience(
             X_type=self.X_type,
             y_type="numeric",
-            weights=self.weights,
+            weight=self.weight,
         )
         self.nescience_.fit(self.X_, self.y_)
 

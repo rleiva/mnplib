@@ -113,14 +113,14 @@ def test_model_and_search_miscoding_reports_use_rms(categorical_data):
     assert miscoding_model(model, X=X, y=y, X_type="categorical") == pytest.approx(reports[0]["miscoding"])
 
 
-@pytest.mark.parametrize("weights,expected", [(None, math.sqrt(0.3)),
-                                               ({"miscoding": 1, "mismodel": 3}, math.sqrt(0.4))])
-def test_hierarchical_nescience_numerical_example(weights, expected):
+@pytest.mark.parametrize("weight,expected", [(0.5, math.sqrt(0.3)),
+                                            (0.25, math.sqrt(0.4))])
+def test_hierarchical_nescience_numerical_example(weight, expected):
     m = Miscoding.aggregate_components(deficiency=0.2, surplus=0.4)
     p = Mismodel.aggregate_components(inaccuracy=0.6, surfeit=0.8)
     assert m*m == pytest.approx(0.1)
     assert p*p == pytest.approx(0.5)
-    assert Nescience(weights=weights).aggregate_components(miscoding=m, mismodel=p) == pytest.approx(expected)
+    assert Nescience(weight=weight).aggregate_components(miscoding=m, mismodel=p) == pytest.approx(expected)
 
 
 def test_default_hierarchy_matches_four_primitive_rms():
@@ -130,87 +130,79 @@ def test_default_hierarchy_matches_four_primitive_rms():
         assert actual == pytest.approx(math.sqrt((d*d + s*s + i*i + u*u) / 4))
 
 
-@pytest.mark.parametrize("scale", [1e-300, 1, 1e300, np.finfo(float).max / 4])
-def test_weight_scaling_is_invariant_and_finite(scale):
-    weights = np.array([scale, 3*scale])
-    original = weights.copy()
-    metric = Nescience(weights=weights)
-    with np.errstate(all="raise"):
-        assert metric.aggregate_components(miscoding=0.2, mismodel=0.8) == pytest.approx(math.sqrt(0.49))
-    np.testing.assert_array_equal(weights, original)
+@pytest.mark.parametrize("weight", [0, 0.1, 0.25, 0.5, 0.75, 0.9, 1, np.float32(0.4), np.float64(0.6)])
+def test_weight_and_complement_control_the_final_score(weight):
+    expected = math.sqrt(float(weight) * 0.2**2 + (1 - float(weight)) * 0.8**2)
+    metric = Nescience(weight=weight)
+    assert metric.aggregate_components(miscoding=0.2, mismodel=0.8) == pytest.approx(expected)
+    assert Nescience(weight=1).aggregate_components(miscoding=0, mismodel=1) == 0
+    assert Nescience(weight=0).aggregate_components(miscoding=1, mismodel=0) == 0
 
 
-def test_maximum_finite_weights_do_not_overflow():
-    metric = Nescience(weights=[np.finfo(float).max, np.finfo(float).max])
-    with np.errstate(all="raise"):
-        assert metric.aggregate_components(miscoding=0.2, mismodel=0.8) == pytest.approx(math.sqrt(0.34))
-
-
-@pytest.mark.parametrize("weights,expected", [([1, 0], 0.2), ([0, 1], 0.8),
-                                             ({"mismodel": 3}, math.sqrt(0.49))])
-def test_top_level_weights_control_only_the_final_score(weights, expected):
-    assert Nescience(weights=weights).aggregate_components(miscoding=0.2, mismodel=0.8) == pytest.approx(expected)
-    assert Nescience(weights=[1, 0]).aggregate_components(miscoding=0, mismodel=1) == 0
-
-
-@pytest.mark.parametrize("weights", [None, [0, 1], [1, 0]])
+@pytest.mark.parametrize("weight", [0.5, 0, 1])
 @pytest.mark.parametrize("value", [np.nan, np.inf, -np.inf])
-def test_nonfinite_dimensions_remain_visible_with_zero_weights(weights, value):
+def test_nonfinite_dimensions_remain_visible_with_zero_weights(weight, value):
     for a, b in ((value, 0), (0, value)):
-        assert np.isnan(Nescience(weights=weights).aggregate_components(miscoding=a, mismodel=b))
+        assert np.isnan(Nescience(weight=weight).aggregate_components(miscoding=a, mismodel=b))
 
 
-@pytest.mark.parametrize("weights", [
-    [], [1], [1, 1, 1], [1, 1, 1, 1], [0, 0], [-1, 2], [np.nan, 1], [np.inf, 1],
-    "12", b"12", 3, {1, 2}, [None, 1], ["1", 1], [1+2j, 1], [[1], [2]], [True, 1],
-    {"deficiency": 1}, {"surplus": 1}, {"inaccuracy": 1}, {"surfeit": 1}, {"unknown": 1},
+@pytest.mark.parametrize("weight", [
+    None, -0.1, 1.1, np.nextafter(0, -1), np.nextafter(1, 2), 10**400,
+    np.nan, np.inf, -np.inf, "0.5", b"0.5",
+    True, np.bool_(False), 0.5+0j, [0.5], [0.5, 0.5], {"miscoding": 0.5}, np.array([0.5]),
 ])
-def test_invalid_weight_configurations_are_rejected(weights, categorical_data):
-    metric = Nescience(weights=weights)
-    with pytest.raises(ValueError):
+def test_invalid_weight_configurations_are_rejected(weight, categorical_data):
+    metric = Nescience(weight=weight)
+    with pytest.raises(ValueError, match="weight.*between 0 and 1"):
         metric.aggregate_components(miscoding=0.2, mismodel=0.3)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="weight.*between 0 and 1"):
         metric.fit(*categorical_data)
 
 
-def test_resolved_ratios_parameter_updates_and_cloning(categorical_data):
+def test_weight_parameter_updates_and_cloning(categorical_data):
     X, y = categorical_data
-    weights = {"mismodel": 3.0}
-    metric = Nescience(X_type="categorical", weights=weights).fit(X, y)
-    assert metric.weights is weights
-    assert weights == {"mismodel": 3.0}
-    np.testing.assert_array_equal(metric.weights_, [1, 3])
+    metric = Nescience(X_type="categorical", weight=0.25).fit(X, y)
+    assert metric.weight == 0.25
     assert clone(metric).get_params() == metric.get_params()
     args = dict(subset=[0], predictions=y, model_string="def predict(x):\n return x[0]\n")
-    assert metric.analysis(**args)["weights"] == {"miscoding": 1, "mismodel": 3}
-    metric.set_params(weights=[0, 2])
+    assert metric.analysis(**args)["weight"] == 0.25
+    metric.set_params(weight=0)
     report = metric.analysis(**args)
     assert report["nescience"] == pytest.approx(report["mismodel"])
-    np.testing.assert_array_equal(metric.weights_, [0, 2])
+    assert report["weight"] == 0
     metric.fit(X, y)
-    assert metric.analysis(**args)["weights"] == {"miscoding": 0, "mismodel": 2}
+    assert metric.analysis(**args)["weight"] == 0
+    metric.set_params(weight=1)
+    report = metric.analysis(**args)
+    assert report["nescience"] == pytest.approx(report["miscoding"])
+    metric.set_params(weight=-1)
+    with pytest.raises(ValueError, match="weight"):
+        metric.analysis(**args)
 
 
-def test_all_nescience_interfaces_reconstruct_the_same_score(categorical_data, monkeypatch):
+@pytest.mark.parametrize("weight", [0, 0.25, 0.5, 1])
+def test_all_nescience_interfaces_reconstruct_the_same_score(categorical_data, monkeypatch, weight):
     X, y = categorical_data
     model = LinearRegression().fit(X, y)
-    weights = {"miscoding": 1, "mismodel": 3}
-    metric = Nescience(X_type="categorical", weights=weights).fit(X, y)
+    metric = Nescience(X_type="categorical", weight=weight).fit(X, y)
     subset_analysis_spy = Mock(wraps=metric.miscoding_.subset_analysis)
     monkeypatch.setattr(metric.miscoding_, "subset_analysis", subset_analysis_spy)
     report = metric.model_analysis(model)
     subset_analysis_spy.assert_called_once()
-    expected = math.sqrt((report["miscoding"]**2 + 3*report["mismodel"]**2) / 4)
+    expected = math.sqrt(weight * report["miscoding"]**2 + (1 - weight) * report["mismodel"]**2)
     assert report["nescience"] == pytest.approx(expected)
     assert "aggregation" not in report
+    assert "weights" not in report
+    assert report["weight"] == weight
     args = dict(subset=report["selected_features"], predictions=model.predict(X), model_string=report["model_string"])
     assert set(metric.components(**args)) == {"deficiency", "surplus", "inaccuracy", "surfeit"}
     assert metric.nescience(**args) == pytest.approx(expected)
-    assert nescience(X=X, y=y, X_type="categorical", weights=weights, **args) == pytest.approx(expected)
-    assert nescience_components(X=X, y=y, X_type="categorical", **args) == metric.components(**args)
-    assert nescience_model(model, X=X, y=y, X_type="categorical", weights=weights) == pytest.approx(expected)
-    functional = model_analysis(model, X=X, y=y, X_type="categorical", weights=weights)
+    assert nescience(X=X, y=y, X_type="categorical", weight=weight, **args) == pytest.approx(expected)
+    assert nescience_components(X=X, y=y, X_type="categorical", weight=weight, **args) == metric.components(**args)
+    assert nescience_model(model, X=X, y=y, X_type="categorical", weight=weight) == pytest.approx(expected)
+    functional = model_analysis(model, X=X, y=y, X_type="categorical", weight=weight)
     assert functional["nescience"] == pytest.approx(expected)
+    assert functional["weight"] == weight
     assert report["mismodel"] == pytest.approx(Mismodel().fit(X, y).mismodel_model(model))
 
 
@@ -219,26 +211,33 @@ def test_metric_estimators_expose_only_top_level_weight_configuration(cls):
     assert "aggregation" not in inspect.signature(cls).parameters
     with pytest.raises(TypeError):
         cls(aggregation="euclidean")
-    estimator = cls(weights=[1, 3])
-    assert clone(estimator).weights == [1, 3]
+    assert "weights" not in inspect.signature(cls).parameters
+    assert inspect.signature(cls).parameters["weight"].default == 0.5
+    with pytest.raises(TypeError, match="weights"):
+        cls(weights=[1, 3])
+    estimator = cls(weight=0.25)
+    assert clone(estimator).weight == 0.25
 
 
 @pytest.mark.parametrize("function", [nescience, nescience_components, nescience_model, model_analysis])
 def test_functional_interfaces_have_no_aggregation_option(function):
     assert "aggregation" not in inspect.signature(function).parameters
+    assert "weights" not in inspect.signature(function).parameters
+    assert inspect.signature(function).parameters["weight"].default == 0.5
     with pytest.raises(TypeError, match="aggregation"):
         function(aggregation="euclidean")
+    with pytest.raises(TypeError, match="weights"):
+        function(weights=[1, 1])
 
 
 def test_direct_aggregation_requires_two_derived_metrics():
     assert Nescience.component_names_ == ("deficiency", "surplus", "inaccuracy", "surfeit")
-    assert Nescience.weight_names_ == ("miscoding", "mismodel")
     with pytest.raises(TypeError):
         Nescience().aggregate_components(deficiency=0.2, surplus=0.4, inaccuracy=0.6, surfeit=0.8)
 
 
 def test_nonfinite_mismodel_preserves_valid_miscoding(categorical_data, monkeypatch):
-    metric = Nescience(weights=[1, 0]).fit(*categorical_data)
+    metric = Nescience(weight=1).fit(*categorical_data)
     monkeypatch.setattr(metric.mismodel_.inaccuracy_, "inaccuracy_predictions", lambda predictions: np.nan)
     report = metric.analysis(subset=[0], predictions=categorical_data[1], model_string="return x[0]")
     assert np.isfinite(report["miscoding"])
@@ -249,17 +248,26 @@ def test_nonfinite_mismodel_preserves_valid_miscoding(categorical_data, monkeypa
 
 def test_time_series_tables_and_lag_reports_use_canonical_rms():
     y = np.sin(np.arange(160) / 8) + np.random.default_rng(1).normal(0, 0.1, 160)
-    weights = {"miscoding": 1, "mismodel": 3}
-    estimator = TimeSeries(window_size=3, models=["moving_average"], weights=weights).fit(y)
+    weight = 0.25
+    estimator = TimeSeries(window_size=3, models=["moving_average"], weight=weight).fit(y)
     table = estimator.results_dataframe()
     np.testing.assert_allclose(table["miscoding"], np.sqrt((table["deficiency"]**2 + table["surplus"]**2) / 2))
     np.testing.assert_allclose(table["mismodel"], np.sqrt((table["inaccuracy"]**2 + table["surfeit"]**2) / 2))
     np.testing.assert_allclose(table["nescience"], np.sqrt((table["miscoding"]**2 + 3*table["mismodel"]**2) / 4))
     report = estimator.analysis()
-    assert report["weights"] == weights
+    assert report["weight"] == weight
     assert report["nescience"] == pytest.approx(table.iloc[0]["nescience"])
     lags = estimator.lag_analysis(max_lag=3)
     np.testing.assert_allclose(lags["miscoding"], np.sqrt((lags["deficiency"]**2 + lags["surplus"]**2) / 2))
-    estimator.set_params(weights=[3, 1]).fit(y)
+    estimator.set_params(weight=0.75).fit(y)
     report = estimator.analysis()
     assert report["nescience"] == pytest.approx(math.sqrt((3*report["miscoding"]**2 + report["mismodel"]**2) / 4))
+
+
+@pytest.mark.parametrize("cls", [NescienceClassifier, NescienceRegressor, TimeSeries])
+@pytest.mark.parametrize("weight", [-0.1, 1.1, np.nan])
+def test_search_estimators_validate_weight_before_evaluation(cls, weight, categorical_data):
+    X, y = categorical_data
+    estimator = cls(weight=weight)
+    with pytest.raises(ValueError, match="weight.*between 0 and 1"):
+        estimator.fit(y) if cls is TimeSeries else estimator.fit(X, y)

@@ -348,8 +348,8 @@ def test_dataframe_feature_names_are_preserved(binary_classification_data):
     assert not hasattr(clf.best_artifacts_, "metadata")
 
 
-def test_component_weights_and_sklearn_clone_support(binary_classification_data):
-    assert "weights" in inspect.signature(NescienceClassifier).parameters
+def test_component_weight_and_sklearn_clone_support(binary_classification_data):
+    assert "weight" in inspect.signature(NescienceClassifier).parameters
     assert "serialization_config" not in inspect.signature(NescienceClassifier).parameters
 
     clf = NescienceClassifier(random_state=42, verbose=0, search_options={'mlp': FAST_MLP})

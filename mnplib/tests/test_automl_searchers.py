@@ -175,9 +175,9 @@ def test_regressor_default_uses_all_supported_internal_model_families():
     assert reg.model_names_ == REGRESSOR_SUPPORTED_MODELS
 
 
-def test_component_weights_are_available_on_both_automl_classes():
-    assert "weights" in inspect.signature(NescienceClassifier).parameters
-    assert "weights" in inspect.signature(NescienceRegressor).parameters
+def test_component_weight_are_available_on_both_automl_classes():
+    assert "weight" in inspect.signature(NescienceClassifier).parameters
+    assert "weight" in inspect.signature(NescienceRegressor).parameters
 
 
 def test_regressor_exposes_classifier_parallel_public_methods():
