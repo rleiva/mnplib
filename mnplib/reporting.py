@@ -65,6 +65,13 @@ _AUTOML_TASKS = {
 }
 
 _CODE_LENGTH_FIELDS = {
+    "miscoding": (
+        ("code_length_bits", "K(X)", ".3f"),
+        ("target_code_length_bits", "K(Y)", ".3f"),
+        ("joint_code_length_bits", "K(X, Y)", ".3f"),
+        ("target_conditional_code_length_bits", "K(Y | X)", ".3f"),
+        ("feature_conditional_code_length_bits", "K(X | Y)", ".3f"),
+    ),
     "inaccuracy": (
         ("target_code_length_bits", "Target", ".3f"),
         ("prediction_code_length_bits", "Predictions", ".3f"),
@@ -78,6 +85,12 @@ _CODE_LENGTH_FIELDS = {
         ("reference_code_length_bits", "Reference", ".3f"),
     ),
 }
+
+_MISCODING_DEBUG_CONTEXT = (
+    ("target_n_bins", "Target bins", "d"),
+    ("n_observed_feature_states", "Feature states", "d"),
+    ("n_observed_target_states", "Target states", "d"),
+)
 
 
 def format_analysis(report: Mapping[str, object] | pd.DataFrame) -> str:
@@ -99,6 +112,8 @@ def format_analysis(report: Mapping[str, object] | pd.DataFrame) -> str:
     eight entries. Tables show feature or lag identifiers and metric values
     for at most 20 rows, with long cells abbreviated.
     Model strings, prediction arrays, and unrecognized fields are omitted.
+    Miscoding debug reports include empirical code lengths and bin/state counts.
+    In these reports, X denotes the feature or selected feature subset.
     No models are fitted or scored, and nothing is printed. For display, use
     ``print(format_analysis(report))``.
 
@@ -130,6 +145,8 @@ def format_analysis(report: Mapping[str, object] | pd.DataFrame) -> str:
         ("window_size", "Lag window", "d"),
     )) if automl else []
     context.extend(_rows(report, _CONTEXT_FIELDS))
+    if metric == "miscoding":
+        context.extend(_rows(report, _MISCODING_DEBUG_CONTEXT))
     context.extend(_selected_features(report))
     context.extend(_reliability(report))
     sections = [(None, context), (None, _rows(report, _METRIC_FIELDS[metric]))]
@@ -195,12 +212,28 @@ def _format_table(report):
     labels = {key: label for key, label in fields + (
         ("deficiency", "Deficiency"), ("surplus", "Surplus"), ("miscoding", "Miscoding"),
     ) if key in report.columns}
+    if "target_conditional_code_length_bits" in report.columns:
+        debug_fields = _CODE_LENGTH_FIELDS["miscoding"] + _MISCODING_DEBUG_CONTEXT + (
+            ("resolved_n_bins", "Numeric bins", "d"),
+            ("n_samples", "Samples", "d"),
+            ("n_observed_joint_states", "Joint states", "d"),
+            ("mean_joint_occupancy", "Joint occupancy", ".4f"),
+            ("n_singleton_joint_states", "Joint singletons", "d"),
+            ("singleton_fraction", "Singleton fraction", ".4f"),
+            ("is_reliable", "Reliable", None),
+            ("failure_reason", "Failure reason", None),
+        )
+        labels.update({key: label for key, label, _ in debug_fields if key in report.columns})
     table = report.loc[:, list(labels)].rename(columns=labels)
-    formatters = {"Code (bits)": lambda value: _value(value, ".3f", key="code_length_bits")}
+    formatters = {
+        label: lambda value, key=key: _value(value, ".3f", key=key)
+        for key, label in labels.items() if key.endswith("code_length_bits")
+    }
     body = table.to_string(index=False, max_rows=20, max_colwidth=24, line_width=78,
                           formatters=formatters,
                           float_format=lambda value: _value(value, ".4f", key="table value"))
-    return f"{title}\n{'=' * 78}\n{body}\n{'=' * 78}"
+    units = "Code lengths in bits.\n" if "target_conditional_code_length_bits" in report.columns else ""
+    return f"{title}\n{'=' * 78}\n{units}{body}\n{'=' * 78}"
 
 
 def _selected_features(report):

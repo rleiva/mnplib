@@ -102,8 +102,10 @@ class Miscoding(BaseEstimator):
     Code lengths and scalar state counts share a bin-aware cache. Distribution
     arrays are discarded after these statistics have been extracted.
 
-    Fitted data and variable types are snapshots. Input changes and parameter
-    changes take effect only after fitting again.
+    Fitted data and variable types are snapshots. Input and encoding changes
+    take effect only after fitting again. ``debug=True`` adds raw code lengths,
+    discretization details, and observed-state counts to analysis reports.
+    It does not change scores, selection, or ranking, and does not print.
     """
 
     _VALID_X_TYPES = get_args(XType)
@@ -113,6 +115,8 @@ class Miscoding(BaseEstimator):
         self,
         X_type: XType   = "auto",
         y_type: YType   = "auto",
+        *,
+        debug: bool = False,
     ):
         """
         Initialize the estimator.
@@ -124,17 +128,25 @@ class Miscoding(BaseEstimator):
 
         y_type : {"auto", "numeric", "categorical"}, default="auto"
             Encoding strategy for the target variable.
+
+        debug : bool, default=False
+            Include empirical calculation details in feature, subset, and model
+            analysis, and in detailed selection and ranking reports. Code lengths
+            are in bits. Sparse subsets retain NaN scores but expose raw estimates.
         """
         self._validate_X_type(X_type)
         _validate_y_type(y_type)
+        self._validate_debug(debug)
 
         self.X_type = X_type
         self.y_type = y_type
+        self.debug = debug
 
         # List of attributes
 
         # self.X_type                    # Encoding strategy configured for the feature variables.
         # self.y_type                    # Encoding strategy configured for the target variable.
+        # self.debug                     # Includes empirical calculation details in analysis reports.
 
         # self.is_fitted_                # Indicates whether fitting completed successfully.
         # self._empirical_cache_         # Caches scalar distribution statistics for each feature, target, and bin context.
@@ -183,6 +195,7 @@ class Miscoding(BaseEstimator):
         self._empirical_cache_ = {}
         self._pairwise_miscoding_matrix_ = None
         self._validate_X_type(self.X_type)
+        self._validate_debug(self.debug)
         if y is None:
             raise ValueError("Miscoding.fit requires a target vector y.")
 
@@ -375,6 +388,13 @@ class Miscoding(BaseEstimator):
             ``feature_name``, ``is_numeric``, ``code_length_bits``, ``deficiency``,
             ``surplus``, and ``miscoding``. Rows are sorted from lowest to
             highest miscoding.
+
+            With ``debug=True``, ``code_length_bits`` is K(X_j); additional
+            columns expose K(Y), K(X_j, Y), K(Y | X_j), and K(X_j | Y), as
+            documented in ``subset_analysis()``. Bin counts, marginal-state
+            counts, and joint reliability diagnostics are included. Feature
+            scores remain numeric even when the one-feature subset fails the
+            joint reliability check; ``is_reliable`` reports that check.
         """
         check_is_fitted(self)
 
@@ -387,6 +407,14 @@ class Miscoding(BaseEstimator):
             "surplus"          : self.surplus_,
             "miscoding"        : self.miscoding_,
         })
+
+        if self.debug:
+            diagnostics = pd.DataFrame([
+                self._empirical_subset_measures([j]) for j in range(self.n_features_in_)
+            ])
+            table = pd.concat([
+                table, diagnostics.drop(columns=table.columns, errors="ignore"),
+            ], axis=1)
 
         return table.sort_values(
             by           = ["miscoding", "deficiency", "surplus"],
@@ -460,6 +488,22 @@ class Miscoding(BaseEstimator):
             their observed categories without binning.
             Unreliable subsets have NaN deficiency, surplus, and miscoding.
             The empty subset is reliable and has no joint-state diagnostics.
+
+            With ``debug=True``, the report also includes:
+
+            - ``code_length_bits``: K(X_S).
+            - ``target_code_length_bits``: K(Y) in the subset's bin context.
+            - ``joint_code_length_bits``: K(X_S, Y).
+            - ``target_conditional_code_length_bits``: K(X_S, Y) - K(X_S).
+            - ``feature_conditional_code_length_bits``: K(X_S, Y) - K(Y).
+            - ``n_observed_feature_states`` and ``n_observed_target_states``.
+            - ``target_n_bins``: the numeric target's bin count, or None.
+
+            Conditional code lengths are raw empirical differences, without
+            clipping. They remain available for sparse subsets and do not
+            override reliability decisions. Numeric bins are resolved counts,
+            not occupied-state counts. For the empty subset, K(X_S)=0,
+            K(X_S, Y)=K(Y), and the target uses the feature-level bin context.
         """
         check_is_fitted(self)
         return self._subset_measures(subset)
@@ -769,6 +813,30 @@ class Miscoding(BaseEstimator):
     # Pairwise miscoding and empirical subset diagnostics
     #
 
+    def _debug_subset_diagnostics(self, selected: list[int], *, n_bins: int) -> dict[str, object]:
+        """Expose raw code lengths and marginal counts in a shared bin context."""
+        target = self._empirical_statistics_for_indices(y_included=True, n_bins=n_bins)
+        features = (
+            self._empirical_statistics_for_indices(features=selected, n_bins=n_bins)
+            if selected else None
+        )
+        joint = (
+            self._empirical_statistics_for_indices(
+                features=selected, y_included=True, n_bins=n_bins,
+            ) if selected else target
+        )
+        k_x = features.code_length if features is not None else 0.0
+        return {
+            "code_length_bits": k_x,
+            "target_code_length_bits": target.code_length,
+            "joint_code_length_bits": joint.code_length,
+            "target_conditional_code_length_bits": joint.code_length - k_x,
+            "feature_conditional_code_length_bits": joint.code_length - target.code_length,
+            "n_observed_feature_states": features.n_states if features is not None else 1,
+            "n_observed_target_states": target.n_states,
+            "target_n_bins": n_bins if self.y_isnumeric_ else None,
+        }
+
     def _compute_pairwise_miscoding_matrix(self) -> np.ndarray:
         """Assemble symmetric pairwise miscoding with a zero diagonal."""
         matrix = np.zeros((self.n_features_in_, self.n_features_in_), dtype=float)
@@ -836,6 +904,9 @@ class Miscoding(BaseEstimator):
                 "mean_joint_occupancy"     : None,
                 "n_singleton_joint_states" : None,
                 "singleton_fraction"       : None,
+                **(self._debug_subset_diagnostics(
+                    selected, n_bins=self._resolve_n_bins_for_subset(1),
+                ) if self.debug else {}),
             }
 
         n_bins = self._resolve_n_bins_for_subset(len(selected))
@@ -844,20 +915,22 @@ class Miscoding(BaseEstimator):
             y_included = True,
             n_bins     = n_bins,
         )
-        reliability = self._joint_reliability_diagnostics(
+        diagnostics = self._joint_reliability_diagnostics(
             joint_statistics,
             resolved_n_bins=(
                 n_bins if self.y_isnumeric_ or any(self.X_isnumeric_[j] for j in selected)
                 else None
             ),
         )
+        if self.debug:
+            diagnostics.update(self._debug_subset_diagnostics(selected, n_bins=n_bins))
 
-        if not reliability["is_reliable"]:
+        if not diagnostics["is_reliable"]:
             return {
                 "deficiency" : float("nan"),
                 "surplus"    : float("nan"),
                 "miscoding"  : float("nan"),
-                **reliability,
+                **diagnostics,
             }
 
         k_x = self._empirical_statistics_for_indices(features=selected, n_bins=n_bins).code_length
@@ -879,7 +952,7 @@ class Miscoding(BaseEstimator):
             "deficiency" : deficiency,
             "surplus"    : surplus,
             "miscoding"  : self.aggregate_components(deficiency=deficiency, surplus=surplus),
-            **reliability,
+            **diagnostics,
         }
 
     @staticmethod
@@ -953,17 +1026,7 @@ class Miscoding(BaseEstimator):
                 columns=[
                     "feature_index",
                     "feature_name",
-                    "deficiency",
-                    "surplus",
-                    "miscoding",
-                    "is_reliable",
-                    "failure_reason",
-                    "resolved_n_bins",
-                    "n_samples",
-                    "n_observed_joint_states",
-                    "mean_joint_occupancy",
-                    "n_singleton_joint_states",
-                    "singleton_fraction",
+                    *current,
                     "deficiency_improvement",
                     "surplus_change",
                     "miscoding_improvement",
@@ -1120,16 +1183,23 @@ class Miscoding(BaseEstimator):
                 f"Got {X_type!r}."
             )
 
+    @staticmethod
+    def _validate_debug(debug: bool) -> None:
+        """Require an explicit boolean for diagnostic reporting."""
+        if not isinstance(debug, (bool, np.bool_)):
+            raise TypeError("debug must be a boolean.")
+
 
 #
 # Functional interface
 #
 
-def feature_analysis(*, X, y, X_type: XType = "auto", y_type: YType = "auto") -> pd.DataFrame:
+def feature_analysis(*, X, y, X_type: XType = "auto", y_type: YType = "auto",
+                     debug: bool = False) -> pd.DataFrame:
     """
-    Return feature analysis using a functional interface.
+    Return feature analysis, including empirical details when debug=True.
     """
-    metric = Miscoding(X_type=X_type, y_type=y_type).fit(X, y)
+    metric = Miscoding(X_type=X_type, y_type=y_type, debug=debug).fit(X, y)
     return metric.feature_analysis()
 
 
@@ -1177,9 +1247,10 @@ def surplus_feature(feature=None, *, X, y, X_type: XType = "auto",
     return Miscoding(X_type=X_type, y_type=y_type).fit(X, y).surplus_feature(feature)
 
 
-def subset_analysis(subset, *, X, y, X_type: XType = "auto", y_type: YType = "auto") -> dict[str, object]:
-    """Return empirical subset diagnostics, including reliability information."""
-    return Miscoding(X_type=X_type, y_type=y_type).fit(X, y).subset_analysis(subset)
+def subset_analysis(subset, *, X, y, X_type: XType = "auto", y_type: YType = "auto",
+                    debug: bool = False) -> dict[str, object]:
+    """Return subset diagnostics, including empirical details when debug=True."""
+    return Miscoding(X_type=X_type, y_type=y_type, debug=debug).fit(X, y).subset_analysis(subset)
 
 
 def miscoding_model(model, *, X, y, feature_names=None, feature_indices=None,
@@ -1190,9 +1261,10 @@ def miscoding_model(model, *, X, y, feature_names=None, feature_indices=None,
 
 
 def model_analysis(model, *, X, y, feature_names=None, feature_indices=None,
-                   X_type: XType = "auto", y_type: YType = "auto") -> dict[str, object]:
-    """Analyze the effective feature subset of a fitted model."""
-    return Miscoding(X_type=X_type, y_type=y_type).fit(X, y).model_analysis(
+                   X_type: XType = "auto", y_type: YType = "auto",
+                   debug: bool = False) -> dict[str, object]:
+    """Analyze a fitted model's feature subset with optional empirical details."""
+    return Miscoding(X_type=X_type, y_type=y_type, debug=debug).fit(X, y).model_analysis(
         model, feature_names=feature_names, feature_indices=feature_indices)
 
 
@@ -1206,11 +1278,12 @@ def select_features(
     include_pairwise_miscoding: bool = True,
     X_type: XType = "auto",
     y_type: YType = "auto",
+    debug: bool = False,
 ):
     """
-    Select features using a functional interface.
+    Select features, with optional empirical details in return_details output.
     """
-    metric = Miscoding(X_type=X_type, y_type=y_type).fit(X, y)
+    metric = Miscoding(X_type=X_type, y_type=y_type, debug=debug).fit(X, y)
     return metric.select_features(
         max_features              = max_features,
         min_improvement           = min_improvement,
@@ -1229,11 +1302,12 @@ def rank_features(
     include_pairwise_miscoding: bool = True,
     X_type: XType = "auto",
     y_type: YType = "auto",
+    debug: bool = False,
 ):
     """
-    Rank features using a functional interface.
+    Rank features, with optional empirical details in return_details output.
     """
-    metric = Miscoding(X_type=X_type, y_type=y_type).fit(X, y)
+    metric = Miscoding(X_type=X_type, y_type=y_type, debug=debug).fit(X, y)
     return metric.rank_features(
         max_features=max_features,
         criterion=criterion,

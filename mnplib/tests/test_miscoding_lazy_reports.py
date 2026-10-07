@@ -47,7 +47,7 @@ def test_subset_reports_do_not_request_pairwise_miscoding(data, subset, function
 
 def test_subset_analysis_signatures():
     assert list(signature(Miscoding.subset_analysis).parameters) == ["self", "subset"]
-    assert list(signature(subset_analysis).parameters) == ["subset", "X", "y", "X_type", "y_type"]
+    assert list(signature(subset_analysis).parameters) == ["subset", "X", "y", "X_type", "y_type", "debug"]
 
 
 def test_model_analysis_uses_subset_report_without_pair_queries(data, monkeypatch):

@@ -159,6 +159,46 @@ already-computed components without fitting.
 
 Subset analysis reports metrics, reliability, and selected-feature metadata without computing pairwise miscoding. For detailed selection and ranking reports, `include_pairwise_miscoding=False` omits the `pairwise_miscoding` field without changing metric values, reliability decisions, selection, or ranking paths. The functional `rank_features` and `select_features` helpers accept the same option. Fitted data and variable types are snapshots; refitting resets caches. Serialize concurrent access to a retained estimator, as its lazy caches are mutable.
 
+#### Debug Diagnostics
+
+For empirical calculation details, enable `Miscoding(debug=True)`:
+
+```python
+from mnplib.reporting import format_analysis
+
+diagnostics = Miscoding(debug=True).fit(X, y)
+print(format_analysis(diagnostics.feature_analysis()))
+print(format_analysis(diagnostics.subset_analysis([0, 1])))
+```
+
+Debug reports add the following code lengths, all in bits. Here `X` denotes
+one feature in `feature_analysis()` or the selected subset in `subset_analysis()`
+and `model_analysis()`.
+
+| Field | Quantity |
+| --- | --- |
+| `code_length_bits` | K(X) |
+| `target_code_length_bits` | K(Y) |
+| `joint_code_length_bits` | K(X, Y) |
+| `target_conditional_code_length_bits` | K(Y given X) = K(X, Y) - K(X) |
+| `feature_conditional_code_length_bits` | K(X given Y) = K(X, Y) - K(Y) |
+
+The reports also expose `resolved_n_bins`, `target_n_bins`, observed feature,
+target, and joint state counts, occupancy, singleton counts, and reliability.
+Bin counts describe the resolved numeric discretization, not the number of
+occupied states; categorical variables are not binned. Joint and marginal code
+lengths use the same bin count for each subset, so K(Y) can differ between subset
+sizes. The empty subset has K(X)=0 and uses the feature-level target code length,
+with `target_n_bins` identifying its target discretization.
+
+Raw conditional differences are not clipped. Sparse subsets expose raw debug
+values while their scores remain NaN. Feature-level scores remain numeric;
+their debug reliability flag indicates whether the corresponding one-feature
+subset passes the joint sparsity check. Debug mode does not print automatically
+or change scores, selected features, or ranking. Detailed search reports include
+these fields in their paths. Functional `feature_analysis`, `subset_analysis`,
+`model_analysis`, `select_features`, and `rank_features` also accept `debug=True`.
+
 #### Discretization
 
 Metrics and model searches resolve numeric discretization internally. `Miscoding` uses `max(2, floor(2 * n_samples**(1/3) / log2(d + 1)))` bins for a subset of `d` features, excluding the target. It applies that count consistently to joint and marginal distributions. Feature diagnostics use `d=1`; pairwise miscoding uses `d=2`.
