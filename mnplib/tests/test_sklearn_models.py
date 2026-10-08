@@ -30,6 +30,7 @@ from mnplib.models.serializers.linear import (
     LinearModelSerializer,
     LogisticRegressionSerializer,
 )
+from mnplib.models.serializers.neural_network import MLPSerializer
 from mnplib.models.serializers.tree import DecisionTreeSerializer
 from mnplib.models.sklearn import _find_serializer
 from mnplib.nescience import Nescience
@@ -398,3 +399,60 @@ def test_artifacts_to_nescience_kwargs():
     assert set(kwargs) == {"subset", "predictions", "model_string"}
     assert kwargs["subset"] == [0, 2]
     assert not hasattr(artifacts, "metadata")
+
+
+@pytest.mark.parametrize("value", [0.0, -0.0])
+def test_number_formatting_normalizes_exact_zero(value):
+    assert format_number(value) == "0"
+
+
+@pytest.mark.parametrize("value", [1e-100, -1e-100, np.nextafter(0.0, 1.0)])
+def test_number_formatting_retains_small_nonzero_values(value):
+    assert float(format_number(value)) == value
+
+
+@pytest.mark.parametrize("model_type", [LinearRegression, LogisticRegression, LinearSVC, LinearSVR])
+@pytest.mark.parametrize("magnitude", [0.0, 1e-100])
+def test_linear_artifacts_omit_only_exact_zero_coefficients(model_type, magnitude):
+    X = np.random.default_rng(42).normal(size=(40, 4))
+    y = (X[:, 0] > 0).astype(int) if model_type in (LogisticRegression, LinearSVC) else X[:, 0]
+    model = model_type().fit(X, y)
+    coefficients = np.array([0.0, -0.0, magnitude, -magnitude])
+    model.coef_ = np.broadcast_to(coefficients, model.coef_.shape).copy()
+    model.intercept_ = np.full_like(model.intercept_, magnitude)
+
+    artifacts = sklearn_model_artifacts(model, X)
+
+    assert artifacts.subset == ([2, 3] if magnitude else [])
+    for index in range(4):
+        assert (f"x[{index}]" in artifacts.model_string) == (index in artifacts.subset)
+    if magnitude:
+        assert format_number(magnitude) in artifacts.model_string
+    namespace = {}
+    exec(artifacts.model_string, namespace)
+    predictions = np.asarray([namespace["predict"](row) for row in X])
+    np.testing.assert_allclose(predictions, artifacts.predictions, rtol=1e-12, atol=0)
+
+
+def test_multioutput_linear_subset_includes_features_used_by_any_output():
+    X = np.random.default_rng(42).normal(size=(40, 4))
+    model = LinearRegression().fit(X, X[:, :2])
+    model.coef_ = np.array([[0.0, -0.0, 1e-100, 0.0], [0.0, 0.0, 0.0, -1e-100]])
+    assert LinearModelSerializer().subset(model) == [2, 3]
+
+
+@pytest.mark.parametrize("model_type", [MLPClassifier, MLPRegressor])
+def test_mlp_artifacts_keep_small_weights_and_canonical_zero_literals(model_type):
+    X = np.random.default_rng(42).normal(size=(40, 4))
+    y = (X[:, 0] > 0).astype(int) if model_type is MLPClassifier else X[:, 0]
+    model = model_type(hidden_layer_sizes=(2,), solver="lbfgs", max_iter=500,
+                       random_state=42).fit(X, y)
+    model.coefs_[0] = np.array([[0.0, -0.0], [-0.0, 0.0], [1e-100, 0.0], [0.0, -1e-100]])
+    model.intercepts_[0] = np.array([0.0, -0.0])
+
+    artifacts = sklearn_model_artifacts(model, X)
+
+    assert artifacts.subset == [2, 3]
+    assert "[[0,0],[0,0],[1.00e-100,0],[0,-1.00e-100]]" in artifacts.model_string
+    assert "B=[[0,0]," in artifacts.model_string
+    assert MLPSerializer._format_vector(np.array([0.0, -0.0, 1e-100])) == "[0,0,1.00e-100]"

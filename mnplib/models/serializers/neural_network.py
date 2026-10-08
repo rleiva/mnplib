@@ -26,7 +26,6 @@ from ..._types import ResolvedTask
 from .base import (
     SklearnSerializer,
     format_number,
-    nonzero_mask,
     require_fitted,
 )
 
@@ -70,7 +69,7 @@ class MLPSerializer(SklearnSerializer):
         require_fitted(model)
 
         first_layer = np.asarray(model.coefs_[0], dtype=float)
-        used = np.any(nonzero_mask(first_layer), axis=1)
+        used = np.any(first_layer != 0.0, axis=1)
 
         return [int(index) for index in np.flatnonzero(used)]
 
@@ -312,25 +311,11 @@ class MLPSerializer(SklearnSerializer):
         Format one numeric vector as a Python list literal.
         """
         values = [
-            MLPSerializer._format_parameter(float(value))
+            format_number(value)
             for value in vector
         ]
 
         return "[" + ",".join(values) + "]"
-
-    @staticmethod
-    def _format_parameter(value: float) -> str:
-        """
-        Format one fitted numeric parameter canonically.
-
-        Values considered zero by the library tolerance are serialized as the
-        exact literal zero. This avoids model strings containing negative zero
-        or insignificant numerical noise.
-        """
-        if not nonzero_mask(np.asarray([value], dtype=float))[0]:
-            return format_number(0.0)
-
-        return format_number(float(value))
 
     @staticmethod
     def _input_reference_vector(original_indices: tuple[int, ...]) -> str:

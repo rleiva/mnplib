@@ -25,7 +25,6 @@ from ..._types import ResolvedTask
 from .base import (
     SklearnSerializer,
     format_number,
-    nonzero_mask,
     require_fitted,
 )
 
@@ -72,9 +71,9 @@ class LinearSVMSerializer(SklearnSerializer):
         coefficients = np.asarray(model.coef_, dtype=float)
 
         if coefficients.ndim == 1:
-            used = nonzero_mask(coefficients)
+            used = coefficients != 0.0
         else:
-            used = np.any(nonzero_mask(coefficients), axis=0)
+            used = np.any(coefficients != 0.0, axis=0)
 
         return [int(index) for index in np.flatnonzero(used)]
 
@@ -223,11 +222,11 @@ class LinearSVMSerializer(SklearnSerializer):
         """
         terms: list[str] = []
 
-        if nonzero_mask(np.asarray([intercept], dtype=float))[0]:
+        if intercept != 0.0:
             terms.append(format_number(float(intercept)))
 
         for local_index, coefficient in enumerate(coefficients):
-            if not nonzero_mask(np.asarray([coefficient], dtype=float))[0]:
+            if coefficient == 0.0:
                 continue
 
             original_index = int(original_indices[local_index])

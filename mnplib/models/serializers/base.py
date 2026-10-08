@@ -19,7 +19,6 @@ indent                 : str   = " "
 feature_token_template : str   = "X{index}"
 class_token_template   : str   = "C{index}"
 numeric_token_prefix   : str   = ""
-zero_tolerance         : float = 0
 
 class SklearnSerializer(ABC):
     """
@@ -100,20 +99,13 @@ def format_number(value: float) -> str:
         sign = "+" if value > 0 else "-"
         return f"{numeric_token_prefix}{sign}inf"
 
-    if abs(value) <= zero_tolerance:
+    if value == 0.0:
         return f"{numeric_token_prefix}0"
 
     # Sort of discretization of real values
     scientific = '{:.2e}'.format(value)
 
     return f"{numeric_token_prefix}{scientific}"
-
-
-def nonzero_mask(values) -> np.ndarray:
-    """
-    Return a fixed-policy non-zero mask for fitted numeric parameters.
-    """
-    return np.abs(np.asarray(values, dtype=float)) > zero_tolerance
 
 
 def feature_token(index: int) -> str:

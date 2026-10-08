@@ -12,7 +12,6 @@ from ..._types import ResolvedTask
 from .base import (
     SklearnSerializer,
     format_number,
-    nonzero_mask,
     require_fitted,
 )
 
@@ -40,9 +39,9 @@ class LinearModelSerializer(SklearnSerializer):
         coef = np.asarray(model.coef_, dtype=float)
 
         if coef.ndim == 1:
-            used = nonzero_mask(coef)
+            used = coef != 0.0
         else:
-            used = np.any(nonzero_mask(coef), axis=0)
+            used = np.any(coef != 0.0, axis=0)
 
         return [int(j) for j in np.flatnonzero(used)]
 
@@ -85,7 +84,7 @@ class LogisticRegressionSerializer(SklearnSerializer):
         require_fitted(model)
 
         coef = np.asarray(model.coef_, dtype=float)
-        used = np.any(nonzero_mask(coef), axis=0)
+        used = np.any(coef != 0.0, axis=0)
 
         return [int(j) for j in np.flatnonzero(used)]
 
@@ -156,13 +155,12 @@ def single_output_linear_rule(
     """
     Serialize one linear output equation.
     """
-    indent         = " "
-    zero_tolerance = 0
-    lines          = [f"{indent}{output_name} = {format_number(intercept)}"]
+    indent = " "
+    lines = [f"{indent}{output_name} = {format_number(intercept)}"]
 
     for feature_index, coefficient in enumerate(coefficients):
         coefficient = float(coefficient)
-        if abs(coefficient) <= zero_tolerance:
+        if coefficient == 0.0:
             continue
 
         sign = "+=" if coefficient >= 0 else "-="
@@ -260,16 +258,16 @@ def _linear_expression(*, intercept: float, coefficients: np.ndarray) -> str:
 
         b+w0*x[0]+w1*x[1]+...
 
-    Coefficients that are effectively zero are omitted before formatting.
+    Exactly zero coefficients are omitted before formatting.
     Numerical formatting is delegated to format_number().
     """
     terms: list[str] = []
 
-    if nonzero_mask(np.asarray([intercept], dtype=float))[0]:
+    if intercept != 0.0:
         terms.append(format_number(float(intercept)))
 
     for feature_index, coefficient in enumerate(coefficients):
-        if not nonzero_mask(np.asarray([coefficient], dtype=float))[0]:
+        if coefficient == 0.0:
             continue
 
         coef_text = format_number(float(coefficient))
