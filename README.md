@@ -28,6 +28,36 @@ Use `Nescience.analysis(subset=..., predictions=..., model_string=...)` for expl
 
 `Mismodel` evaluates predictions and a model description through inaccuracy and surfeit. `from mnplib.mismodel import mismodel` provides the scalar `mismodel(inaccuracy=..., surfeit=...)` helper when these components are already available. Both interfaces use their equal-weight root mean square. Mismodel is also included in nescience analysis reports and AutoML result dataframes.
 
+### Reliability of Empirical Estimates
+
+Invalid inputs raise exceptions. Reliability diagnostics describe the statistical
+support of an empirical estimate: a computable estimate is returned even when
+`is_reliable=False`. That flag does not mean the metric is unavailable.
+
+Miscoding assesses the joint empirical state space after discretization. Mean
+joint occupancy below 2 or a singleton-state fraction above 0.5 marks an estimate
+as unreliable. Reports retain the observed-state counts, sample count, occupancy,
+singleton fraction, resolved bin count, and `failure_reason`. Discretization can
+be valid while the resulting empirical probabilities have weak support.
+
+Feature, subset, and model scoring convenience methods emit one `RuntimeWarning`
+per call when returning an unreliable estimate. Analysis methods return numerical
+metrics and diagnostics quietly. Feature selection and ranking use finite scores;
+their detailed paths are quiet, and their compact outputs warn once if an accepted
+step is unreliable. The functional interfaces follow the same policy.
+
+AutoML and time-series search rank finite candidates by nescience, regardless of
+reliability. Fitting warns once when the selected candidate has weak empirical
+support. Inspect `analysis()` and `results_dataframe()` when comparing candidates;
+a small score alone does not establish statistical support.
+
+NaN represents an unavailable or nonfinite quantity, not weak statistical support.
+Examples include a missing native estimator score, a metric aggregate with a
+nonfinite component, and time-series fitted values before a complete lag window.
+Inaccuracy reports joint occupancy descriptively without an additional rejection
+threshold; Surfeit uses its defined compression calculation. Reliability does not
+alter anomaly detection rules, metric formulas, or binning.
+
 ### Residual and Correction Analysis
 
 `ResidualAnalysis` analyzes explicit predictions without training or selecting a
@@ -77,7 +107,8 @@ unchanged.
 correction patterns within a requested anomaly group. It does not explain
 anomaly membership or establish causality. Empty/insufficient anomaly groups,
 single patterns, and missing attributes have machine-readable statuses.
-Reliability and NaN behavior are delegated to Miscoding. The optional
+Empirical reliability diagnostics are delegated to Miscoding; computable
+scores remain available even for sparsely populated correction patterns. The optional
 `max_features` bounds the greedy selection; returned DataFrames preserve names.
 
 `compressibility()` concerns predicted states among the requested anomalies,
@@ -191,10 +222,9 @@ lengths use the same bin count for each subset, so K(Y) can differ between subse
 sizes. The empty subset has K(X)=0 and uses the feature-level target code length,
 with `target_n_bins` identifying its target discretization.
 
-Raw conditional differences are not clipped. Sparse subsets expose raw debug
-values while their scores remain NaN. Feature-level scores remain numeric;
-their debug reliability flag indicates whether the corresponding one-feature
-subset passes the joint sparsity check. Debug mode does not print automatically
+Raw conditional differences are not clipped. Sparse subsets expose both their
+computed scores and raw debug values. Feature-level reports include reliability
+flags and joint-state diagnostics regardless of debug mode. Debug mode does not print automatically
 or change scores, selected features, or ranking. Detailed search reports include
 these fields in their paths. Functional `feature_analysis`, `subset_analysis`,
 `model_analysis`, `select_features`, and `rank_features` also accept `debug=True`.

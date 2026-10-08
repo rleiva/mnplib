@@ -751,5 +751,13 @@ class ResidualAnalysis(BaseEstimator):
                 "deficiency",
                 "surplus",
                 "miscoding",
+                "is_reliable",
+                "failure_reason",
+                "resolved_n_bins",
+                "n_samples",
+                "n_observed_joint_states",
+                "mean_joint_occupancy",
+                "n_singleton_joint_states",
+                "singleton_fraction",
             ]
         )

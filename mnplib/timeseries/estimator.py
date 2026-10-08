@@ -28,6 +28,7 @@ from mnplib.automl.descriptions import describe_candidate_model
 from mnplib.automl.configuration import validated_search_options
 from mnplib.automl.results import candidate_results_dataframe
 
+from .._diagnostics import warn_unreliable_estimate
 from .._types import XType
 from ..miscoding import Miscoding
 from ..nescience import Nescience
@@ -158,12 +159,11 @@ class TimeSeries(BaseEstimator):
         valid_results = [
             result
             for result in results
-            if result.is_reliable and np.isfinite(result.nescience)
+            if np.isfinite(result.nescience)
         ]
         if not valid_results:
             raise ValueError(
-                "No reliable time-series candidate subset could be evaluated "
-                "with the available sample size and discretization."
+                "No time-series candidate with finite nescience could be evaluated."
             )
 
         results.sort(key=self._candidate_sort_key)
@@ -180,6 +180,7 @@ class TimeSeries(BaseEstimator):
                 )
 
         self.is_fitted_ = True
+        warn_unreliable_estimate("TimeSeries.fit", self.best_result_.subset_diagnostics)
         return self
 
 
@@ -265,6 +266,7 @@ class TimeSeries(BaseEstimator):
     def nescience(self) -> float:
         """Return the selected candidate's nescience value."""
         check_is_fitted(self)
+        warn_unreliable_estimate("TimeSeries.nescience", self.best_result_.subset_diagnostics)
         return float(self.best_result_.nescience)
 
     def components(self) -> dict[str, float]:
@@ -469,6 +471,11 @@ class TimeSeries(BaseEstimator):
                 "deficiency": deficiency,
                 "surplus": surplus,
                 "miscoding": float(diagnostic["miscoding"]),
+                **{key: diagnostic[key] for key in (
+                    "is_reliable", "failure_reason", "resolved_n_bins", "n_samples",
+                    "n_observed_joint_states", "mean_joint_occupancy",
+                    "n_singleton_joint_states", "singleton_fraction",
+                )},
             }
             if attribute is not None:
                 row["attribute"] = attribute
@@ -610,7 +617,7 @@ class TimeSeries(BaseEstimator):
 
     @staticmethod
     def _candidate_sort_key(result: TimeSeriesCandidateResult) -> tuple[object, ...]:
-        if result.is_reliable and np.isfinite(result.nescience):
+        if np.isfinite(result.nescience):
             return (0, float(result.nescience), result.n_selected_features, result.name)
         return (1, float("inf"), result.n_selected_features, result.name)
 

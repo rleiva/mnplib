@@ -39,7 +39,7 @@ from .utils import (
     empirical_distribution_array,
 )
 from .models.inputs import model_artifacts
-from ._diagnostics import warn_nan_model
+from ._diagnostics import warn_unreliable_estimate
 
 
 RankingCriterion = Literal["deficiency", "miscoding"]
@@ -92,7 +92,13 @@ class Miscoding(BaseEstimator):
 
     ``select_features()`` greedily selects features by requiring subset
     miscoding improvement. ``rank_features()`` greedily orders features for
-    model construction while reliable candidate extensions remain.
+    model construction while finite candidate extensions remain.
+
+    Reliability describes statistical support, not mathematical availability.
+    Computable estimates remain numerical. Feature, subset, and model scalar
+    methods emit RuntimeWarning for sparse joint states; analysis methods are
+    quiet. Selection and ranking warn once if their returned path contains an
+    unreliable step, unless ``return_details=True`` exposes its diagnostics.
 
     Feature-level diagnostics are computed during ``fit()``. Pairwise
     miscoding is computed on demand and cached as a full matrix.
@@ -132,7 +138,7 @@ class Miscoding(BaseEstimator):
         debug : bool, default=False
             Include empirical calculation details in feature, subset, and model
             analysis, and in detailed selection and ranking reports. Code lengths
-            are in bits. Sparse subsets retain NaN scores but expose raw estimates.
+            are in bits. Sparse subsets retain their scores and reliability diagnostics.
         """
         self._validate_X_type(X_type)
         _validate_y_type(y_type)
@@ -287,7 +293,7 @@ class Miscoding(BaseEstimator):
             Values of ``K(Y | X_j) / K(Y)`` for each feature.
         """
         check_is_fitted(self)
-        return self._feature_value(self.deficiency_, feature)
+        return self._feature_value(self.deficiency_, feature, "deficiency_feature")
 
     def surplus_feature(self, feature=None):
         """
@@ -304,7 +310,7 @@ class Miscoding(BaseEstimator):
             Values of ``K(X_j | Y) / K(X_j)`` for each feature.
         """
         check_is_fitted(self)
-        return self._feature_value(self.surplus_, feature)
+        return self._feature_value(self.surplus_, feature, "surplus_feature")
 
     def miscoding_feature(self, feature=None):
         """
@@ -321,11 +327,16 @@ class Miscoding(BaseEstimator):
             Equal-weight RMS of deficiency and surplus for each feature.
         """
         check_is_fitted(self)
-        return self._feature_value(self.miscoding_, feature)
+        return self._feature_value(self.miscoding_, feature, "miscoding_feature")
 
-    def _feature_value(self, values, feature):
+    def _feature_value(self, values, feature, operation):
         """Resolve a feature name or integer position, or return all values."""
         if feature is None:
+            for j in range(self.n_features_in_):
+                diagnostics = self._empirical_subset_measures([j])
+                if not diagnostics["is_reliable"]:
+                    warn_unreliable_estimate(operation, diagnostics)
+                    break
             return values.copy()
         if isinstance(feature, str):
             matches = np.flatnonzero(self.feature_names_in_ == feature)
@@ -336,6 +347,7 @@ class Miscoding(BaseEstimator):
             raise ValueError("feature must be an integer index or column name.")
         if not 0 <= feature < self.n_features_in_:
             raise ValueError("feature is outside the fitted feature dimension.")
+        warn_unreliable_estimate(operation, self._empirical_subset_measures([feature]))
         return float(values[feature])
 
     @property
@@ -387,13 +399,13 @@ class Miscoding(BaseEstimator):
             Table with one row per feature and the columns ``feature_index``,
             ``feature_name``, ``is_numeric``, ``code_length_bits``, ``deficiency``,
             ``surplus``, and ``miscoding``. Rows are sorted from lowest to
-            highest miscoding.
+            highest miscoding. Joint-state counts, bin counts, and reliability
+            diagnostics are included without warnings.
 
             With ``debug=True``, ``code_length_bits`` is K(X_j); additional
             columns expose K(Y), K(X_j, Y), K(Y | X_j), and K(X_j | Y), as
-            documented in ``subset_analysis()``. Bin counts, marginal-state
-            counts, and joint reliability diagnostics are included. Feature
-            scores remain numeric even when the one-feature subset fails the
+            documented in ``subset_analysis()``. Marginal-state counts are
+            included. Feature scores remain numeric even when the subset fails the
             joint reliability check; ``is_reliable`` reports that check.
         """
         check_is_fitted(self)
@@ -408,13 +420,12 @@ class Miscoding(BaseEstimator):
             "miscoding"        : self.miscoding_,
         })
 
-        if self.debug:
-            diagnostics = pd.DataFrame([
-                self._empirical_subset_measures([j]) for j in range(self.n_features_in_)
-            ])
-            table = pd.concat([
-                table, diagnostics.drop(columns=table.columns, errors="ignore"),
-            ], axis=1)
+        diagnostics = pd.DataFrame([
+            self._empirical_subset_measures([j]) for j in range(self.n_features_in_)
+        ])
+        table = pd.concat([
+            table, diagnostics.drop(columns=table.columns, errors="ignore"),
+        ], axis=1)
 
         return table.sort_values(
             by           = ["miscoding", "deficiency", "surplus"],
@@ -427,30 +438,35 @@ class Miscoding(BaseEstimator):
     #
 
     def miscoding_subset(self, subset) -> float:
-        """Return subset miscoding, or NaN when joint counts are unreliable."""
-        return float(self.subset_analysis(subset)["miscoding"])
+        """Return subset miscoding, warning if empirical support is weak."""
+        report = self.subset_analysis(subset)
+        warn_unreliable_estimate("miscoding_subset", report)
+        return float(report["miscoding"])
 
     def deficiency_subset(self, subset) -> float:
-        """Return subset deficiency, or NaN when joint counts are unreliable."""
-        return float(self.subset_analysis(subset)["deficiency"])
+        """Return subset deficiency, warning if empirical support is weak."""
+        report = self.subset_analysis(subset)
+        warn_unreliable_estimate("deficiency_subset", report)
+        return float(report["deficiency"])
 
     def surplus_subset(self, subset) -> float:
-        """Return subset surplus, or NaN when joint counts are unreliable."""
-        return float(self.subset_analysis(subset)["surplus"])
+        """Return subset surplus, warning if empirical support is weak."""
+        report = self.subset_analysis(subset)
+        warn_unreliable_estimate("surplus_subset", report)
+        return float(report["surplus"])
 
     def miscoding_model(self, model, *, X=None, feature_names=None, feature_indices=None) -> float:
         """Evaluate the feature subset effectively used by a fitted model.
 
         X defaults to fitted evaluation data. Explicit X contains estimator
         input columns; feature_indices maps those columns to fitted features.
-        Unreliable subsets return NaN with a RuntimeWarning. Model analysis
+        Unreliable estimates are returned with a RuntimeWarning. Model analysis
         returns diagnostics without issuing this warning.
         """
         report = self.model_analysis(model, X=X, feature_names=feature_names,
                                      feature_indices=feature_indices)
         value = float(report["miscoding"])
-        if np.isnan(value):
-            warn_nan_model("miscoding_model", report)
+        warn_unreliable_estimate("miscoding_model", report)
         return value
 
     def model_analysis(self, model, *, X=None, feature_names=None,
@@ -486,7 +502,7 @@ class Miscoding(BaseEstimator):
             bin count for the subset, or None when no numeric discretization is
             applied, including an empty subset. Categorical variables retain
             their observed categories without binning.
-            Unreliable subsets have NaN deficiency, surplus, and miscoding.
+            Unreliable estimates remain numerical and are reported quietly.
             The empty subset is reliable and has no joint-state diagnostics.
 
             With ``debug=True``, the report also includes:
@@ -547,7 +563,8 @@ class Miscoding(BaseEstimator):
         -------
         numpy.ndarray or dict
             Binary selection mask by default, or detailed selection output when
-            ``return_details=True``.
+            ``return_details=True``. Detailed output is quiet; otherwise an
+            unreliable selected step produces one RuntimeWarning.
         """
         check_is_fitted(self)
 
@@ -571,9 +588,6 @@ class Miscoding(BaseEstimator):
                 break
 
             best = candidates.iloc[0]
-            if not bool(best["is_reliable"]):
-                break
-
             improvement = float(best["miscoding_improvement"])
 
             if (not np.isfinite(improvement)) or improvement <= improvement_threshold:
@@ -604,6 +618,10 @@ class Miscoding(BaseEstimator):
         mask[selected] = True
 
         if not return_details:
+            for step in path:
+                if not step["is_reliable"]:
+                    warn_unreliable_estimate("select_features", step)
+                    break
             return mask
 
         return {
@@ -635,15 +653,15 @@ class Miscoding(BaseEstimator):
 
         The ranking is greedy and uses the same empirical subset diagnostics as
         ``miscoding_subset``. Unlike ``select_features()``, this method keeps
-        adding reliable features to the order even when subset miscoding stops
-        improving, until the requested count is reached or every remaining
-        candidate is unreliable.
+        adding features to the order even when subset miscoding stops improving,
+        until the requested count is reached or no finite candidate remains.
+        Reliability is diagnostic and does not affect candidate ordering.
 
         Parameters
         ----------
         max_features : non-negative int, optional
             Maximum number of features to rank. If omitted, every feature is
-            eligible. Ranking stops when no reliable extension remains.
+            eligible. Ranking stops when no finite extension remains.
 
         criterion : {"deficiency", "miscoding"}, default="deficiency"
             Candidate ordering criterion. ``"deficiency"`` prioritizes the
@@ -664,7 +682,8 @@ class Miscoding(BaseEstimator):
         -------
         list[int] or dict
             Ordered feature indices by default, or detailed ranking output when
-            ``return_details=True``.
+            ``return_details=True``. Detailed output is quiet; otherwise an
+            unreliable selected step produces one RuntimeWarning.
         """
         check_is_fitted(self)
         self._validate_ranking_criterion(criterion)
@@ -683,7 +702,7 @@ class Miscoding(BaseEstimator):
                 break
 
             best = candidates.iloc[0]
-            if not bool(best["is_reliable"]):
+            if not np.isfinite(best[criterion]):
                 break
 
             feature = int(best["feature_index"])
@@ -707,6 +726,10 @@ class Miscoding(BaseEstimator):
             )
 
         if not return_details:
+            for step in path:
+                if not step["is_reliable"]:
+                    warn_unreliable_estimate("rank_features", step)
+                    break
             return selected
 
         return {
@@ -925,14 +948,6 @@ class Miscoding(BaseEstimator):
         if self.debug:
             diagnostics.update(self._debug_subset_diagnostics(selected, n_bins=n_bins))
 
-        if not diagnostics["is_reliable"]:
-            return {
-                "deficiency" : float("nan"),
-                "surplus"    : float("nan"),
-                "miscoding"  : float("nan"),
-                **diagnostics,
-            }
-
         k_x = self._empirical_statistics_for_indices(features=selected, n_bins=n_bins).code_length
         k_y = self._empirical_statistics_for_indices(y_included=True,   n_bins=n_bins).code_length
         k_xy = joint_statistics.code_length
@@ -1052,7 +1067,6 @@ class Miscoding(BaseEstimator):
 
         if criterion == "deficiency":
             columns = [
-                "is_reliable",
                 "deficiency",
                 "miscoding",
                 "surplus",
@@ -1060,7 +1074,6 @@ class Miscoding(BaseEstimator):
             ]
         else:
             columns = [
-                "is_reliable",
                 "miscoding",
                 "deficiency",
                 "surplus",
@@ -1069,7 +1082,7 @@ class Miscoding(BaseEstimator):
 
         return candidates.sort_values(
             by=columns,
-            ascending=[False, True, True, True, True],
+            ascending=True,
             ignore_index=True,
             na_position="last",
         )

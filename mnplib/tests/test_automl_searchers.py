@@ -365,7 +365,7 @@ def test_decision_tree_pruning_path_search_skips_duplicate_structures(monkeypatc
     )
 
 
-def test_linear_regression_feature_prefix_search_evaluates_reliable_prefixes():
+def test_linear_regression_feature_prefix_search_evaluates_finite_prefixes():
     X, y = make_regression(
         n_samples=70,
         n_features=5,
@@ -387,7 +387,8 @@ def test_linear_regression_feature_prefix_search_evaluates_reliable_prefixes():
         for result in linear_results
     ] == list(range(1, len(reg.nescience_.miscoding_.rank_features()) + 1))
     assert linear_results
-    assert all(result.is_reliable for result in linear_results)
+    assert all(np.isfinite(result.nescience) for result in linear_results)
+    assert any(not result.is_reliable for result in linear_results)
     assert all(
         not hasattr(result, "metadata")
         for result in linear_results
@@ -427,7 +428,7 @@ def test_automl_uses_feature_ranking_for_prefix_search(monkeypatch):
         len(result.model.selected_features)
         for result in clf.results_
         if result.family == "logistic_regression"
-    ] == [1, 2, 3]
+    ] == [1, 2, 3, 4]
 
 
 def test_automl_estimators_fit_with_adaptive_miscoding():
@@ -466,7 +467,7 @@ def test_automl_estimators_fit_with_adaptive_miscoding():
 
 
 @pytest.mark.filterwarnings("error:nescience_model.*:RuntimeWarning")
-def test_automl_keeps_unreliable_candidates_sorted_last():
+def test_automl_orders_finite_candidates_by_nescience():
     X, y = make_classification(
         n_samples=60,
         n_features=4,
@@ -481,20 +482,19 @@ def test_automl_keeps_unreliable_candidates_sorted_last():
     ).fit(X, y)
     df = clf.results_dataframe()
 
-    assert clf.best_result_.family == "logistic_regression"
-    assert clf.best_result_.is_reliable is True
-    assert np.isfinite(clf.best_result_.nescience)
-    assert bool(df.iloc[0]["is_reliable"]) is True
-    assert bool(df.iloc[-1]["is_reliable"]) is False
-    assert np.isnan(df.iloc[-1]["nescience"])
-    assert df.iloc[-1]["failure_reason"] == "joint_distribution_too_sparse"
+    assert clf.best_result_.family == "linear_svc"
+    assert clf.best_result_.is_reliable is False
+    assert df["nescience"].is_monotonic_increasing
+    assert np.isfinite(df["nescience"]).all()
+    assert df.iloc[0]["candidate"] == clf.best_candidate_name_
+    assert df.iloc[0]["failure_reason"] == "joint_distribution_too_sparse"
     for row in df.itertuples():
         expected = clf.nescience_.miscoding_.subset_analysis(row.selected_features)["resolved_n_bins"]
         assert row.resolved_n_bins == expected
     assert clf.analysis()["resolved_n_bins"] == clf.best_result_.subset_diagnostics["resolved_n_bins"]
 
 
-def test_automl_raises_when_no_reliable_candidate_exists():
+def test_automl_selects_finite_candidate_and_warns_when_all_are_unreliable():
     X, y = make_classification(
         n_samples=60,
         n_features=4,
@@ -503,11 +503,14 @@ def test_automl_raises_when_no_reliable_candidate_exists():
         random_state=42,
     )
 
-    with pytest.raises(ValueError, match="No reliable candidate subset"):
-        NescienceClassifier(
+    with pytest.warns(RuntimeWarning, match="sparsely populated") as caught:
+        classifier = NescienceClassifier(
             models=["linear_svc"],
             random_state=42,
         ).fit(X, y)
+    assert len(caught) == 1
+    assert not classifier.best_result_.is_reliable
+    assert np.isfinite(classifier.best_result_.nescience)
 
 
 def test_automl_evaluates_prefixes_beyond_strict_selection():
@@ -614,7 +617,7 @@ def test_max_feature_prefixes_limits_prefix_candidates():
     ] == [1, 2]
 
 
-def test_logistic_regression_feature_prefix_search_evaluates_reliable_prefixes():
+def test_logistic_regression_feature_prefix_search_evaluates_finite_prefixes():
     X, y = make_classification(
         n_samples=70,
         n_features=4,
@@ -639,7 +642,8 @@ def test_logistic_regression_feature_prefix_search_evaluates_reliable_prefixes()
         for result in logistic_results
     ] == list(range(1, len(clf.nescience_.miscoding_.rank_features()) + 1))
     assert logistic_results
-    assert all(result.is_reliable for result in logistic_results)
+    assert all(np.isfinite(result.nescience) for result in logistic_results)
+    assert any(not result.is_reliable for result in logistic_results)
     assert all(
         result.hyperparameters == {
             "penalty": None,
@@ -694,7 +698,7 @@ def test_linear_svm_searchers_remain_internal_candidates():
         len(result.model.selected_features)
         for result in svr_results
     ] == list(range(1, len(reg.nescience_.miscoding_.rank_features()) + 1))
-    assert all(result.is_reliable for result in svc_results + svr_results)
+    assert all(np.isfinite(result.nescience) for result in svc_results + svr_results)
     assert all(
         result.name == f"linear_svr_prefix_{index}"
         for index, result in enumerate(svr_results, start=1)
@@ -745,12 +749,9 @@ def test_naive_bayes_uses_gaussian_feature_prefixes_only():
     assert [
         len(result.model.selected_features)
         for result in nb_results
-    ] == [
-        1,
-        2,
-        3,
-    ]
-    assert all(result.is_reliable for result in nb_results)
+    ] == [1, 2, 3, 4]
+    assert all(np.isfinite(result.nescience) for result in nb_results)
+    assert any(not result.is_reliable for result in nb_results)
     assert all(set(result.hyperparameters) == {"var_smoothing"} for result in nb_results)
     assert all(
         result.hyperparameters["var_smoothing"] == pytest.approx(1e-9)

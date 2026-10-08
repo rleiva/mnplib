@@ -211,6 +211,7 @@ def _format_table(report):
         raise ValueError("report must be a feature-analysis or lag-analysis DataFrame.")
     labels = {key: label for key, label in fields + (
         ("deficiency", "Deficiency"), ("surplus", "Surplus"), ("miscoding", "Miscoding"),
+        ("is_reliable", "Reliable"), ("failure_reason", "Failure reason"),
     ) if key in report.columns}
     if "target_conditional_code_length_bits" in report.columns:
         debug_fields = _CODE_LENGTH_FIELDS["miscoding"] + _MISCODING_DEBUG_CONTEXT + (

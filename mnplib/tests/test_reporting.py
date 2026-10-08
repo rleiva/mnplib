@@ -67,7 +67,7 @@ def test_sparse_and_empty_subset_reports():
     text = format_analysis(metric.subset_analysis([0, 1]))
     assert "Unreliable" in text
     assert "joint_distribution_too_sparse" in text
-    assert text.count("NaN") == 3
+    assert "NaN" not in text
     empty = format_analysis(metric.subset_analysis([]))
     assert "Reliable" in empty and "(none)" in empty
     assert "Joint distribution" not in empty

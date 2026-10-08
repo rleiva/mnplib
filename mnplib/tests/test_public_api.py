@@ -103,7 +103,7 @@ def test_explicit_subset_inputs_require_feature_coordinates(data):
 
 
 @pytest.mark.parametrize("weight", [0.5, 0, 1, 0.25])
-def test_unreliable_model_metrics_stay_nan(weight):
+def test_unreliable_model_metrics_remain_finite(weight):
     rng = np.random.default_rng(1)
     X = rng.normal(size=(20, 10))
     y = rng.normal(size=20)
@@ -112,9 +112,9 @@ def test_unreliable_model_metrics_stay_nan(weight):
     report = metric.model_analysis(model)
     assert report["is_reliable"] is False
     assert report["failure_reason"] == "joint_distribution_too_sparse"
-    with pytest.warns(RuntimeWarning, match="joint_distribution_too_sparse"):
-        assert np.isnan(metric.nescience_model(model))
-    assert np.isnan(report["nescience"])
+    with pytest.warns(RuntimeWarning, match="sparsely populated"):
+        assert metric.nescience_model(model) == pytest.approx(report["nescience"])
+    assert np.isfinite(report["nescience"])
 
 
 @pytest.mark.parametrize("cls,method", [(Miscoding, "miscoding_model"), (Surfeit, "surfeit_model"),

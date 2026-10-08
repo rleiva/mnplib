@@ -85,20 +85,20 @@ def test_model_nescience_warns_with_sparse_joint_diagnostics(functional):
     model = LinearRegression().fit(X, y)
     metric = Nescience().fit(X, y)
 
-    with pytest.warns(RuntimeWarning, match="joint_distribution_too_sparse") as caught:
+    with pytest.warns(RuntimeWarning, match="sparsely populated") as caught:
         value = (nescience_model(model, X=X, y=y) if functional
                  else metric.nescience_model(model))
 
-    assert np.isnan(value)
+    assert np.isfinite(value)
     assert len(caught) == 1
     message = str(caught[0].message)
-    for field in ("n_samples=30", "n_selected_features=20", "resolved_n_bins=2",
+    for field in ("n_samples=30", "n_observed_joint_states=30", "resolved_n_bins=2",
                   "mean_joint_occupancy=", "singleton_fraction=",
-                  "model_analysis(model)"):
+                  "analysis report"):
         assert field in message
 
 
-def test_sparse_adaptive_model_nescience_warns_and_returns_nan():
+def test_sparse_adaptive_model_nescience_warns_and_returns_value():
     rng = np.random.default_rng(1)
     X = rng.normal(size=(30, 20))
     y = rng.normal(size=30)
@@ -106,12 +106,12 @@ def test_sparse_adaptive_model_nescience_warns_and_returns_nan():
     metric = Nescience().fit(X, y)
 
     with pytest.warns(RuntimeWarning, match="resolved_n_bins=2"):
-        assert np.isnan(metric.nescience_model(model))
+        assert np.isfinite(metric.nescience_model(model))
 
     details = metric.model_analysis(model)
     assert details["is_reliable"] is False
     assert details["failure_reason"] == "joint_distribution_too_sparse"
-    assert all(np.isnan(details[key]) for key in ("deficiency", "surplus", "miscoding"))
+    assert all(np.isfinite(details[key]) for key in ("deficiency", "surplus", "miscoding"))
 
 
 def test_sparse_diagnostics_and_candidate_evaluation_are_quiet():
@@ -127,12 +127,15 @@ def test_sparse_diagnostics_and_candidate_evaluation_are_quiet():
         result = CandidateEvaluator(X=X, y=y, nescience=metric,
                                     feature_names=metric.feature_names_in_).evaluate(
             name="linear", family="linear_regression", model=model)
-        primitive = metric.nescience(**result.artifacts.to_nescience_kwargs())
+
 
     assert not caught
-    assert np.isnan(details["nescience"])
-    assert np.isnan(result.nescience)
-    assert np.isnan(primitive)
+    assert np.isfinite(details["nescience"])
+    assert result.nescience == pytest.approx(details["nescience"])
+    with pytest.warns(RuntimeWarning, match="sparsely populated") as caught:
+        primitive = metric.nescience(**result.artifacts.to_nescience_kwargs())
+    assert len(caught) == 1
+    assert primitive == pytest.approx(result.nescience)
     assert result.is_reliable is False
     assert result.subset_diagnostics["resolved_n_bins"] == 2
 

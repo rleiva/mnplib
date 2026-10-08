@@ -374,12 +374,15 @@ def test_state_space_candidate_uses_shared_artifacts_and_forecasts():
     assert "UnobservedComponents" in df.iloc[0]["model_type"]
 
 
-def test_fit_raises_when_no_reliable_candidate_can_be_evaluated():
+def test_fit_warns_and_retains_finite_unreliable_candidate():
     rng = np.random.default_rng(123)
     y = rng.normal(size=10)
 
-    with pytest.raises(ValueError, match="No reliable time-series candidate subset"):
-        TimeSeries(
+    with pytest.warns(RuntimeWarning, match="sparsely populated") as caught:
+        model = TimeSeries(
             window_size=5,
             models=["moving_average"],
         ).fit(y)
+    assert len(caught) == 1
+    assert not model.best_result_.is_reliable
+    assert np.isfinite(model.best_result_.nescience)

@@ -47,9 +47,9 @@ def candidate_result_row(result, feature_names=None):
 
 
 def candidate_results_dataframe(results, feature_names=None):
-    """Return a stable comparison table, with unreliable candidates last."""
+    """Return a stable comparison table ordered by nescience, with NaNs last."""
     return pd.DataFrame([candidate_result_row(result, feature_names) for result in results]).sort_values(
-        ["is_reliable", "nescience"], ascending=[False, True], na_position="last",
+        "nescience", ascending=True, na_position="last",
         kind="stable", ignore_index=True)
 
 

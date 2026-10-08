@@ -126,7 +126,7 @@ def test_target_debug_length_uses_the_subsets_resolved_bins():
     assert subset["target_n_bins"] == subset["resolved_n_bins"]
 
 
-def test_sparse_subset_exposes_raw_values_without_finite_scores():
+def test_sparse_subset_exposes_raw_values_and_finite_scores():
     rng = np.random.default_rng(1)
     X, y = rng.normal(size=(30, 20)), rng.normal(size=30)
     ordinary = Miscoding().fit(X, y)
@@ -140,7 +140,8 @@ def test_sparse_subset_exposes_raw_values_without_finite_scores():
     for key in CODE_FIELDS:
         assert np.isfinite(report[key])
     for method in (debug.deficiency_subset, debug.surplus_subset, debug.miscoding_subset):
-        assert np.isnan(method(selected))
+        with pytest.warns(RuntimeWarning, match="sparsely populated"):
+            assert np.isfinite(method(selected))
     assert debug._pairwise_miscoding_matrix_ is None
 
 
@@ -155,7 +156,7 @@ def test_sparse_feature_report_keeps_feature_scores_numeric():
     assert row["singleton_fraction"] == 1
     for key in ("deficiency", "surplus", "miscoding"):
         assert row[key] == 0
-        assert np.isnan(metric.subset_analysis([0])[key])
+        assert metric.subset_analysis([0])[key] == 0
 
 
 @pytest.mark.parametrize("constant", [False, True])
@@ -200,20 +201,21 @@ def test_debug_search_reports_preserve_decisions_and_enrich_paths(data, method, 
 
 
 @pytest.mark.parametrize("method", ["rank_features", "select_features"])
-def test_debug_search_stops_when_every_candidate_is_unreliable(method):
+def test_debug_search_uses_finite_unreliable_candidates(method):
     x = np.arange(15).astype(str)
     metric = Miscoding(debug=True).fit(np.column_stack([x, x]), x)
     current = metric._empirical_subset_measures([])
     candidates = metric._candidate_extensions([], current)
     assert DEBUG_FIELDS | JOINT_FIELDS <= set(candidates.columns)
     assert not candidates["is_reliable"].any()
-    assert candidates["miscoding"].isna().all()
+    assert (candidates["miscoding"] == 0).all()
     assert np.isfinite(candidates[list(CODE_FIELDS)]).all().all()
     result = getattr(metric, method)(return_details=True, include_pairwise_miscoding=False)
-    assert result["path"].empty
+    assert not result["path"].empty
+    assert not result["path"]["is_reliable"].any()
     assert DEBUG_FIELDS <= set(result["path"].columns)
     key = "feature_order" if method == "rank_features" else "selected_features"
-    assert result[key] == []
+    assert result[key] == ([0, 1] if method == "rank_features" else [0])
     exhausted = metric._candidate_extensions([0, 1], current)
     assert exhausted.empty
     assert DEBUG_FIELDS <= set(exhausted.columns)

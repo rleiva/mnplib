@@ -334,13 +334,13 @@ def test_sparse_miscoding_does_not_invalidate_mismodel_or_duplicate_warnings():
         report = metric.model_analysis(model)
         standalone = Mismodel().fit(X, y).model_analysis(model)
     assert not caught
-    assert np.isnan(report["nescience"])
+    assert np.isfinite(report["nescience"])
     assert report["is_reliable"] is False
     for name in ("inaccuracy", "surfeit", "mismodel"):
         assert np.isfinite(report[name])
         assert report[name] == standalone[name]
-    with pytest.warns(RuntimeWarning, match="joint_distribution_too_sparse") as caught:
-        assert np.isnan(metric.nescience_model(model))
+    with pytest.warns(RuntimeWarning, match="sparsely populated") as caught:
+        assert metric.nescience_model(model) == pytest.approx(report["nescience"])
     assert len(caught) == 1
 
 

@@ -18,7 +18,7 @@ from sklearn.base import BaseEstimator
 from sklearn.utils import check_X_y
 from sklearn.utils.validation import check_is_fitted
 
-from ._diagnostics import warn_nan_model
+from ._diagnostics import warn_unreliable_estimate
 from ._rms import _rms_pair
 from ._types import XType, YType
 from .miscoding import Miscoding
@@ -129,14 +129,14 @@ class Nescience(BaseEstimator):
         Returns
         -------
         float
-            Scalar nescience of the fitted model.
+            Scalar nescience of the fitted model. A RuntimeWarning indicates
+            weak empirical support; computable estimates remain numerical.
         """
         report = self.model_analysis(
             model, X=X, feature_names=feature_names, feature_indices=feature_indices,
         )
         value = float(report["nescience"])
-        if np.isnan(value):
-            warn_nan_model("nescience_model", report)
+        warn_unreliable_estimate("nescience_model", report)
         return value
 
     def model_analysis(self, model, *, X=None, feature_names=None, feature_indices=None) -> dict[str, object]:
@@ -233,11 +233,14 @@ class Nescience(BaseEstimator):
         Returns
         -------
         float
-            Scalar nescience of the supplied model artifacts.
+            Scalar nescience of the supplied model artifacts, with one
+            RuntimeWarning if their empirical subset estimate is unreliable.
         """
-        return float(self.analysis(
+        report = self.analysis(
             subset=subset, predictions=predictions, model_string=model_string,
-        )["nescience"])
+        )
+        warn_unreliable_estimate("nescience", report)
+        return float(report["nescience"])
 
     def analysis(self, *, subset, predictions, model_string: str) -> dict[str, object]:
         """

@@ -94,7 +94,7 @@ def test_functional_options_and_unreliable_subset(monkeypatch):
     monkeypatch.setattr(Miscoding, "_feature_pair_miscoding", unexpected)
     result = subset_analysis([0, 1, 2], X=X, y=y)
     assert set(result) == SUBSET_FIELDS
-    assert not result["is_reliable"] and np.isnan(result["miscoding"])
+    assert not result["is_reliable"] and np.isfinite(result["miscoding"])
     for function in (select_features, rank_features):
         details = function(X=X, y=y, return_details=True, include_pairwise_miscoding=False)
         assert "pairwise_miscoding" not in details

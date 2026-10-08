@@ -307,7 +307,8 @@ def test_sparse_model_scoring_warns_but_analysis_is_quiet(cls, module, scalar):
     assert functional_report["is_reliable"] is False
     for call in (lambda: getattr(metric, scalar)(model),
                  lambda: getattr(module, scalar)(model, X=X, y=y)):
-        with pytest.warns(RuntimeWarning, match="model_analysis\\(model\\)") as caught:
-            assert np.isnan(call())
+        with pytest.warns(RuntimeWarning, match="sparsely populated") as caught:
+            assert np.isfinite(call())
         assert len(caught) == 1
-        assert "joint_distribution_too_sparse" in str(caught[0].message)
+        assert "n_observed_joint_states=30" in str(caught[0].message)
+        assert caught[0].filename == __file__

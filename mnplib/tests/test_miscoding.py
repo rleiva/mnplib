@@ -260,7 +260,7 @@ def test_feature_analysis_returns_expected_columns_and_sorted_rows():
     metric = Miscoding(X_type="categorical", y_type="categorical").fit(X, y)
     table = metric.feature_analysis()
 
-    assert list(table.columns) == [
+    assert list(table.columns[:7]) == [
         "feature_index",
         "feature_name",
         "is_numeric",
@@ -269,6 +269,7 @@ def test_feature_analysis_returns_expected_columns_and_sorted_rows():
         "surplus",
         "miscoding",
     ]
+    assert RELIABILITY_FIELDS <= set(table.columns)
     assert len(table) == X.shape[1]
     assert table["miscoding"].is_monotonic_increasing
     assert table.iloc[0]["miscoding"] == pytest.approx(0.0)
@@ -500,15 +501,15 @@ def test_reliable_small_subset_returns_finite_values():
     assert np.isfinite(details["miscoding"])
 
 
-def test_unreliable_high_dimensional_subset_returns_nan_values():
+def test_unreliable_high_dimensional_subset_returns_finite_values():
     X, y = make_sparse_subset_data()
 
     metric = Miscoding(X_type="numeric", y_type="categorical").fit(X, y)
     details = metric.subset_analysis(list(range(8)))
 
-    assert np.isnan(details["deficiency"])
-    assert np.isnan(details["surplus"])
-    assert np.isnan(details["miscoding"])
+    assert np.isfinite(details["deficiency"])
+    assert np.isfinite(details["surplus"])
+    assert np.isfinite(details["miscoding"])
     assert details["is_reliable"] is False
     assert details["failure_reason"] == "joint_distribution_too_sparse"
     assert details["n_samples"] == X.shape[0]
@@ -519,12 +520,15 @@ def test_unreliable_high_dimensional_subset_returns_nan_values():
 
 
 @pytest.mark.parametrize("mode", ["deficiency", "surplus", "miscoding"])
-def test_miscoding_subset_returns_nan_for_unreliable_subset(mode):
+def test_miscoding_subset_warns_for_unreliable_subset(mode):
     X, y = make_sparse_subset_data()
+    metric = Miscoding(X_type="numeric", y_type="categorical").fit(X, y)
 
-    value = miscoding_subset(list(range(8)), X_type='numeric', y_type='categorical', X=X, y=y)
+    with pytest.warns(RuntimeWarning, match="sparsely populated"):
+        value = getattr(metric, mode + "_subset")(list(range(8)))
 
-    assert np.isnan(value)
+    assert np.isfinite(value)
+    assert value == pytest.approx(metric.subset_analysis(list(range(8)))[mode])
 
 
 def test_subset_analysis_returns_expected_keys_and_shapes():
@@ -670,7 +674,7 @@ def test_reliability_diagnostics_work_with_adaptive_categorical_target():
 
     assert details["is_reliable"] is False
     assert details["failure_reason"] == "joint_distribution_too_sparse"
-    assert np.isnan(details["miscoding"])
+    assert np.isfinite(details["miscoding"])
 
 
 def test_reliability_diagnostics_work_with_adaptive_numerical_target():
@@ -685,7 +689,7 @@ def test_reliability_diagnostics_work_with_adaptive_numerical_target():
 
     assert details["is_reliable"] is False
     assert details["failure_reason"] == "joint_distribution_too_sparse"
-    assert np.isnan(details["miscoding"])
+    assert np.isfinite(details["miscoding"])
 
 
 def test_miscoding_subset_rejects_noninteger_indices():
@@ -884,10 +888,12 @@ def test_noise_features_do_not_collapse_adaptive_deficiency():
         X_type="numeric",
         y_type="categorical",
     ).fit(X, y)
-    noise_deficiency = metric.deficiency_subset([4, 5])
+    with pytest.warns(RuntimeWarning, match="sparsely populated"):
+        noise_deficiency = metric.deficiency_subset([4, 5])
     details = metric.subset_analysis([4, 5])
 
-    assert np.isnan(noise_deficiency)
+    assert noise_deficiency == pytest.approx(details["deficiency"])
+    assert np.isfinite(noise_deficiency)
     assert details["is_reliable"] is False
     assert details["failure_reason"] == "joint_distribution_too_sparse"
 
@@ -980,7 +986,8 @@ def test_candidate_extensions_include_reliability_fields():
     ).all()
 
 
-def test_reliable_candidates_sort_before_unreliable_candidates():
+@pytest.mark.parametrize("criterion", ["deficiency", "miscoding"])
+def test_candidates_sort_by_value_regardless_of_reliability(criterion):
     X, y = make_sparse_subset_data()
     X[:, 0] = y
 
@@ -989,29 +996,30 @@ def test_reliable_candidates_sort_before_unreliable_candidates():
     reliable = metric._candidate_extensions([], current).iloc[[0]].copy()
     extensions = metric._candidate_extensions([11], metric.subset_analysis([11]))
     unreliable = extensions.loc[~extensions["is_reliable"]].iloc[[0]].copy()
-    candidates = pd.concat([unreliable, reliable], ignore_index=True)
+    reliable.loc[:, criterion] = 0.4
+    unreliable.loc[:, criterion] = 0.2
+    candidates = pd.concat([reliable, unreliable], ignore_index=True)
 
-    sorted_candidates = metric._sort_candidates(candidates, criterion="miscoding")
+    sorted_candidates = metric._sort_candidates(candidates, criterion=criterion)
 
-    assert bool(sorted_candidates.iloc[0]["is_reliable"]) is True
-    assert bool(sorted_candidates.iloc[-1]["is_reliable"]) is False
+    assert bool(sorted_candidates.iloc[0]["is_reliable"]) is False
+    assert bool(sorted_candidates.iloc[-1]["is_reliable"]) is True
 
 
-def test_rank_features_stops_when_remaining_candidates_are_unreliable():
+def test_rank_features_includes_finite_unreliable_candidates():
     X, y = make_sparse_subset_data()
 
     metric = Miscoding(X_type="numeric", y_type="categorical").fit(X, y)
     details = metric.rank_features(max_features=20, return_details=True)
 
-    assert len(details["feature_order"]) < 20
-    assert details["path"]["is_reliable"].all()
-    assert all(
-        metric.subset_analysis(indices)["is_reliable"]
-        for indices in details["path"]["selected_features"]
-    )
+    assert len(details["feature_order"]) == 20
+    assert not details["path"]["is_reliable"].all()
+    assert np.isfinite(details["path"][["deficiency", "surplus", "miscoding"]]).all().all()
+    for row in details["path"].itertuples():
+        assert row.is_reliable == metric.subset_analysis(list(row.selected_features))["is_reliable"]
 
 
-def test_select_features_stops_when_remaining_candidates_are_unreliable():
+def test_select_features_stops_when_sparse_candidates_do_not_improve():
     y = np.tile([0, 1], 15)
     X = np.column_stack([y, np.arange(len(y)), np.arange(len(y)) + 100])
 
@@ -1023,20 +1031,22 @@ def test_select_features_stops_when_remaining_candidates_are_unreliable():
     assert details["path"]["is_reliable"].all()
     candidates = metric._candidate_extensions(details["selected_features"], details["subset"])
     assert not candidates["is_reliable"].any()
+    assert (candidates["miscoding_improvement"] <= 0).all()
 
 
-def test_rank_and_select_stop_when_no_reliable_candidate_exists():
+def test_rank_and_select_use_finite_candidates_when_all_are_unreliable():
     X, y = make_unreliable_extension_data()
 
     metric = Miscoding(X_type="numeric", y_type="categorical").fit(X, y)
     rank_details = metric.rank_features(return_details=True)
     select_details = metric.select_features(return_details=True)
 
-    assert rank_details["feature_order"] == []
-    assert rank_details["path"].empty
-    assert select_details["selected_features"] == []
-    assert int(select_details["mask"].sum()) == 0
-    assert select_details["subset"]["is_reliable"] is True
+    assert sorted(rank_details["feature_order"]) == list(range(X.shape[1]))
+    assert not rank_details["path"]["is_reliable"].any()
+    assert select_details["selected_features"]
+    assert int(select_details["mask"].sum()) == len(select_details["selected_features"])
+    assert select_details["subset"]["is_reliable"] is False
+    assert (select_details["path"]["miscoding_improvement"] > 0).all()
 
 
 def test_select_features_return_details():
@@ -1288,12 +1298,13 @@ def test_functional_miscoding_subset_accepts_adaptive_bins(mode):
     assert 0.0 <= value <= 1.0
 
 
-def test_functional_miscoding_subset_returns_nan_for_unreliable_subset():
+def test_functional_miscoding_subset_warns_for_unreliable_subset():
     X, y = make_sparse_subset_data()
 
-    value = miscoding_subset(list(range(8)), X_type='numeric', y_type='categorical', X=X, y=y)
+    with pytest.warns(RuntimeWarning, match="sparsely populated"):
+        value = miscoding_subset(list(range(8)), X_type="numeric", y_type="categorical", X=X, y=y)
 
-    assert np.isnan(value)
+    assert np.isfinite(value)
 
 
 def test_functional_rank_features_accepts_adaptive_bins():
@@ -1323,9 +1334,9 @@ def test_functional_rank_features_details_include_reliability_metadata():
         max_features=20,
     )
 
-    assert len(details["feature_order"]) < 20
+    assert len(details["feature_order"]) == 20
     assert RELIABILITY_FIELDS.issubset(details["path"].columns)
-    assert details["path"]["is_reliable"].all()
+    assert not details["path"]["is_reliable"].all()
 
 
 def test_functional_select_features_accepts_adaptive_bins():
@@ -1421,7 +1432,7 @@ def test_empty_subset_representations_have_consistent_diagnostics(subset):
 @pytest.mark.parametrize("method", ["select_features", "rank_features"])
 @pytest.mark.parametrize("reason", ["zero_limit", "sparse"])
 @pytest.mark.parametrize("functional", [False, True])
-def test_empty_search_paths_preserve_report_columns(method, reason, functional):
+def test_empty_and_sparse_search_paths_preserve_report_columns(method, reason, functional):
     X, y = make_simple_classification_data()
     reference = getattr(Miscoding().fit(X, y), method)(
         max_features=1, return_details=True, include_pairwise_miscoding=False,
@@ -1436,10 +1447,10 @@ def test_empty_search_paths_preserve_report_columns(method, reason, functional):
     details = (getattr(miscoding_module, method)(X=X, y=y, **options) if functional
                else getattr(Miscoding().fit(X, y), method)(**options))
     path = details["path"]
-    assert path.empty
+    assert path.empty == (reason == "zero_limit")
     assert list(path.columns) == list(reference.columns)
-    assert path["is_reliable"].empty
-    assert path["miscoding"].empty
+    assert not path["is_reliable"].any()
+    assert np.isfinite(path["miscoding"].to_numpy(dtype=float)).all()
 
 
 @pytest.mark.parametrize("constant_target", [False, True])

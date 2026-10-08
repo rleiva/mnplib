@@ -98,7 +98,7 @@ def test_feature_scores_remain_finite_when_single_feature_subset_is_sparse():
     assert np.isfinite(metric.feature_analysis()[["deficiency", "surplus", "miscoding"]]).all().all()
     report = metric.subset_analysis([0])
     assert not report["is_reliable"]
-    assert np.isnan(report["miscoding"])
+    assert np.isfinite(report["miscoding"])
 
 
 def test_pair_and_subset_calculations_each_resolve_one_context(monkeypatch):
@@ -148,7 +148,7 @@ def test_subset_cache_distinguishes_bins_and_reuses_feature_permutations(monkeyp
     assert calls == []
 
 
-def test_unreliable_joint_does_not_compute_or_retain_marginals(monkeypatch):
+def test_unreliable_joint_computes_and_caches_matching_marginals(monkeypatch):
     rng = np.random.default_rng(1)
     X = rng.normal(size=(30, 20))
     y = rng.normal(size=len(X))
@@ -158,8 +158,11 @@ def test_unreliable_joint_does_not_compute_or_retain_marginals(monkeypatch):
     report = metric.subset_analysis(list(range(20)))
 
     assert not report["is_reliable"]
-    assert calls == [(21, (True,) * 21, 2)]
-    assert set(metric._empirical_cache_) - cached.keys() == {(tuple(range(20)), True, 2)}
+    assert calls == [(21, (True,) * 21, 2), (20, (True,) * 20, 2), (1, (True,), 2)]
+    assert set(metric._empirical_cache_) - cached.keys() == {
+        (tuple(range(20)), True, 2), (tuple(range(20)), False, 2), ((), True, 2),
+    }
+    assert all(np.isfinite(report[key]) for key in ("deficiency", "surplus", "miscoding"))
     assert all(metric._empirical_cache_[key] is value for key, value in cached.items())
     assert metric._pairwise_miscoding_matrix_ is None
 
@@ -185,7 +188,7 @@ def test_single_feature_reliability_reuses_statistics_from_fit(monkeypatch, reli
     assert report["mean_joint_occupancy"] == (3.0 if reliable else 1.0)
     assert report["failure_reason"] == (None if reliable else "joint_distribution_too_sparse")
     for field in ("deficiency", "surplus", "miscoding"):
-        assert report[field] == 0.0 if reliable else np.isnan(report[field])
+        assert report[field] == 0.0
 
 
 def test_cached_statistics_match_empirical_distributions():

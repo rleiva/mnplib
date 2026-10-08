@@ -19,6 +19,7 @@ from sklearn.tree import DecisionTreeRegressor
 from sklearn.utils import check_X_y, check_array
 from sklearn.utils.validation import check_is_fitted
 
+from ._diagnostics import warn_unreliable_estimate
 from ._types import XType
 from .automl import CandidateEvaluator, CandidateResult
 from .automl.descriptions import describe_candidate_model
@@ -129,12 +130,11 @@ class NescienceRegressor(RegressorMixin, BaseEstimator):
         valid_results = [
             result
             for result in self.results_
-            if result.is_reliable and np.isfinite(result.nescience)
+            if np.isfinite(result.nescience)
         ]
         if not valid_results:
             raise ValueError(
-                "No reliable candidate subset could be evaluated with the "
-                "available sample size and discretization."
+                "No candidate with finite nescience could be evaluated."
             )
 
         best_result = min(valid_results, key=lambda result: result.nescience)
@@ -146,6 +146,7 @@ class NescienceRegressor(RegressorMixin, BaseEstimator):
         self.best_candidate_name_ = best_result.name
 
         self.is_fitted_ = True
+        warn_unreliable_estimate("NescienceRegressor.fit", best_result.subset_diagnostics)
         return self
 
     def predict(self, X):
@@ -192,6 +193,7 @@ class NescienceRegressor(RegressorMixin, BaseEstimator):
         Return the selected model's nescience value.
         """
         check_is_fitted(self)
+        warn_unreliable_estimate("NescienceRegressor.nescience", self.best_result_.subset_diagnostics)
         return float(self.best_nescience_)
 
     def components(self) -> dict[str, float]:
