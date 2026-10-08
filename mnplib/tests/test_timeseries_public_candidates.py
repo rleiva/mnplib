@@ -17,6 +17,10 @@ def test_capabilities_are_public_and_independent():
 @pytest.mark.parametrize('family', list(TimeSeries.family_capabilities()))
 def test_named_candidate_forecasts_and_fitted_values_do_not_change_best(family):
     y = np.sin(np.arange(100) / 5) + np.arange(100) / 100
+    if family in {'arima', 'state_space'}:
+        with pytest.raises(ValueError, match='not supported'):
+            TimeSeries(window_size=3, models=[family]).fit(y)
+        return
     ts = TimeSeries(window_size=3, models=[family]).fit(y)
     best = ts.best_result_
     for result in ts.candidate_results_:
@@ -57,13 +61,8 @@ def test_unfitted_candidate_methods():
         ts.fitted_values()
 
 
-def test_nonconvergence_is_reported_numerically():
+def test_unavailable_stateful_family_has_a_structured_diagnostic():
     y = np.random.default_rng(0).normal(size=100).cumsum()
-    ts = TimeSeries(window_size=3, models=['arima'],
-                    search_options={'arima': {'max_iter': 1}}).fit(y)
-    rows = ts.results_dataframe().to_dict('records')
-    failed = [row for row in rows if row['metadata']['converged'] is False]
-    assert failed
-    assert {row['candidate'] for row in failed} == {
-        item['candidate'] for item in ts.diagnostics_ if item['reason'] == 'not_converged'
-    }
+    ts = TimeSeries(window_size=3, models=["arima", "moving_average"]).fit(y)
+    assert ts.diagnostics_[0]["reason"] == "unsupported_model_description"
+    assert ts.diagnostics_[0]["family"] == "arima"

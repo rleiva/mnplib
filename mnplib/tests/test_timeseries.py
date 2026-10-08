@@ -8,8 +8,9 @@ from sklearn.exceptions import NotFittedError
 from sklearn.metrics import r2_score
 
 from mnplib.timeseries import TimeSeries, FixedLinearForecaster
+from mnplib.models import describe_model
+from mnplib.models.language import parse, render, execute
 from mnplib.timeseries.models import (
-    canonical_fixed_model_string,
     exponential_smoothing_weights,
     moving_average_weights,
 )
@@ -57,6 +58,13 @@ def test_forecast_returns_requested_number_of_steps():
     assert isinstance(forecast, np.ndarray)
     assert forecast.shape == (6,)
     assert np.all(np.isfinite(forecast))
+
+
+def test_intercept_only_forecast_retains_estimator_input_coordinates():
+    ts = TimeSeries(window_size=3, models=["autoregressive"]).fit(np.ones(40))
+    assert ts.best_artifacts_.subset == []
+    assert ts.best_artifacts_.description.feature_indices
+    np.testing.assert_array_equal(ts.forecast(3), np.ones(3))
 
 
 def test_fitted_values_align_with_training_observations():
@@ -110,7 +118,7 @@ def test_results_dataframe_is_sorted_and_has_expected_columns():
     assert bool(df.iloc[0]["is_reliable"])
     assert np.isfinite(float(df.iloc[0]["nescience"]))
     assert df.iloc[0]["candidate"] == ts.model_name_
-    assert {"arima", "state_space"}.issubset(set(df["family"]))
+    assert {"autoregressive", "moving_average", "exponential_smoothing"}.issubset(set(df["family"]))
 
 
 def test_components_nescience_and_model_string():
@@ -123,9 +131,9 @@ def test_components_nescience_and_model_string():
 
     assert set(components) == {"deficiency", "surplus", "inaccuracy", "surfeit"}
     assert ts.nescience() == pytest.approx(ts.best_result_.nescience)
-    assert model_string.startswith("SCHEMA canonical_nescience_time_series_model_v1")
-    assert "TASK forecasting" in model_string
-    assert "RULE" in model_string
+    assert render(parse(model_string)) == model_string
+    np.testing.assert_allclose(execute(model_string, ts.X_supervised_),
+                               ts.best_artifacts_.predictions, atol=0.002, rtol=0.01)
     assert description["candidate"] == ts.best_result_.name
     assert description["model_string"] == model_string
     assert description["surfeit"] == pytest.approx(components["surfeit"])
@@ -152,8 +160,6 @@ def test_analysis_contains_time_series_details():
     ("autoregressive", {}, {}),
     ("moving_average", {"windows": [2]}, {"window": 2}),
     ("exponential_smoothing", {"windows": [2], "alphas": [0.4]}, {"window": 2, "alpha": 0.4}),
-    ("arima", {"orders": [(1, 0, 0)], "max_iter": 30}, {"order": (1, 0, 0), "trend": "c"}),
-    ("state_space", {"models": ["local_level"], "max_iter": 30}, {"specification": "local_level"}),
 ])
 def test_candidate_hyperparameters_are_shared_by_reports(family, options, parameters):
     ts = TimeSeries(window_size=4, models=[family], search_options={family: options})
@@ -272,19 +278,13 @@ def test_fixed_linear_forecaster_and_weight_helpers():
     assert np.allclose(exponential_smoothing_weights(3, 0.5).sum(), 1.0)
 
 
-def test_canonical_fixed_model_string_is_stable():
-    text = canonical_fixed_model_string(
-        model_type="moving_average",
-        model_name="moving_average_2",
-        feature_names=["y_lag_1", "y_lag_2"],
-        weights=np.array([0.5, 0.5]),
-        precision=3,
-    )
-
-    assert text.startswith("SCHEMA canonical_nescience_time_series_model_v1")
-    assert "MODEL moving_average" in text
-    assert "INPUTS y_lag_1, y_lag_2" in text
-    assert "y_hat += 0.5 * y_lag_1" in text
+def test_fixed_model_description_is_stable():
+    X = np.arange(20).reshape(10, 2)
+    model = FixedLinearForecaster(weights=[0.5, 0.5]).fit(X, X.mean(axis=1))
+    description = describe_model(model, feature_names=["y_lag_1", "y_lag_2"])
+    assert description.canonical == "5.00e-01*x0+5.00e-01*x1"
+    assert description.feature_names == ("y_lag_1", "y_lag_2")
+    np.testing.assert_allclose(execute(description.ast, X), model.predict(X))
 
 
 def test_autoregressive_search_uses_selection_options():
@@ -330,48 +330,18 @@ def test_candidate_results_include_subset_reliability_diagnostics():
     assert ts.analysis()["resolved_n_bins"] == diagnostics["resolved_n_bins"]
 
 
-def test_arima_candidate_uses_shared_artifacts_and_forecasts():
-    y = make_series(n=90)
-    ts = TimeSeries(window_size=5, models=['arima'], search_options={'arima': {'orders': [(1, 0, 0)], 'max_iter': 20}, 'state_space': {'max_iter': 20}}).fit(y)
-
-    result = ts.best_result_
-    forecast = ts.forecast(steps=3)
-    predictions = ts.fitted_values_[ts.window_size_:]
-    df = ts.results_dataframe()
-
-    assert result.family == "arima"
-    assert result.artifacts.model_string.startswith("SCHEMA canonical_nescience_time_series_model_v1")
-    assert "MODEL arima" in result.artifacts.model_string
-    assert result.artifacts.subset
-    assert np.all(np.isfinite(result.artifacts.predictions))
-    assert predictions.shape == ts.y_supervised_.shape
-    assert ts.score(y[-3:]) == pytest.approx(r2_score(y[-3:], forecast))
-    assert forecast.shape == (3,)
-    assert np.all(np.isfinite(forecast))
-    assert set(df["family"]) == {"arima"}
-    assert "SARIMAX" in df.iloc[0]["model_type"]
+@pytest.mark.parametrize("family", ["arima", "state_space"])
+def test_stateful_descriptions_raise_explicit_unsupported_error(family):
+    model = TimeSeries(window_size=5, models=[family])
+    with pytest.raises(ValueError, match="not supported.*schema version 1"):
+        model.fit(make_series(90))
+    assert model.diagnostics_[0]["reason"] == "unsupported_model_description"
 
 
-def test_state_space_candidate_uses_shared_artifacts_and_forecasts():
-    y = make_series(n=90)
-    ts = TimeSeries(window_size=5, models=['state_space'], search_options={'state_space': {'models': ['local_level'], 'max_iter': 20}, 'arima': {'max_iter': 20}}).fit(y)
-
-    result = ts.best_result_
-    forecast = ts.forecast(steps=3)
-    predictions = ts.fitted_values_[ts.window_size_:]
-    df = ts.results_dataframe()
-
-    assert result.family == "state_space"
-    assert result.artifacts.model_string.startswith("SCHEMA canonical_nescience_time_series_model_v1")
-    assert "MODEL state_space" in result.artifacts.model_string
-    assert result.artifacts.subset
-    assert np.all(np.isfinite(result.artifacts.predictions))
-    assert predictions.shape == ts.y_supervised_.shape
-    assert ts.score(y[-3:]) == pytest.approx(r2_score(y[-3:], forecast))
-    assert forecast.shape == (3,)
-    assert np.all(np.isfinite(forecast))
-    assert set(df["family"]) == {"state_space"}
-    assert "UnobservedComponents" in df.iloc[0]["model_type"]
+def test_unsupported_descriptions_are_reported_and_other_families_remain_available():
+    model = TimeSeries(window_size=4, models=["arima", "state_space", "moving_average"]).fit(make_series())
+    assert set(model.results_dataframe()["family"]) == {"moving_average"}
+    assert {item["family"] for item in model.diagnostics_} == {"arima", "state_space"}
 
 
 def test_fit_warns_and_retains_finite_unreliable_candidate():

@@ -13,6 +13,7 @@ import inspect
 import pathlib
 
 import numpy as np
+from mnplib.models.language import parse, render, execute
 import pandas as pd
 import pytest
 
@@ -657,7 +658,7 @@ def test_logistic_regression_feature_prefix_search_evaluates_finite_prefixes():
         for result in logistic_results
     )
     assert all(
-        result.artifacts.model_string.startswith("def predict(x):")
+        render(parse(result.artifacts.model_string)) == result.artifacts.model_string
         for result in logistic_results
     )
 
@@ -713,7 +714,7 @@ def test_linear_svm_searchers_remain_internal_candidates():
         for result in svr_results
     )
     assert all(
-        result.artifacts.model_string.startswith("def predict(x):")
+        render(parse(result.artifacts.model_string)) == result.artifacts.model_string
         for result in svc_results + svr_results
     )
 
@@ -759,7 +760,7 @@ def test_naive_bayes_uses_gaussian_feature_prefixes_only():
     )
     assert all(isinstance(_base_estimator(result.model), GaussianNB) for result in nb_results)
     assert all(
-        result.artifacts.model_string.startswith("def predict(x):")
+        render(parse(result.artifacts.model_string)) == result.artifacts.model_string
         for result in nb_results
     )
 
@@ -788,12 +789,9 @@ def test_mlp_search_is_internal_bounded_and_serializes_executable_predictor():
 
     model_string = mlp_results[0].artifacts.model_string
 
-    assert "def predict(x):" in model_string
-    assert "W=" in model_string
-    assert "B=" in model_string
-    assert "for l in range(len(W)):" in model_string
-    assert "argmax" not in model_string
-    assert model_string.startswith("P StandardScaler\n")
+    assert "dense(" in model_string
+    assert render(parse(model_string)) == model_string
+    np.testing.assert_array_equal(execute(model_string, X), mlp_results[0].artifacts.predictions)
 
 
 def test_classifier_and_regressor_public_workflows_and_results_columns():

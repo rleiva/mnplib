@@ -591,18 +591,36 @@ returns an independent array aligned with the original series, with NaN in the
 initial lag-window positions. These values are in-sample predictions, not
 held-out forecast performance.
 
-`family_capabilities()` returns fresh records keyed by supported family ID,
-including external-input support, use of future external inputs, forecast
-strategy, and subset semantics. For autoregressive forecasting, omitted future
-external values retain the existing last-observation behavior. ARIMA and
-state-space subsets are `diagnostic_proxy` representations for metric evaluation,
-not literal lag inputs; other families report `lag_inputs`.
+`family_capabilities()` returns independent records with external-input support,
+forecast strategy, subset semantics, and executable-description availability.
+Autoregressive, moving-average, and exponential-smoothing candidates use the
+canonical model language. ARIMA and structural state-space descriptions require
+stateful semantics and are not supported by model-language schema version 1.
+Their searchers report `unsupported_model_description` in `diagnostics_`; a
+search containing only these families raises an explicit error.
 
-Candidate-report `metadata` contains `subset_semantics`. Statsmodels-backed
-candidates additionally expose `converged` and `optimizer_iterations` (null if
-unavailable). `diagnostics_` includes `not_converged` records. Nonconvergence does
-not change candidate ranking; applications can surface it separately from
-representation reliability. Qualitative interpretations belong to the caller.
+### Executable Model Descriptions
+
+```python
+from mnplib import describe_model
+from mnplib.models.language import execute
+
+description = describe_model(fitted_model)
+canonical_text = description.canonical
+predictions = execute(description.ast, X)
+semantic_json = description.to_dict()
+```
+
+Canonical descriptions use an immutable semantic AST, a restricted Lark grammar,
+and one deterministic renderer. Numeric parameters are rounded to three
+significant digits consistently in text, JSON, and execution. Full-precision
+estimator predictions can differ near decision boundaries. Human-readable
+feature names never change canonical text or surfeit.
+
+The JSON schema is `mnplib-model`, version `1`. External applications such as
+Cajal consume the semantic JSON and own presentation. See
+[the model-language guide](examples/SerializerGrammarExamples.md) for syntax,
+supported families, precision, execution safety, and schema details.
 
 ### License
 

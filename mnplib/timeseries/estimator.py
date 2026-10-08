@@ -102,7 +102,6 @@ class TimeSeries(BaseEstimator):
     _VALID_X_TYPES = get_args(XType)
     _VALID_MODELS = get_args(ModelName)
     _VALID_STATE_SPACE_MODELS = ("local_level", "local_linear_trend")
-    _DEFAULT_ARIMA_ORDERS = ((1, 0, 0), (2, 0, 0), (1, 1, 0), (0, 1, 1))
 
     def __init__(
         self,
@@ -162,6 +161,12 @@ class TimeSeries(BaseEstimator):
             if np.isfinite(result.nescience)
         ]
         if not valid_results:
+            if self.diagnostics_ and all(
+                item.get("reason") == "unsupported_model_description"
+                for item in self.diagnostics_
+            ):
+                raise ValueError("ARIMA and state-space executable descriptions are not "
+                                 "supported by model-language schema version 1.")
             raise ValueError(
                 "No time-series candidate with finite nescience could be evaluated."
             )
@@ -197,6 +202,7 @@ class TimeSeries(BaseEstimator):
                 "uses_future_exogenous": family == "autoregressive",
                 "subset_semantics": "diagnostic_proxy" if family in {"arima", "state_space"} else "lag_inputs",
                 "forecast_strategy": "native" if family in {"arima", "state_space"} else "recursive",
+                "executable_description": family not in {"arima", "state_space"},
             }
             for family in cls._VALID_MODELS
         }
@@ -236,7 +242,7 @@ class TimeSeries(BaseEstimator):
 
         y_history = list(np.asarray(self.y_, dtype=float))
         X_history, X_future_array = self._prepare_future_exogenous(steps, X_future)
-        selected = list(result.artifacts.subset)
+        selected = list(result.artifacts.description.feature_indices)
         forecasts: list[float] = []
 
         for step in range(steps):
@@ -387,11 +393,9 @@ class TimeSeries(BaseEstimator):
         context = TimeSeriesSearchContext(
             X=self.X_supervised_,
             y=self.y_supervised_,
-            original_y=self.y_,
             feature_names=tuple(str(name) for name in self.feature_names_in_),
             evaluator=self.evaluator_,
             window_size=self.window_size_,
-            description_precision=6,
             moving_average_windows=(
                 tuple(self._moving_average_windows())
                 if model_names & {"moving_average", "exponential_smoothing"}
@@ -402,21 +406,8 @@ class TimeSeries(BaseEstimator):
                 if "exponential_smoothing" in model_names
                 else tuple()
             ),
-            arima_orders=(
-                tuple(self._arima_orders())
-                if "arima" in model_names
-                else tuple()
-            ),
-            state_space_models=(
-                tuple(self._state_space_models())
-                if "state_space" in model_names
-                else tuple()
-            ),
-            arima_max_iter=int(self._search_options_["arima"].get("max_iter", 50)),
-            state_space_max_iter=int(self._search_options_["state_space"].get("max_iter", 50)),
             min_improvement=float(self._search_options_["autoregressive"].get("min_improvement", 0.0)),
             smoothing_windows=tuple(self._moving_average_windows("exponential_smoothing")),
-            verbose=self.verbose,
         )
 
         for searcher in self.searchers_:
@@ -540,25 +531,6 @@ class TimeSeries(BaseEstimator):
             raise ValueError("All smoothing alphas must lie in the open interval (0, 1).")
         return alphas
 
-    def _arima_orders(self) -> list[tuple[int, int, int]]:
-        configured = self._search_options_["arima"].get("orders")
-        if configured is None:
-            orders = list(self._DEFAULT_ARIMA_ORDERS)
-        else:
-            orders = [tuple(int(value) for value in order) for order in configured]
-        if not orders:
-            raise ValueError("At least one ARIMA order must be configured.")
-        return orders
-
-    def _state_space_models(self) -> list[str]:
-        configured = self._search_options_["state_space"].get("models")
-        if configured is None:
-            return list(self._VALID_STATE_SPACE_MODELS)
-        models = [str(name) for name in configured]
-        if not models:
-            raise ValueError("At least one state-space model must be configured.")
-        return models
-
     def _prepare_future_exogenous(self, steps: int, X_future):
         if self.X_exogenous_ is None:
             return None, None
@@ -646,6 +618,8 @@ class TimeSeries(BaseEstimator):
                 raise ValueError(f"Unknown model names {sorted(unknown)}.")
         arima_orders = self._search_options_["arima"].get("orders")
         if arima_orders is not None:
+            if not arima_orders:
+                raise ValueError("At least one ARIMA order must be configured.")
             for order in arima_orders:
                 try:
                     values = tuple(int(value) for value in order)
@@ -659,6 +633,8 @@ class TimeSeries(BaseEstimator):
                     raise ValueError("ARIMA order values must be non-negative.")
         state_space_models = self._search_options_["state_space"].get("models")
         if state_space_models is not None:
+            if not state_space_models:
+                raise ValueError("At least one state-space model must be configured.")
             unknown_state_models = (
                 set(map(str, state_space_models))
                 - set(self._VALID_STATE_SPACE_MODELS)

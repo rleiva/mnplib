@@ -14,13 +14,6 @@ from sklearn.base import BaseEstimator, RegressorMixin
 from sklearn.utils import check_array
 from sklearn.utils.validation import check_is_fitted
 
-from mnplib.models.serializers.time_series import (
-    TIME_SERIES_SCHEMA,
-    canonical_arima_model_string,
-    canonical_fixed_model_string,
-    canonical_linear_model_string,
-    canonical_state_space_model_string,
-)
 
 class FixedLinearForecaster(BaseEstimator, RegressorMixin):
     """Linear forecaster with fixed user-supplied coefficients.

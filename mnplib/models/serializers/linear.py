@@ -1,287 +1,66 @@
-"""
-Canonical serializers for scikit-learn linear models.
-"""
-
-from __future__ import annotations
+"""Arithmetic ASTs for fitted linear prediction rules."""
 
 import numpy as np
-
-from sklearn.linear_model import LinearRegression, LogisticRegression
-
 from ..._types import ResolvedTask
-from .base import (
-    SklearnSerializer,
-    format_number,
-    require_fitted,
-)
+from sklearn.linear_model import LinearRegression, LogisticRegression
+from .base import SklearnSerializer, require_fitted
+from ..language import Constant, Label, Binary, Conditional, Vector, Classify
+
+
+def linear_expression(coefficients, intercept, features):
+    """Preserve estimator column ordering and exact zero sparsity."""
+    result = Constant(float(intercept))
+    for coefficient, feature in zip(coefficients, features):
+        coefficient = float(coefficient)
+        if coefficient:
+            term = Binary("*", Constant(abs(coefficient)), feature)
+            result = Binary("+" if coefficient > 0 else "-", result, term)
+    return result
+
+
+def linear_outputs(model, features):
+    coefficients = np.asarray(model.coef_)
+    intercepts = np.broadcast_to(np.asarray(model.intercept_).reshape(-1),
+                                 (1 if coefficients.ndim == 1 else len(coefficients),))
+    if coefficients.ndim == 1:
+        return linear_expression(coefficients, intercepts[0], features)
+    return Vector(tuple(linear_expression(coef, intercept, features)
+                        for coef, intercept in zip(coefficients, intercepts)))
+
+
+def classification_rule(model, features):
+    scores = linear_outputs(model, features)
+    labels = tuple(Label(value) for value in model.classes_)
+    if len(labels) == 2 and len(scores.items) == 1:
+        return Conditional(Binary(">", scores.items[0], Constant(0)), labels[1], labels[0])
+    return Classify(scores, labels)
 
 
 class LinearModelSerializer(SklearnSerializer):
-    """
-    Canonical serializer for linear regression estimators.
-    """
-
     name = "linear_model"
     supported_types = (LinearRegression,)
 
     def task(self, model) -> ResolvedTask:
-        """
-        Return the task type of the linear model.
-        """
         return "regression"
 
-    def subset(self, model) -> list[int]:
-        """
-        Return feature indices with non-zero coefficients.
-        """
+    def subset(self, model):
         require_fitted(model)
+        coefficients = np.atleast_2d(model.coef_)
+        return np.flatnonzero(np.any(coefficients != 0, axis=0)).tolist()
 
-        coef = np.asarray(model.coef_, dtype=float)
+    def serialize(self, model, *, features):
+        return linear_outputs(model, features)
 
-        if coef.ndim == 1:
-            used = coef != 0.0
-        else:
-            used = np.any(coef != 0.0, axis=0)
+    def metadata(self, model):
+        return {"n_terms": int(np.count_nonzero(model.coef_))}
 
-        return [int(j) for j in np.flatnonzero(used)]
 
-    def serialize(
-        self,
-        model,
-        *,
-        feature_names: list[str]
-    ) -> str:
-        """
-        Return a canonical string description of the linear model.
-        """
-        require_fitted(model)
-
-        lines = linear_regression_rule_lines(
-                model,
-                feature_names=feature_names
-            )
-
-        return "\n".join(lines) + "\n"
-
-class LogisticRegressionSerializer(SklearnSerializer):
-    """
-    Canonical serializer for logistic regression classifiers.
-    """
-
-    name            = "logistic_regression"
+class LogisticRegressionSerializer(LinearModelSerializer):
+    name = "logistic_regression"
     supported_types = (LogisticRegression,)
 
     def task(self, model) -> ResolvedTask:
-        """
-        Return the task type of logistic regression.
-        """
         return "classification"
 
-    def subset(self, model) -> list[int]:
-        """
-        Return feature indices with non-zero logistic-regression coefficients.
-        """
-        require_fitted(model)
-
-        coef = np.asarray(model.coef_, dtype=float)
-        used = np.any(coef != 0.0, axis=0)
-
-        return [int(j) for j in np.flatnonzero(used)]
-
-    def serialize(self, model, *, feature_names: list[str]) -> str:
-        """
-        Return a canonical string description of logistic regression.
-        """
-        require_fitted(model)
-
-        lines = logistic_regression_rule_lines(
-                model,
-                feature_names=feature_names
-            )
-
-        return "\n".join(lines) + "\n"
-
-def linear_regression_rule_lines(
-    model,
-    *,
-    feature_names: list[str]
-) -> list[str]:
-    """
-    Serialize a linear regression rule.
-    """
-    coef = np.asarray(model.coef_, dtype=float)
-    intercept = np.asarray(model.intercept_, dtype=float)
-    indent = " "
-    lines: list[str] = ["def predict(x):"]
-
-    if coef.ndim == 1:
-        lines.extend(
-            single_output_linear_rule(
-                output_name="y",
-                intercept=float(intercept.reshape(-1)[0]),
-                coefficients=coef,
-                feature_names=feature_names,
-            )
-        )
-        lines.append(f"{indent}return y")
-        return lines
-
-    intercept_values = intercept.reshape(-1)
-
-    for output_index, coefficients in enumerate(coef):
-        output_name = f"y_{output_index}"
-        lines.extend(
-            single_output_linear_rule(
-                output_name=output_name,
-                intercept=float(intercept_values[output_index]),
-                coefficients=coefficients,
-                feature_names=feature_names
-            )
-        )
-
-    outputs = " ".join(f"y_{i}" for i in range(coef.shape[0]))
-    lines.append(f"{indent}return [{outputs}]")
-
-    return lines
-
-
-def single_output_linear_rule(
-    *,
-    output_name: str,
-    intercept: float,
-    coefficients: np.ndarray,
-    feature_names: list[str]
-) -> list[str]:
-    """
-    Serialize one linear output equation.
-    """
-    indent = " "
-    lines = [f"{indent}{output_name} = {format_number(intercept)}"]
-
-    for feature_index, coefficient in enumerate(coefficients):
-        coefficient = float(coefficient)
-        if coefficient == 0.0:
-            continue
-
-        sign = "+=" if coefficient >= 0 else "-="
-        magnitude = format_number(abs(coefficient))
-        feature_reference = _feature_reference(
-            feature_names[feature_index],
-            fallback_index=feature_index,
-        )
-        lines.append(
-            f"{indent}{output_name} {sign} {magnitude}*{feature_reference}"
-        )
-
-    return lines
-
-
-def _feature_reference(feature_name: str, *, fallback_index: int) -> str:
-    """
-    Return an executable positional reference for a compact feature token.
-    """
-    text = str(feature_name)
-    if text.startswith("X") and text[1:].isdigit():
-        return f"x[{int(text[1:])}]"
-
-    return f"x[{int(fallback_index)}]"
-
-
-def logistic_regression_rule_lines(
-    model,
-    *,
-    feature_names: list[str],
-) -> list[str]:
-    """
-    Serialize logistic regression as an executable simplified-Python predictor.
-
-    The generated description defines a function:
-
-        def predict(x):
-            ...
-            return class_index
-
-    The returned value is the zero-based class token.
-    """
-    del feature_names  # Feature names are intentionally not used in model strings.
-
-    coef = np.asarray(model.coef_, dtype=float)
-    intercept = np.asarray(model.intercept_, dtype=float).reshape(-1)
-    classes = list(model.classes_)
-
-    lines: list[str] = ["def predict(x):"]
-    indent = " "
-
-    if len(classes) == 2 and coef.shape[0] == 1:
-        score = _linear_expression(
-            intercept=float(intercept[0]),
-            coefficients=coef[0],
-        )
-
-        lines.append(f"{indent}z={score}")
-        lines.append(f"{indent}if z>0:")
-        lines.append(f"{indent}{indent}return 1")
-        lines.append(f"{indent}return 0")
-
-        return lines
-
-    first_score = _linear_expression(
-        intercept=float(intercept[0]),
-        coefficients=coef[0],
-    )
-
-    lines.append(f"{indent}s0={first_score}")
-    lines.append(f"{indent}best=0")
-    lines.append(f"{indent}best_s=s0")
-
-    for class_index in range(1, len(classes)):
-        score = _linear_expression(
-            intercept=float(intercept[class_index]),
-            coefficients=coef[class_index],
-        )
-
-        lines.append(f"{indent}s{class_index}={score}")
-        lines.append(f"{indent}if s{class_index}>best_s:")
-        lines.append(f"{indent}{indent}best={class_index}")
-        lines.append(f"{indent}{indent}best_s=s{class_index}")
-
-    lines.append(f"{indent}return best")
-
-    return lines
-
-
-def _linear_expression(*, intercept: float, coefficients: np.ndarray) -> str:
-    """
-    Return a compact executable Python expression for a linear score.
-
-    The expression has the form:
-
-        b+w0*x[0]+w1*x[1]+...
-
-    Exactly zero coefficients are omitted before formatting.
-    Numerical formatting is delegated to format_number().
-    """
-    terms: list[str] = []
-
-    if intercept != 0.0:
-        terms.append(format_number(float(intercept)))
-
-    for feature_index, coefficient in enumerate(coefficients):
-        if coefficient == 0.0:
-            continue
-
-        coef_text = format_number(float(coefficient))
-        terms.append(f"{coef_text}*x[{feature_index}]")
-
-    if not terms:
-        return format_number(0.0)
-
-    expression = terms[0]
-
-    for term in terms[1:]:
-        if term.startswith("-"):
-            expression += term
-        else:
-            expression += "+" + term
-
-    return expression
+    def serialize(self, model, *, features):
+        return classification_rule(model, features)

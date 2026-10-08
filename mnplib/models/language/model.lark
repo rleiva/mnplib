@@ -1,0 +1,31 @@
+?start: expr
+?expr: comparison
+     | comparison "if" comparison "else" expr -> conditional
+?comparison: sum
+           | sum CMP sum -> binary
+?sum: product
+    | sum ADD product -> binary
+?product: unary
+        | product MUL unary -> binary
+?unary: power
+      | "-" unary -> negate
+?power: atom
+      | atom POW unary -> binary
+?atom: NUMBER -> number
+     | FEATURE -> feature
+     | "(" expr ")"
+     | vector
+     | "label" "(" ESCAPED_STRING ")" -> label
+     | "at" "(" expr "," NUMBER ")" -> element
+     | "classify" "(" expr "," vector ")" -> classify
+     | "dense" "(" expr "," vector "," vector "," ESCAPED_STRING ")" -> dense
+vector: "[" [expr ("," expr)*] "]"
+CMP: "<=" | ">=" | "==" | "<" | ">"
+ADD: "+" | "-"
+MUL: "*" | "/"
+POW: "**"
+FEATURE: /x(0|[1-9][0-9]*)/
+NUMBER: /(?:[0-9]+(?:\.[0-9]+)?)(?:e[+-][0-9]+)?/
+%import common.ESCAPED_STRING
+%import common.WS
+%ignore WS

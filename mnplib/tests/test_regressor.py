@@ -5,7 +5,6 @@ Tests for the public NescienceRegressor API.
 from __future__ import annotations
 
 import inspect
-import re
 
 import numpy as np
 import pandas as pd
@@ -242,11 +241,8 @@ def test_predict_score_components_explain_and_model_string(regression_data):
 
     assert model_string.strip()
     assert "SCHEMA" not in model_string
-    assert re.search(
-        r"def predict\(x\):|^if\s+|^\s*y\s*=|^P StandardScaler$",
-        model_string,
-        re.MULTILINE,
-    )
+    from mnplib.models.language import parse, render
+    assert render(parse(model_string)) == model_string
 
 
 def test_candidate_model_description_for_best_and_named_candidate(

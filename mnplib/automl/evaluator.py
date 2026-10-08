@@ -9,6 +9,8 @@ from dataclasses import replace
 from typing import Any
 
 from mnplib.models import ModelArtifacts, sklearn_model_artifacts
+from mnplib.models.language import Constant, Feature, Binary
+from mnplib.models.language.transform import substitute_features
 from mnplib.mismodel import mismodel
 
 from .results import CandidateResult
@@ -42,7 +44,7 @@ class CandidateEvaluator:
         feature_indices: Sequence[int] | None = None,
         X_adapter=None,
         result_model=None,
-        model_string_prefix: str | None = None,
+        input_transformer=None,
     ) -> CandidateResult:
         """
         Return a structured result for a fitted candidate model.
@@ -71,8 +73,22 @@ class CandidateEvaluator:
             feature_indices=subset_mapping,
         )
         artifacts = adapter_artifacts
-        if model_string_prefix:
-            artifacts = replace(artifacts, model_string=model_string_prefix.rstrip() + "\n" + artifacts.model_string)
+        if input_transformer is not None:
+            description = artifacts.description
+            replacements = {}
+            for local, (index, feature_name) in enumerate(zip(
+                description.feature_indices, description.feature_names,
+            )):
+                mean = input_transformer.mean_[local] if input_transformer.with_mean else 0.0
+                scale = input_transformer.scale_[local] if input_transformer.with_std else 1.0
+                replacements[index] = Binary(
+                    "/", Binary("-", Feature(index, feature_name), Constant(float(mean))),
+                    Constant(float(scale)),
+                )
+            description = replace(
+                description, ast=substitute_features(description.ast, replacements),
+            )
+            artifacts = replace(artifacts, description=description)
         public_model = model if result_model is None else result_model
 
         return self.evaluate_artifacts(

@@ -12,7 +12,6 @@ from sklearn.neural_network import MLPClassifier, MLPRegressor
 from sklearn.preprocessing import StandardScaler
 
 from mnplib.automl.wrappers import SelectedFeaturesEstimator
-from mnplib.models.serializers.base import feature_token, format_number
 
 from ._feature_order import miscoding_feature_order
 from .base import ModelFamilySearcher, SearchContext, search_report
@@ -228,11 +227,7 @@ class _BaseMLPSearch(ModelFamilySearcher):
             feature_indices=selected,
             X_adapter=X_scaled,
             result_model=public_model,
-            model_string_prefix=self._scaler_model_string(
-                scaler,
-                selected,
-                context.feature_names,
-            ),
+            input_transformer=scaler,
             hyperparameters={
                 "hidden_layer_sizes": state[1],
                 "activation": self.activation,
@@ -289,30 +284,6 @@ class _BaseMLPSearch(ModelFamilySearcher):
             issubclass(warning.category, ConvergenceWarning)
             for warning in caught
         )
-
-    @staticmethod
-    def _scaler_model_string(scaler, selected, feature_names) -> str:
-
-        indent = " "
-
-        lines = [
-            "P StandardScaler",
-        ]
-        for local_index, feature_index in enumerate(selected):
-            token = feature_token(feature_index)
-            mean = float(scaler.mean_[local_index])
-            scale = float(scaler.scale_[local_index])
-            lines.append(
-                "{}{} = ({}-{})/{}".format(
-                    indent,
-                    token,
-                    token,
-                    format_number(mean),
-                    format_number(scale),
-                )
-            )
-        return "\n".join(lines) + "\n"
-
 
 class MLPClassifierSearch(_BaseMLPSearch):
     """

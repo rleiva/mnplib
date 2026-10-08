@@ -16,7 +16,7 @@ from mnplib import (
     Surfeit,
 )
 from mnplib.automl.wrappers import SelectedFeaturesEstimator
-from mnplib.models import inputs, sklearn_model_artifacts
+from mnplib.models import inputs, sklearn_model_artifacts, describe_model
 from mnplib.timeseries.lagged import LaggedRepresentationBuilder
 from mnplib.utils import _resolve_feature_names
 
@@ -128,11 +128,11 @@ def test_model_adapter_resolves_names_after_mapping_selected_columns(monkeypatch
     expected = sklearn_model_artifacts(model, X.iloc[:, selected], feature_indices=selected)
     captured_names = []
 
-    def record_names(model, X, **kwargs):
+    def record_names(model, **kwargs):
         captured_names.append(kwargs["feature_names"])
-        return sklearn_model_artifacts(model, X, **kwargs)
+        return describe_model(model, **kwargs)
 
-    monkeypatch.setattr(inputs, "sklearn_model_artifacts", record_names)
+    monkeypatch.setattr(inputs, "describe_model", record_names)
     metric = Surfeit().fit(X, y)
     description = metric.model_analysis(model, feature_indices=selected, feature_names=explicit_names)
     assert captured_names == [explicit_names if explicit_names is not None else ["c", "a"]]

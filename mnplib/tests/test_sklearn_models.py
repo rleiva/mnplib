@@ -25,12 +25,13 @@ from mnplib.models import (
     ModelArtifacts,
     sklearn_model_artifacts,
 )
-from mnplib.models.serializers.base import format_number
+from mnplib.models.language.render import format_number
+from mnplib.models import ModelDescription
+from mnplib.models.language import Constant, parse, render, execute
 from mnplib.models.serializers.linear import (
     LinearModelSerializer,
     LogisticRegressionSerializer,
 )
-from mnplib.models.serializers.neural_network import MLPSerializer
 from mnplib.models.serializers.tree import DecisionTreeSerializer
 from mnplib.models.sklearn import _find_serializer
 from mnplib.nescience import Nescience
@@ -44,12 +45,8 @@ def _assert_explicit_model_string(model_string: str, original_feature_names=()):
     assert "include_metadata" not in model_string
     assert "RULE" not in model_string
     assert "\t" not in model_string
-    assert re.search(r"\bX\d+\b|x\[\d+\]", model_string)
-    assert re.search(
-        r"def predict\(x\):|^if\s+|^\s*y\s*=|^P StandardScaler$",
-        model_string,
-        re.MULTILINE,
-    )
+    assert re.search(r"\bx\d+\b", model_string)
+    assert render(parse(model_string)) == model_string
     assert re.search(r"\d\.\d{2}e[+-]\d{2}", model_string)
 
     for name in original_feature_names:
@@ -335,8 +332,8 @@ def test_feature_indices_control_compact_tokens_for_selected_adapter_data():
         feature_indices=selected,
     )
 
-    assert "x[2]" in artifacts.model_string
-    assert "x[0]" in artifacts.model_string
+    assert "x2" in artifacts.model_string
+    assert "x0" in artifacts.model_string
     assert "third" not in artifacts.model_string
     assert not hasattr(artifacts, "metadata")
 
@@ -350,7 +347,7 @@ def test_real_values_are_formatted_canonically_in_model_strings():
     )
 
     assert expected_intercept in artifacts.model_string
-    assert re.search(r"x\[\d+\]", artifacts.model_string)
+    assert re.search(r"\bx\d+\b", artifacts.model_string)
     assert not re.search(r"\d+\.\d{4,}", artifacts.model_string)
 
 
@@ -390,8 +387,7 @@ def test_artifacts_to_nescience_kwargs():
     artifacts = ModelArtifacts(
         subset=[0, 2],
         predictions=np.array([1, 0, 1]),
-        model_string="M Test\nT classification\nI X0 X2\nR\n return C1\n",
-        model_type="TestModel",
+        description=ModelDescription("TestModel", Constant(1)),
     )
 
     kwargs = artifacts.to_nescience_kwargs()
@@ -403,7 +399,7 @@ def test_artifacts_to_nescience_kwargs():
 
 @pytest.mark.parametrize("value", [0.0, -0.0])
 def test_number_formatting_normalizes_exact_zero(value):
-    assert format_number(value) == "0"
+    assert format_number(value) == "0.00e+00"
 
 
 @pytest.mark.parametrize("value", [1e-100, -1e-100, np.nextafter(0.0, 1.0)])
@@ -425,12 +421,10 @@ def test_linear_artifacts_omit_only_exact_zero_coefficients(model_type, magnitud
 
     assert artifacts.subset == ([2, 3] if magnitude else [])
     for index in range(4):
-        assert (f"x[{index}]" in artifacts.model_string) == (index in artifacts.subset)
+        assert (f"x{index}" in artifacts.model_string) == (index in artifacts.subset)
     if magnitude:
         assert format_number(magnitude) in artifacts.model_string
-    namespace = {}
-    exec(artifacts.model_string, namespace)
-    predictions = np.asarray([namespace["predict"](row) for row in X])
+    predictions = execute(artifacts.model_string, X)
     np.testing.assert_allclose(predictions, artifacts.predictions, rtol=1e-12, atol=0)
 
 
@@ -453,6 +447,7 @@ def test_mlp_artifacts_keep_small_weights_and_canonical_zero_literals(model_type
     artifacts = sklearn_model_artifacts(model, X)
 
     assert artifacts.subset == [2, 3]
-    assert "[[0,0],[0,0],[1.00e-100,0],[0,-1.00e-100]]" in artifacts.model_string
-    assert "B=[[0,0]," in artifacts.model_string
-    assert MLPSerializer._format_vector(np.array([0.0, -0.0, 1e-100])) == "[0,0,1.00e-100]"
+    assert "1.00e-100" in artifacts.model_string
+    assert "0.00e+00" in artifacts.model_string
+    assert "-0.00e+00" not in artifacts.model_string
+    assert render(parse(artifacts.model_string)) == artifacts.model_string

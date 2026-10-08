@@ -7,7 +7,7 @@ from sklearn.utils.validation import check_is_fitted
 
 from ..utils import _resolve_feature_names
 from .artifacts import ModelArtifacts
-from .sklearn import sklearn_model_artifacts
+from .description import describe_model
 
 
 def model_input(metric, model, *, X=None, feature_indices=None, allow_dummy=False):
@@ -61,12 +61,13 @@ def model_artifacts(metric, model, *, X=None, feature_names=None,
                 return artifacts
             raise ValueError("Forecasting metrics require the fitted lagged evaluation representation.")
         return ModelArtifacts(list(artifacts.subset), np.asarray(model.predict(source)),
-                              artifacts.model_string, artifacts.model_type)
+                              artifacts.description)
     names = feature_names
     if names is None:
         names = getattr(metric, "feature_names_in_", None)
         if names is not None and feature_indices is not None:
             names = [names[index] for index in feature_indices]
     names = _resolve_feature_names(source, feature_names=names)
-    return sklearn_model_artifacts(model, source, feature_names=names,
-                                   feature_indices=feature_indices)
+    description = describe_model(model, feature_names=names, feature_indices=feature_indices)
+    return ModelArtifacts(list(description.metadata["features_used"]),
+                          np.asarray(model.predict(source)), description)

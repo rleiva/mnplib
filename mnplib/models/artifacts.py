@@ -1,48 +1,24 @@
-"""
-Shared artifacts and internal serialization policy for model adapters.
-
-Model metrics share canonical artifacts. Model strings affect surfeit, so the serialization policy is fixed by
-the library and is not exposed as a user preference.
-"""
-
-from __future__ import annotations
+"""Evaluation data paired with an immutable canonical model description."""
 
 from dataclasses import dataclass
-from typing import Any
-
 import numpy as np
+from .description import ModelDescription
+
 
 @dataclass(frozen=True)
 class ModelArtifacts:
-    """
-    Explicit artifacts required to compute model nescience.
+    subset: list[int]
+    predictions: np.ndarray
+    description: ModelDescription
 
-    Parameters
-    ----------
-    subset : list of int
-        Indices of the input features used by the fitted model.
+    @property
+    def model_string(self):
+        return self.description.canonical
 
-    predictions : numpy.ndarray
-        Predictions produced by the model on the evaluation data.
+    @property
+    def model_type(self):
+        return self.description.model_type
 
-    model_string : str
-        Canonical string description of the fitted model.
-
-    model_type : str
-        Name of the estimator class.
-    """
-
-    subset       : list[int]
-    predictions  : np.ndarray
-    model_string : str
-    model_type   : str
-
-    def to_nescience_kwargs(self) -> dict[str, Any]:
-        """
-        Return the keyword arguments expected by the simplified ``Nescience`` API.
-        """
-        return {
-            "subset"       : self.subset,
-            "predictions"  : self.predictions,
-            "model_string" : self.model_string,
-        }
+    def to_nescience_kwargs(self):
+        return {"subset": self.subset, "predictions": self.predictions,
+                "model_string": self.model_string}
