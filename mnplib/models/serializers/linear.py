@@ -14,27 +14,18 @@ def linear_expression(coefficients, intercept, features):
     for coefficient, feature in zip(coefficients, features):
         coefficient = float(coefficient)
         if coefficient:
-            term = Binary("*", Constant(abs(coefficient)), feature)
+            term   = Binary("*", Constant(abs(coefficient)), feature)
             result = Binary("+" if coefficient > 0 else "-", result, term)
     return result
 
 
-def linear_outputs(model, features):
-    coefficients = np.asarray(model.coef_)
-    intercepts = np.broadcast_to(np.asarray(model.intercept_).reshape(-1),
-                                 (1 if coefficients.ndim == 1 else len(coefficients),))
-    if coefficients.ndim == 1:
-        return linear_expression(coefficients, intercepts[0], features)
-    return Vector(tuple(linear_expression(coef, intercept, features)
-                        for coef, intercept in zip(coefficients, intercepts)))
-
-
 def classification_rule(model, features):
-    scores = linear_outputs(model, features)
+    scores = tuple(linear_expression(coef, intercept, features)
+                   for coef, intercept in zip(model.coef_, model.intercept_))
     labels = tuple(Label(value) for value in model.classes_)
-    if len(labels) == 2 and len(scores.items) == 1:
-        return Conditional(Binary(">", scores.items[0], Constant(0)), labels[1], labels[0])
-    return Classify(scores, labels)
+    if len(labels) == 2 and len(scores) == 1:
+        return Conditional(Binary(">", scores[0], Constant(0)), labels[1], labels[0])
+    return Classify(Vector(scores), labels)
 
 
 class LinearModelSerializer(SklearnSerializer):
@@ -50,7 +41,10 @@ class LinearModelSerializer(SklearnSerializer):
         return np.flatnonzero(np.any(coefficients != 0, axis=0)).tolist()
 
     def serialize(self, model, *, features):
-        return linear_outputs(model, features)
+        coefficients = np.asarray(model.coef_)
+        if coefficients.ndim != 1:
+            raise ValueError("Linear regression serialization requires a one-dimensional target.")
+        return linear_expression(coefficients, np.asarray(model.intercept_).item(), features)
 
     def metadata(self, model):
         return {"n_terms": int(np.count_nonzero(model.coef_))}

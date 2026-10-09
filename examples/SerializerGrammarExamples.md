@@ -97,7 +97,7 @@ length and potentially surfeit and model ranking.
 
 ## Supported Families
 
-- LinearRegression: scalar or multi-output affine arithmetic.
+- LinearRegression: affine arithmetic for a one-dimensional target.
 - LogisticRegression and LinearSVC: binary score threshold or class-score maximum.
 - LinearSVR: affine arithmetic.
 - DecisionTreeClassifier and DecisionTreeRegressor: nested conditionals,

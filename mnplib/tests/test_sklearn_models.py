@@ -428,11 +428,14 @@ def test_linear_artifacts_omit_only_exact_zero_coefficients(model_type, magnitud
     np.testing.assert_allclose(predictions, artifacts.predictions, rtol=1e-12, atol=0)
 
 
-def test_multioutput_linear_subset_includes_features_used_by_any_output():
+@pytest.mark.parametrize("model_type", [LogisticRegression, LinearSVC])
+def test_linear_classifier_subset_includes_features_used_by_any_class(model_type):
     X = np.random.default_rng(42).normal(size=(40, 4))
-    model = LinearRegression().fit(X, X[:, :2])
-    model.coef_ = np.array([[0.0, -0.0, 1e-100, 0.0], [0.0, 0.0, 0.0, -1e-100]])
-    assert LinearModelSerializer().subset(model) == [2, 3]
+    model = model_type().fit(X, np.arange(len(X)) % 3)
+    model.coef_ = np.array([[0.0, -0.0, 1e-100, 0.0],
+                            [0.0, 0.0, 0.0, -1e-100],
+                            [0.0, 0.0, 0.0, 0.0]])
+    assert _find_serializer(model).subset(model) == [2, 3]
 
 
 @pytest.mark.parametrize("model_type", [MLPClassifier, MLPRegressor])

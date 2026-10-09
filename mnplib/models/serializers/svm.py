@@ -2,7 +2,7 @@
 
 from sklearn.svm import LinearSVC, LinearSVR
 from ..._types import ResolvedTask
-from .linear import LinearModelSerializer, linear_outputs, classification_rule
+from .linear import LinearModelSerializer, classification_rule
 
 
 class LinearSVMSerializer(LinearModelSerializer):
@@ -15,4 +15,4 @@ class LinearSVMSerializer(LinearModelSerializer):
     def serialize(self, model, *, features):
         if isinstance(model, LinearSVC):
             return classification_rule(model, features)
-        return linear_outputs(model, features)
+        return super().serialize(model, features=features)

@@ -150,7 +150,7 @@ def test_regression_execution_quantization_tolerance(model):
     np.testing.assert_array_equal(execute(description.ast, X), execute(description.canonical, X))
 
 @pytest.mark.parametrize("model", [
-    LinearRegression(), DecisionTreeRegressor(max_depth=2, random_state=42),
+    DecisionTreeRegressor(max_depth=2, random_state=42),
     MLPRegressor(hidden_layer_sizes=(2,), solver="lbfgs", random_state=42, max_iter=1000),
 ])
 def test_multioutput_regression(model):
@@ -158,6 +158,28 @@ def test_multioutput_regression(model):
     model.fit(X, np.column_stack([X[:, 0], 2 * X[:, 1]]))
     description = describe_model(model)
     np.testing.assert_allclose(execute(description.ast, X), model.predict(X), rtol=0.02, atol=0.03)
+
+
+@pytest.mark.parametrize("fit_intercept", [True, False])
+@pytest.mark.parametrize("n_outputs", [1, 2])
+def test_linear_regression_requires_a_one_dimensional_target(fit_intercept, n_outputs):
+    X = np.random.default_rng(4).normal(size=(40, 2))
+    model = LinearRegression(fit_intercept=fit_intercept).fit(X, X[:, :n_outputs])
+    with pytest.raises(ValueError, match="one-dimensional target"):
+        describe_model(model)
+
+
+@pytest.mark.parametrize("fit_intercept", [True, False])
+@pytest.mark.parametrize("model_type", [LinearRegression, LinearSVR])
+def test_single_target_linear_regression_intercepts(model_type, fit_intercept):
+    X = np.tile([[-1., 0.], [0., -1.], [0., 1.], [1., 0.]], (20, 1))
+    y = 2 * X[:, 0] - 0.5 * X[:, 1] + float(fit_intercept)
+    model = model_type(fit_intercept=fit_intercept).fit(X, y)
+    description = describe_model(model)
+    assert not isinstance(description.ast, Vector)
+    predictions = execute(description.ast, X)
+    assert predictions.shape == y.shape
+    np.testing.assert_allclose(predictions, model.predict(X), rtol=0.02, atol=0.03)
 
 def test_intercept_only_and_single_node_models():
     X = np.zeros((5, 2))
