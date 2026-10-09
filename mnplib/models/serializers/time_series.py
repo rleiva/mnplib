@@ -1,17 +1,18 @@
 """AST construction for finite-window linear forecasting rules."""
 
 import numpy as np
+from sklearn.utils.validation import check_is_fitted
 from ..artifacts import ModelArtifacts
 from ..description import ModelDescription
 from ..language import Feature
 from ...utils import _resolve_feature_names
-from .base import resolve_feature_indices, require_fitted
+from .base import resolve_feature_indices
 from .linear import linear_expression
 
 
 def fixed_model_description(model, *, feature_names=None, feature_indices=None):
     """Describe a fitted finite-window forecaster in original lag coordinates."""
-    require_fitted(model)
+    check_is_fitted(model)
     indices = resolve_feature_indices(feature_indices, n_features=int(model.n_features_in_))
     names = _resolve_feature_names(feature_names=feature_names, n_features=len(indices))
     features = tuple(Feature(index, str(name)) for index, name in zip(indices, names))

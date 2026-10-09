@@ -3,7 +3,8 @@
 import numpy as np
 from ..._types import ResolvedTask
 from sklearn.naive_bayes import GaussianNB
-from .base import SklearnSerializer, require_fitted
+from sklearn.utils.validation import check_is_fitted
+from .base import SklearnSerializer
 from ..language import Constant, Label, Binary, Vector, Classify
 
 
@@ -15,7 +16,7 @@ class NaiveBayesSerializer(SklearnSerializer):
         return "classification"
 
     def subset(self, model):
-        require_fitted(model)
+        check_is_fitted(model)
         used = (np.ptp(model.theta_, axis=0) != 0) | (np.ptp(model.var_, axis=0) != 0)
         return np.flatnonzero(used).tolist()
 

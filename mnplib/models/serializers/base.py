@@ -19,7 +19,7 @@ class SklearnSerializer(ABC):
         return isinstance(model, self.supported_types)
 
     def description(self, model, *, feature_names=None, feature_indices=None):
-        require_fitted(model)
+        check_is_fitted(model)
         count = int(model.n_features_in_)
         indices = resolve_feature_indices(feature_indices, n_features=count)
         if feature_names is None:
@@ -69,7 +69,3 @@ def resolve_feature_indices(feature_indices=None, *, n_features):
     if any(index < 0 for index in indices):
         raise ValueError("feature_indices must be non-negative.")
     return indices
-
-
-def require_fitted(model):
-    check_is_fitted(model)

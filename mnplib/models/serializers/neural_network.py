@@ -3,7 +3,8 @@
 import numpy as np
 from ..._types import ResolvedTask
 from sklearn.neural_network import MLPClassifier, MLPRegressor
-from .base import SklearnSerializer, require_fitted
+from sklearn.utils.validation import check_is_fitted
+from .base import SklearnSerializer
 from ..language import Constant, Label, Binary, Conditional, Vector, Element, Dense, Classify
 
 
@@ -15,7 +16,7 @@ class MLPSerializer(SklearnSerializer):
         return "classification" if isinstance(model, MLPClassifier) else "regression"
 
     def subset(self, model):
-        require_fitted(model)
+        check_is_fitted(model)
         if isinstance(model, MLPClassifier) and len(model.classes_) == 1:
             return []
         return np.flatnonzero(np.any(model.coefs_[0] != 0, axis=1)).tolist()
