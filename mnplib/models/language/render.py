@@ -1,77 +1,158 @@
-"""The sole canonical text renderer for model descriptions."""
+"""Render model AST nodes into the canonical text representation."""
 
 import json
+
 from .nodes import (
-    Constant, Label, Feature, Negate, Binary, Conditional,
-    Vector, Element, Classify, Dense,
+    Constant, Label, Feature, Negate, Binary, And,
+    Conditional, Vector, Element, Dense
 )
 from .normalize import normalize
 
-_PRECEDENCE = {"<": 2, "<=": 2, ">": 2, ">=": 2, "==": 2,
-               "+": 3, "-": 3, "*": 4, "/": 4, "**": 6}
+# Higher values bind more tightly.
+_PRECEDENCE = {
+    "<": 3, "<=": 3, ">": 3, ">=": 3, "==": 3,
+    "+": 4, "-": 4,
+    "*": 5, "/": 5,
+    "**": 7,
+}
 
 
 def format_number(value: float) -> str:
-    """Format a canonical finite parameter with three significant digits."""
+    """Return the canonical scientific-notation form of a finite number."""
     return format(0.0 if value == 0 else value, ".2e")
 
 
 def _precedence(node):
+    """Return the precedence level of an AST node."""
     if type(node) is Conditional:
         return 1
+
+    if type(node) is And:
+        return 2
+
     if type(node) is Binary:
         return _PRECEDENCE[node.operator]
-    if type(node) is Negate or (type(node) is Constant and node.value < 0):
-        return 5
-    return 7
+
+    if type(node) is Negate or (
+        type(node) is Constant and node.value < 0
+    ):
+        return 6
+
+    return 8
 
 
 def _child(node, minimum):
+    """Render a child node, adding parentheses when required."""
     text = _render(node)
-    return "(" + text + ")" if _precedence(node) < minimum else text
+
+    if _precedence(node) < minimum:
+        return "(" + text + ")"
+
+    return text
 
 
 def _render(node):
+    """Render a normalized AST node recursively."""
     kind = type(node)
+
     if kind is Constant:
         return format_number(node.value)
+
     if kind is Label:
-        encoded = json.dumps(node.value, ensure_ascii=True, allow_nan=False)
+        encoded = json.dumps(
+            node.value,
+            ensure_ascii=True,
+            allow_nan=False,
+        )
         return "label(" + json.dumps(encoded, ensure_ascii=True) + ")"
+
     if kind is Feature:
         return f"x{node.index}"
+
     if kind is Negate:
-        return "-" + _child(node.operand, 5)
+        return "-" + _child(node.operand, 6)
+
     if kind is Binary:
-        p = _PRECEDENCE[node.operator]
+        precedence = _PRECEDENCE[node.operator]
+
+        # Exponentiation is right-associative.
         if node.operator == "**":
-            left, right = _child(node.left, p + 1), _child(node.right, 5)
-        elif p == 2:
-            left, right = _child(node.left, p + 1), _child(node.right, p + 1)
+            left = _child(node.left, precedence + 1)
+            right = _child(node.right, 6)
+
+        # Comparisons require both operands to bind more tightly.
+        elif precedence == 3:
+            left = _child(node.left, precedence + 1)
+            right = _child(node.right, precedence + 1)
+
         else:
-            left, right = _child(node.left, p), _child(node.right, p + 1)
+            left = _child(node.left, precedence)
+            right = _child(node.right, precedence + 1)
+
         return left + node.operator + right
+
+    if kind is And:
+        return " and ".join(_child(item, 3) for item in node.items)
+
     if kind is Conditional:
-        return (_child(node.if_true, 2) + " if " + _child(node.condition, 2)
-                + " else " + _child(node.if_false, 1))
+        return (
+            _child(node.if_true, 2)
+            + " if "
+            + _child(node.condition, 2)
+            + " else "
+            + _child(node.if_false, 1)
+        )
+
     if kind is Vector:
-        return "[" + ",".join(_render(x) for x in node.items) + "]"
+        return "[" + ",".join(
+            _render(item)
+            for item in node.items
+        ) + "]"
+
     if kind is Element:
-        return "at(" + _render(node.vector) + "," + str(node.index) + ")"
-    if kind is Classify:
-        return "classify(" + _render(node.scores) + "," + _render(Vector(node.labels)) + ")"
+        return (
+            "at("
+            + _render(node.vector)
+            + ","
+            + str(node.index)
+            + ")"
+        )
+
     if kind is Dense:
-        weights = Vector(tuple(Vector(row) for row in node.weights))
-        return ("dense(" + _render(node.inputs) + "," + _render(weights) + ","
-                + _render(Vector(node.bias)) + "," + json.dumps(node.activation) + ")")
-    raise TypeError(f"Unsupported model node: {kind.__name__}")
+        weights = Vector(
+            tuple(
+                Vector(row)
+                for row in node.weights
+            )
+        )
+
+        return (
+            "dense("
+            + _render(node.inputs)
+            + ","
+            + _render(weights)
+            + ","
+            + _render(Vector(node.bias))
+            + ","
+            + json.dumps(node.activation)
+            + ")"
+        )
+
+    raise TypeError(
+        f"Unsupported model node: {kind.__name__}"
+    )
 
 
 def render(node) -> str:
-    """Normalize and render an expression, verifying its grammar round trip."""
+    """Normalize and render an AST, verifying the grammar round trip."""
     from .parse import parse
+
     canonical = normalize(node)
     text = _render(canonical)
+
     if parse(text) != canonical:
-        raise ValueError("Canonical model expression failed its grammar round trip.")
+        raise ValueError(
+            "Canonical model expression failed its grammar round trip."
+        )
+
     return text

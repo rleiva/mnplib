@@ -7,8 +7,8 @@ from lark import Lark, Transformer, UnexpectedInput
 from lark.exceptions import VisitError
 
 from .nodes import (
-    Constant, Label, Feature, Negate, Binary, Conditional,
-    Vector, Element, Classify, Dense,
+    Constant, Label, Feature, Negate, Binary, And, Conditional,
+    Vector, Element, Dense,
 )
 from .normalize import normalize
 
@@ -35,6 +35,9 @@ class _Build(Transformer):
     def conditional(self, values):
         return Conditional(values[1], values[0], values[2])
 
+    def conjunction(self, values):
+        return And(tuple(values))
+
     def vector(self, values):
         return Vector(tuple(values))
 
@@ -46,9 +49,6 @@ class _Build(Transformer):
         if not index.is_integer():
             raise ValueError("Element index must be an integer.")
         return Element(values[0], int(index))
-
-    def classify(self, values):
-        return Classify(values[0], values[1].items)
 
     def dense(self, values):
         if any(type(row) is not Vector for row in values[1].items):

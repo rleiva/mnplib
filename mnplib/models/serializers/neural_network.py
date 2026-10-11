@@ -4,8 +4,8 @@ import numpy as np
 from ..._types import ResolvedTask
 from sklearn.neural_network import MLPClassifier, MLPRegressor
 from sklearn.utils.validation import check_is_fitted
-from .base import SklearnSerializer
-from ..language import Constant, Label, Binary, Conditional, Vector, Element, Dense, Classify
+from .base import SklearnSerializer, score_conditionals
+from ..language import Constant, Label, Binary, Conditional, Vector, Element, Dense
 
 
 class MLPSerializer(SklearnSerializer):
@@ -45,7 +45,8 @@ class MLPSerializer(SklearnSerializer):
                 return Conditional(Binary(">", Element(output, 0), Constant(0)), labels[1], labels[0])
             if model.out_activation_ != "softmax":
                 raise ValueError("Unsupported MLP classification output activation.")
-            return Classify(output, labels)
+            scores = tuple(Element(output, index) for index in range(len(labels)))
+            return score_conditionals(scores, labels)
         if model.out_activation_ != "identity":
             raise ValueError("Unsupported MLP regression output activation.")
         return Element(output, 0) if model.n_outputs_ == 1 else output

@@ -4,8 +4,8 @@ import numpy as np
 from ..._types import ResolvedTask
 from sklearn.naive_bayes import GaussianNB
 from sklearn.utils.validation import check_is_fitted
-from .base import SklearnSerializer
-from ..language import Constant, Label, Binary, Vector, Classify
+from .base import SklearnSerializer, score_conditionals
+from ..language import Constant, Label, Binary
 
 
 class NaiveBayesSerializer(SklearnSerializer):
@@ -33,4 +33,4 @@ class NaiveBayesSerializer(SklearnSerializer):
                 penalty = Binary("/", Binary("**", residual, Constant(2)), Constant(2 * variance))
                 score = Binary("-", score, penalty)
             scores.append(score)
-        return Classify(Vector(tuple(scores)), tuple(Label(value) for value in model.classes_))
+        return score_conditionals(scores, tuple(Label(value) for value in model.classes_))

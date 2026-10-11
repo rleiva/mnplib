@@ -333,7 +333,7 @@ def test_candidate_results_include_subset_reliability_diagnostics():
 @pytest.mark.parametrize("family", ["arima", "state_space"])
 def test_stateful_descriptions_raise_explicit_unsupported_error(family):
     model = TimeSeries(window_size=5, models=[family])
-    with pytest.raises(ValueError, match="not supported.*schema version 1"):
+    with pytest.raises(ValueError, match="not supported.*schema version 2"):
         model.fit(make_series(90))
     assert model.diagnostics_[0]["reason"] == "unsupported_model_description"
 

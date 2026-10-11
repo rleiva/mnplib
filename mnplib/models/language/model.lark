@@ -1,6 +1,8 @@
 ?start: expr
-?expr: comparison
-     | comparison "if" comparison "else" expr -> conditional
+?expr: conjunction
+     | conjunction "if" conjunction "else" expr -> conditional
+?conjunction: comparison
+            | comparison ("and" comparison)+ -> conjunction
 ?comparison: sum
            | sum CMP sum -> binary
 ?sum: product
@@ -17,7 +19,6 @@
      | vector
      | "label" "(" ESCAPED_STRING ")" -> label
      | "at" "(" expr "," NUMBER ")" -> element
-     | "classify" "(" expr "," vector ")" -> classify
      | "dense" "(" expr "," vector "," vector "," ESCAPED_STRING ")" -> dense
 vector: "[" [expr ("," expr)*] "]"
 CMP: "<=" | ">=" | "==" | "<" | ">"

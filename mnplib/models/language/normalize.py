@@ -5,8 +5,8 @@ import math
 from numbers import Integral, Real
 
 from .nodes import (
-    ModelNode, Constant, Label, Feature, Negate, Binary, Conditional,
-    Vector, Element, Classify, Dense,
+    ModelNode, Constant, Label, Feature, Negate, Binary, And, Conditional,
+    Vector, Element, Dense,
 )
 
 OPERATORS = frozenset(("+", "-", "*", "/", "**", "<", "<=", ">", ">=", "=="))
@@ -82,6 +82,14 @@ def normalize(node: ModelNode) -> ModelNode:
         if node.operator == "-" and rv == 0:
             return left
         return Binary(node.operator, left, right)
+    if kind is And:
+        items = []
+        for child in node.items:
+            child = normalize(child)
+            items.extend(child.items if type(child) is And else (child,))
+        if not items:
+            raise ValueError("And requires at least one condition.")
+        return items[0] if len(items) == 1 else And(tuple(items))
     if kind is Conditional:
         return Conditional(*(normalize(x) for x in
                              (node.condition, node.if_true, node.if_false)))
@@ -89,11 +97,6 @@ def normalize(node: ModelNode) -> ModelNode:
         return Vector(tuple(normalize(x) for x in node.items))
     if kind is Element:
         return Element(normalize(node.vector), _index(node.index))
-    if kind is Classify:
-        labels = tuple(normalize(x) for x in node.labels)
-        if not labels or any(type(x) is not Label for x in labels):
-            raise ValueError("Classify requires categorical labels.")
-        return Classify(normalize(node.scores), labels)
     if kind is Dense:
         if node.activation not in ACTIVATIONS:
             raise ValueError(f"Unsupported activation: {node.activation}")

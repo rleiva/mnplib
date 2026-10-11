@@ -4,8 +4,8 @@ import numpy as np
 from ..._types import ResolvedTask
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.utils.validation import check_is_fitted
-from .base import SklearnSerializer
-from ..language import Constant, Label, Binary, Conditional, Vector, Classify
+from .base import SklearnSerializer, score_conditionals
+from ..language import Constant, Label, Binary, Conditional
 
 
 def linear_expression(coefficients, intercept, features):
@@ -25,7 +25,7 @@ def classification_rule(model, features):
     labels = tuple(Label(value) for value in model.classes_)
     if len(labels) == 2 and len(scores) == 1:
         return Conditional(Binary(">", scores[0], Constant(0)), labels[1], labels[0])
-    return Classify(Vector(scores), labels)
+    return score_conditionals(scores, labels)
 
 
 class LinearModelSerializer(SklearnSerializer):

@@ -40,6 +40,11 @@ class Binary(ModelNode):
 
 
 @dataclass(frozen=True)
+class And(ModelNode):
+    items: tuple[ModelNode, ...]
+
+
+@dataclass(frozen=True)
 class Conditional(ModelNode):
     condition: ModelNode
     if_true: ModelNode
@@ -55,13 +60,6 @@ class Vector(ModelNode):
 class Element(ModelNode):
     vector: ModelNode
     index: int
-
-
-@dataclass(frozen=True)
-class Classify(ModelNode):
-    """Choose the first maximal score and return its corresponding label."""
-    scores: ModelNode
-    labels: tuple[Label, ...]
 
 
 @dataclass(frozen=True)

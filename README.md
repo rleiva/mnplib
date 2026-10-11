@@ -595,7 +595,7 @@ held-out forecast performance.
 forecast strategy, subset semantics, and executable-description availability.
 Autoregressive, moving-average, and exponential-smoothing candidates use the
 canonical model language. ARIMA and structural state-space descriptions require
-stateful semantics and are not supported by model-language schema version 1.
+stateful semantics and are not supported by model-language schema version 2.
 Their searchers report `unsupported_model_description` in `diagnostics_`; a
 search containing only these families raises an explicit error.
 

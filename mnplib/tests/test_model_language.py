@@ -18,7 +18,7 @@ from mnplib import describe_model, ModelDescription, Surfeit, Nescience, Mismode
 from mnplib.models import sklearn_model_artifacts
 from mnplib.models.language import (
     ModelNode, Constant, Label, Feature, Negate, Binary, Conditional,
-    Vector, Element, Dense, Classify, normalize, render, parse, execute,
+    Vector, Element, Dense, normalize, render, parse, execute,
     node_to_dict, node_from_dict,
 )
 from mnplib.automl import CandidateEvaluator
@@ -201,7 +201,7 @@ def test_dataframe_names_mapping_and_json_schema():
     assert "a" not in description.canonical
     payload = json.loads(json.dumps(description.to_dict(), allow_nan=False))
     assert payload["schema"] == "mnplib-model"
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == 2
     assert payload["ast"]["type"] == "subtract"
     assert ModelDescription.from_dict(payload).ast == description.ast
     assert payload["metadata"]["features_used"] == [3, 1]
@@ -246,11 +246,6 @@ def test_metric_and_preprocessing_integration():
     )
 
 
-def test_categorical_score_ties_choose_the_first_label():
-    node = Classify(Vector((Constant(1), Constant(1))), (Label("first"), Label("second")))
-    np.testing.assert_array_equal(execute(node, [[0], [1]]), ["first", "first"])
-
-
 def test_description_pickle_preserves_immutable_semantics():
     description = ModelDescription("test", Feature(0, "a"), (0,), ("a",),
                                    {"features_used": [0]})
@@ -261,7 +256,7 @@ def test_description_pickle_preserves_immutable_semantics():
 
 
 @pytest.mark.parametrize("change", [
-    {"schema_version": 2}, {"schema_version": True},
+    {"schema_version": 1}, {"schema_version": 3}, {"schema_version": True},
     {"schema": "other"}, {"canonical": "x1"},
     {"ast": {"type": "arbitrary_function"}},
     {"feature_indices": [-1]},

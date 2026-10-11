@@ -166,7 +166,7 @@ class TimeSeries(BaseEstimator):
                 for item in self.diagnostics_
             ):
                 raise ValueError("ARIMA and state-space executable descriptions are not "
-                                 "supported by model-language schema version 1.")
+                                 "supported by model-language schema version 2.")
             raise ValueError(
                 "No time-series candidate with finite nescience could be evaluated."
             )

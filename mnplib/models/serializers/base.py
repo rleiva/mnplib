@@ -8,7 +8,22 @@ from sklearn.utils.validation import check_is_fitted
 from ...utils import _resolve_feature_names
 from ..artifacts import ModelArtifacts
 from ..description import ModelDescription
-from ..language import Feature
+from ..language import And, Binary, Conditional, Feature
+
+
+def score_conditionals(scores, labels):
+    """Build explicit comparisons, choosing the first label on score ties."""
+    if not labels or len(scores) != len(labels):
+        raise ValueError("Class scores must match a non-empty sequence of labels.")
+    result = labels[-1]
+    for index in reversed(range(len(labels) - 1)):
+        comparisons = tuple(
+            Binary(">=", scores[index], scores[later])
+            for later in range(index + 1, len(labels))
+        )
+        condition = comparisons[0] if len(comparisons) == 1 else And(comparisons)
+        result = Conditional(condition, labels[index], result)
+    return result
 
 
 class SklearnSerializer(ABC):

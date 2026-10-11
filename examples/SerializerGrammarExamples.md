@@ -36,17 +36,18 @@ their `model_string` property is exactly `description.canonical`.
 
 The authoritative Lark grammar is
 `mnplib/models/language/model.lark`. A description is one expression.
-It supports arithmetic, unary negation, comparisons, conditional expressions,
-and vectors. Canonical feature references are `x0`, `x1`, and so on.
+It supports arithmetic, unary negation, comparisons, Boolean conjunction,
+conditional expressions, and vectors. Canonical feature references are `x0`,
+`x1`, and so on. Arithmetic binds more tightly than comparisons, followed by
+`and`, then conditional expressions. Conjunction evaluates to a Boolean vector.
 
-The immutable semantic nodes are Constant, Label, Feature, Negate, Binary,
-Conditional, Vector, Element, Classify, and Dense. Binary operations export
+The immutable semantic nodes are Constant, Label, Feature, Negate, Binary, And,
+Conditional, Vector, Element, and Dense. Binary operations export
 individual semantic names such as `add` and `less_equal`.
 
-Three closed operations avoid duplicating large expression trees:
+Two closed operations represent vector access and network layers:
 
 - `at(vector,index)`: select one output, with an integer structural index.
-- `classify(scores,labels)`: return the label of the first maximum score.
 - `dense(inputs,weights,bias,activation)`: a feed-forward layer. Weights have
   input-by-output shape; activation is one of `identity`, `relu`,
   `logistic`, or `tanh`.
@@ -62,6 +63,28 @@ only declared node types. Feature and vector indices are bounds checked.
 Conditional branches evaluate only on the observations taking that branch.
 External strings always pass through Lark before execution.
 
+### Multiclass Decisions
+
+Class prediction uses explicit comparisons and nested conditional expressions.
+For three class scores `z0`, `z1`, `z2` and corresponding labels `c0`, `c1`, `c2`,
+the decision rule is:
+
+```text
+c0 if z0>=z1 and z0>=z2 else c1 if z1>=z2 else c2
+```
+
+These names are explanatory placeholders: canonical text substitutes each full
+score expression and encodes each categorical value with `label(...)`.
+Earlier classes use `>=` against every later score, so ties select the first
+class. The description repeats the score expressions explicitly; it contains
+no assignments or hidden class-selection operation.
+
+Logistic regression uses linear class scores directly: the largest softmax
+probability has the same index as the largest score
+(`argmax softmax(z) == argmax z`). Computing exponentials or probabilities is
+therefore unnecessary for class prediction. Binary logistic regression uses
+`c1 if z>0 else c0`.
+
 ## Canonicalization
 
 Numerical model parameters are rounded to **three significant digits** before
@@ -75,8 +98,10 @@ parameters. There is no hidden higher-precision prediction path in the language.
 
 Normalization is a single bottom-up pass. It removes multiplication by one or
 zero, addition of zero, subtraction of zero, and double negation. Addition of a
-negative constant becomes subtraction. It does not reorder or regroup terms,
-expand expressions, optimize conditions, or perform symbolic algebra.
+negative constant becomes subtraction. Conjunctions with one item reduce to
+that item; nested conjunctions flatten in their original order. Normalization
+does not reorder arithmetic terms or comparisons, expand expressions, optimize
+conditions, or perform symbolic algebra.
 Parentheses preserve evaluation order and are omitted when precedence permits.
 
 ### Numerical Accuracy
@@ -98,7 +123,8 @@ length and potentially surfeit and model ranking.
 ## Supported Families
 
 - LinearRegression: affine arithmetic for a one-dimensional target.
-- LogisticRegression and LinearSVC: binary score threshold or class-score maximum.
+- LogisticRegression and LinearSVC: binary score threshold or explicit nested
+  class-score comparisons.
 - LinearSVR: affine arithmetic.
 - DecisionTreeClassifier and DecisionTreeRegressor: nested conditionals,
   including scalar and multi-output leaves and actual class labels.
@@ -113,7 +139,7 @@ AutoML StandardScaler preprocessing is represented by feature expressions
 available after subset selection.
 
 ARIMA and structural state-space model serialization are **not supported by
-schema version 1**. These require stateful filter/forecast semantics, including
+schema version 2**. These require stateful filter/forecast semantics, including
 initialization and observation updates. Their searchers produce an
 `unsupported_model_description` diagnostic and do not create scored candidates.
 A search containing only those families raises a clear error. A mixed search
@@ -127,7 +153,7 @@ outside the supported serializer registry.
 ```json
 {
   "schema": "mnplib-model",
-  "schema_version": 1,
+  "schema_version": 2,
   "model_type": "LinearRegression",
   "ast": {
     "type": "multiply",
@@ -142,6 +168,9 @@ outside the supported serializer registry.
 ```
 
 Node type names are semantic, not Python class or module names.
+Conjunction exports as `{"type": "and", "items": [...]}`, preserving condition
+order. Multiclass score-selection expressions contain `conditional`,
+`greater_equal`, `and`, and `label` nodes surrounding their score expressions.
 `ModelDescription.from_dict(payload)` validates the schema, nodes, and
 agreement with any supplied canonical text. An incompatible schema change
 requires a schema-version increment.

@@ -66,9 +66,9 @@ class ModelDescription:
         return (type(self).from_dict, (self.to_dict(),))
 
     def to_dict(self):
-        """Export schema version 1 using stable semantic node names."""
+        """Export schema version 2 using stable semantic node names."""
         return {
-            "schema": "mnplib-model", "schema_version": 1,
+            "schema": "mnplib-model", "schema_version": 2,
             "model_type": self.model_type, "ast": node_to_dict(self.ast),
             "canonical": self.canonical,
             "feature_indices": list(self.feature_indices),
@@ -80,7 +80,7 @@ class ModelDescription:
     def from_dict(cls, data):
         """Import the supported semantic schema and validate its canonical text."""
         if (not isinstance(data, dict) or data.get("schema") != "mnplib-model"
-                or type(data.get("schema_version")) is not int or data["schema_version"] != 1):
+                or type(data.get("schema_version")) is not int or data["schema_version"] != 2):
             raise ValueError("Unsupported model-description schema or version.")
         result = cls(data["model_type"], node_from_dict(data["ast"]),
                      tuple(data.get("feature_indices", ())),
@@ -95,7 +95,7 @@ def describe_model(model, *, feature_names=None, feature_indices=None):
     from ..timeseries.models import FixedLinearForecaster, StatsmodelsForecastModel
     if isinstance(model, StatsmodelsForecastModel):
         raise ValueError("Stateful ARIMA and state-space descriptions are not supported "
-                         "by model-language schema version 1.")
+                         "by model-language schema version 2.")
     if isinstance(model, FixedLinearForecaster):
         from .serializers.time_series import fixed_model_description
         return fixed_model_description(model, feature_names=feature_names,
@@ -104,6 +104,7 @@ def describe_model(model, *, feature_names=None, feature_indices=None):
         if feature_names is not None or feature_indices is not None:
             raise ValueError("AutoML descriptions already carry their fitted feature mapping.")
         return model.best_artifacts_.description
+    
     from .sklearn import _find_serializer
     return _find_serializer(model).description(
         model, feature_names=feature_names, feature_indices=feature_indices,

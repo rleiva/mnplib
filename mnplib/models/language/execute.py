@@ -4,8 +4,8 @@ import operator
 import numpy as np
 
 from .nodes import (
-    ModelNode, Constant, Label, Feature, Negate, Binary, Conditional,
-    Vector, Element, Classify, Dense,
+    ModelNode, Constant, Label, Feature, Negate, Binary, And, Conditional,
+    Vector, Element, Dense,
 )
 from .normalize import normalize
 from .parse import parse
@@ -40,6 +40,14 @@ def execute(description, X):
             return -visit(item.operand, rows)
         if kind is Binary:
             return _OPERATIONS[item.operator](visit(item.left, rows), visit(item.right, rows))
+        if kind is And:
+            result = np.ones(len(rows), dtype=bool)
+            for child in item.items:
+                condition = np.asarray(visit(child, rows), dtype=bool)
+                if condition.ndim != 1:
+                    raise ValueError("A condition must provide one value per observation.")
+                result = np.logical_and(result, condition)
+            return result
         if kind is Vector:
             if not item.items:
                 return np.empty((len(rows), 0))
@@ -59,12 +67,6 @@ def execute(description, X):
             if value.ndim != 2 or item.index >= value.shape[1]:
                 raise ValueError("Element index is out of bounds.")
             return value[:, item.index]
-        if kind is Classify:
-            scores = visit(item.scores, rows)
-            if scores.ndim != 2 or scores.shape[1] != len(item.labels):
-                raise ValueError("Class scores must match the number of labels.")
-            labels = np.asarray([label.value for label in item.labels])
-            return labels[np.argmax(scores, axis=1)]
         if kind is Dense:
             inputs = visit(item.inputs, rows)
             weights = np.asarray([[x.value for x in row] for row in item.weights])
