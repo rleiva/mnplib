@@ -36,32 +36,96 @@ their `model_string` property is exactly `description.canonical`.
 
 The authoritative Lark grammar is
 `mnplib/models/language/model.lark`. A description is one expression.
-It supports arithmetic, unary negation, comparisons, Boolean conjunction,
-conditional expressions, and vectors. Canonical feature references are `x0`,
+It supports arithmetic, unary negation, exponentials, comparisons, Boolean
+conjunction, conditional expressions, vectors, and bounded iteration.
+Canonical feature references are `x0`,
 `x1`, and so on. Arithmetic binds more tightly than comparisons, followed by
 `and`, then conditional expressions. Conjunction evaluates to a Boolean vector.
 
-The immutable semantic nodes are Constant, Label, Feature, Negate, Binary, And,
-Conditional, Vector, Element, and Dense. Binary operations export
+The immutable semantic nodes are Constant, Label, Feature, Negate, Exp, Binary,
+And, Conditional, Vector, Element, Index, Sum, and Comprehension. Binary operations export
 individual semantic names such as `add` and `less_equal`.
 
-Two closed operations represent vector access and network layers:
+Vector access and exponentials have fixed meanings:
 
-- `at(vector,index)`: select one output, with an integer structural index.
-- `dense(inputs,weights,bias,activation)`: a feed-forward layer. Weights have
-  input-by-output shape; activation is one of `identity`, `relu`,
-  `logistic`, or `tanh`.
+- `at(vector,index)`: select one element using a non-negative integer or a bound
+  iteration index. Nested access selects entries in explicit parameter matrices.
+- `exp(expression)`: the natural exponential, applied elementwise.
 
 `label(encoded_json_string)` represents a categorical scalar exactly.
 For example, `label("123456")` preserves an integer category, while
 `label("\\"species A\\"")` preserves a string category. Labels are identities,
 not numerical model parameters, and are not rounded.
 
-No arbitrary functions, attributes, imports, assignments, mutation, loops,
-comprehensions, or Python evaluation are accepted. The interpreter dispatches
+No arbitrary functions, attributes, imports, assignments, mutation, loop
+statements, arbitrary iterables, or Python evaluation are accepted. The interpreter dispatches
 only declared node types. Feature and vector indices are bounds checked.
 Conditional branches evaluate only on the observations taking that branch.
 External strings always pass through Lark before execution.
+
+### Bounded Iteration
+
+`Sum(index, size, expression)` performs repeated accumulation. Its canonical
+form is `sum(expression for i in range(N))`. `Comprehension` performs repeated
+vector construction and renders as `[expression for j in range(N)]`.
+`N` must be a literal non-negative integer; dynamic bounds, multiple range
+arguments, filters, and arbitrary collections are not accepted.
+
+Each iteration introduces exactly one integer index in its expression.
+Names match `[a-z][a-z0-9_]*`, excluding Python keywords, language function names,
+and feature tokens such as `x0`. Indices must be bound by an enclosing iteration.
+Nested reuse of an index name is rejected; sibling expressions may reuse names.
+No other variable binding is available. Bounds and index values are exact
+integers, unaffected by parameter quantization.
+
+For example, this self-contained expression multiplies two explicit weights
+by two input features:
+
+```python
+from mnplib.models.language import execute, parse, render
+
+text = "sum(at([2.00e+00,3.00e+00],i)*at([x0,x1],i) for i in range(2))"
+expression = parse(text)
+assert render(expression) == text
+assert execute(expression, [[1., 2.]]).tolist() == [8.0]
+```
+
+Nested `Sum` and `Comprehension` express whole layers. With `w`, `b`, and `x`
+standing for explicit vectors, the structure is:
+
+```text
+[at(b,j)+sum(at(at(w,j),i)*at(x,i) for i in range(3)) for j in range(2)]
+```
+
+Here `w` is output-by-input. Canonical text contains the actual parameter
+vectors and feature expressions in place of these explanatory names.
+Execution returns one result per observation; each comprehension adds a vector
+axis after the observation axis. `at` selects along that axis and evaluates
+only the requested element of a vector or comprehension. A sum accumulates in
+increasing index order. A zero-size sum returns zero; a zero-size comprehension
+returns an empty vector. Bounds are finite but are not a runtime resource quota.
+
+The Theory of Nescience treats descriptions as executable procedures. Bounded
+iteration expresses genuine algorithmic regularity without repeating every
+operation in the text. The fitted parameters remain explicit; only repeated
+computational structure is compact. Surfeit measures this canonical program,
+without metadata or application formatting.
+
+### Neural Networks
+
+Every network layer is a `Comprehension`, and each neuron accumulates its
+weighted inputs with `Sum`. Layer-specific names `i0`, `j0`, `i1`, `j1`, and so
+on keep nested scopes distinct. This representation is deterministic and does
+not depend on which alternative string happens to be shorter.
+
+Hidden identity outputs use the score itself. ReLU uses `z if z>0 else 0`.
+Sigmoid uses arithmetic equivalent to `1/(1+exp(-z))`, and tanh uses arithmetic
+equivalent to `(exp(2*z)-1)/(exp(2*z)+1)`. The serialized expressions branch on
+the sign of `z` to keep exponential arguments non-positive. `z` is an
+explanatory placeholder for the full neuron expression, not a local variable.
+Regression returns the numeric output. Binary classification thresholds the
+final score at zero; multiclass classification compares the final scores
+directly without computing probabilities.
 
 ### Multiclass Decisions
 
@@ -99,9 +163,11 @@ parameters. There is no hidden higher-precision prediction path in the language.
 Normalization is a single bottom-up pass. It removes multiplication by one or
 zero, addition of zero, subtraction of zero, and double negation. Addition of a
 negative constant becomes subtraction. Conjunctions with one item reduce to
-that item; nested conjunctions flatten in their original order. Normalization
+that item; nested conjunctions flatten in their original order. Zero-size sums
+and comprehensions reduce to zero and an empty vector after validating their
+bodies. Normalization
 does not reorder arithmetic terms or comparisons, expand expressions, optimize
-conditions, or perform symbolic algebra.
+conditions, unroll iteration, or perform symbolic algebra.
 Parentheses preserve evaluation order and are omitted when precedence permits.
 
 ### Numerical Accuracy
@@ -129,7 +195,7 @@ length and potentially surfeit and model ranking.
 - DecisionTreeClassifier and DecisionTreeRegressor: nested conditionals,
   including scalar and multi-output leaves and actual class labels.
 - GaussianNB: arithmetic log-class scores with precomputed logarithmic constants.
-- MLPClassifier and MLPRegressor: closed dense-layer composition, including
+- MLPClassifier and MLPRegressor: bounded neuron sums and layer comprehensions, including
   multi-output regression. Multilabel classification is unsupported.
 - Finite-window autoregression, moving averages, and exponential smoothing:
   affine arithmetic over lag columns.
@@ -139,7 +205,7 @@ AutoML StandardScaler preprocessing is represented by feature expressions
 available after subset selection.
 
 ARIMA and structural state-space model serialization are **not supported by
-schema version 2**. These require stateful filter/forecast semantics, including
+schema version 3**. These require stateful filter/forecast semantics, including
 initialization and observation updates. Their searchers produce an
 `unsupported_model_description` diagnostic and do not create scored candidates.
 A search containing only those families raises a clear error. A mixed search
@@ -153,7 +219,7 @@ outside the supported serializer registry.
 ```json
 {
   "schema": "mnplib-model",
-  "schema_version": 2,
+  "schema_version": 3,
   "model_type": "LinearRegression",
   "ast": {
     "type": "multiply",
@@ -171,13 +237,18 @@ Node type names are semantic, not Python class or module names.
 Conjunction exports as `{"type": "and", "items": [...]}`, preserving condition
 order. Multiclass score-selection expressions contain `conditional`,
 `greater_equal`, `and`, and `label` nodes surrounding their score expressions.
+Iteration nodes use `{"type": "sum", "index": "i", "size": 3, "expression": ...}`
+and the corresponding `comprehension` type. Bound references use
+`{"type": "index", "name": "i"}`. An `element` index is either an integer or
+an `index` node. Exponentials use `{"type": "exp", "operand": ...}`.
 `ModelDescription.from_dict(payload)` validates the schema, nodes, and
 agreement with any supplied canonical text. An incompatible schema change
 requires a schema-version increment.
 
 Human-readable names are metadata and never alter canonical text. Tree
 metadata includes depth, node count, and leaf count; linear metadata includes
-term count. Dense nodes export weights, biases, activation, and input semantics.
+term count. Network parameters appear as ordinary constants and vectors in
+their executable expressions.
 Prediction vectors are not part of model JSON.
 
 mnplib owns semantic ASTs and computational metadata. Cajal and other

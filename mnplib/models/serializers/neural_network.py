@@ -1,11 +1,35 @@
-"""Feed-forward network semantics with explicitly bounded layer operations."""
+"""Feed-forward prediction rules using bounded sums and vector construction."""
 
 import numpy as np
 from ..._types import ResolvedTask
 from sklearn.neural_network import MLPClassifier, MLPRegressor
 from sklearn.utils.validation import check_is_fitted
 from .base import SklearnSerializer, score_conditionals
-from ..language import Constant, Label, Binary, Conditional, Vector, Element, Dense
+from ..language import (
+    Constant, Label, Binary, Conditional, Vector, Element,
+    Index, Sum, Comprehension, Exp, Negate,
+)
+
+
+def _activation_expression(score, activation):
+    """Express hidden-layer arithmetic with non-positive exponential arguments."""
+    zero, one = Constant(0), Constant(1)
+    if activation == "identity":
+        return score
+    if activation == "relu":
+        return Conditional(Binary(">", score, zero), score, zero)
+    if activation == "logistic":
+        positive = Binary("/", one, Binary("+", one, Exp(Negate(score))))
+        exponential = Exp(score)
+        negative = Binary("/", exponential, Binary("+", one, exponential))
+        return Conditional(Binary(">=", score, zero), positive, negative)
+    if activation == "tanh":
+        positive_exp = Exp(Binary("*", Constant(-2), score))
+        negative_exp = Exp(Binary("*", Constant(2), score))
+        positive = Binary("/", Binary("-", one, positive_exp), Binary("+", one, positive_exp))
+        negative = Binary("/", Binary("-", negative_exp, one), Binary("+", negative_exp, one))
+        return Conditional(Binary(">=", score, zero), positive, negative)
+    raise ValueError(f"Unsupported MLP activation: {activation}.")
 
 
 class MLPSerializer(SklearnSerializer):
@@ -35,10 +59,18 @@ class MLPSerializer(SklearnSerializer):
         for index, (weights, bias) in enumerate(zip(model.coefs_, model.intercepts_)):
             last = index == len(model.coefs_) - 1
             activation = "identity" if last else model.activation
-            output = Dense(
-                output, tuple(tuple(Constant(float(x)) for x in row) for row in weights),
-                tuple(Constant(float(x)) for x in bias), activation,
-            )
+            input_index, output_index = Index(f"i{index}"), Index(f"j{index}")
+            parameters = Vector(tuple(
+                Vector(tuple(Constant(float(value)) for value in row))
+                for row in weights.T
+            ))
+            biases = Vector(tuple(Constant(float(value)) for value in bias))
+            product = Binary("*", Element(Element(parameters, output_index), input_index),
+                             Element(output, input_index))
+            score = Binary("+", Element(biases, output_index),
+                           Sum(input_index.name, weights.shape[0], product))
+            output = Comprehension(output_index.name, weights.shape[1],
+                                   _activation_expression(score, activation))
         if classification:
             labels = tuple(Label(value) for value in model.classes_)
             if model.out_activation_ == "logistic" and model.n_outputs_ == 1:

@@ -789,7 +789,8 @@ def test_mlp_search_is_internal_bounded_and_serializes_executable_predictor():
 
     model_string = mlp_results[0].artifacts.model_string
 
-    assert "dense(" in model_string
+    assert "sum(" in model_string
+    assert " for j0 in range(" in model_string
     assert render(parse(model_string)) == model_string
     np.testing.assert_array_equal(execute(model_string, X), mlp_results[0].artifacts.predictions)
 

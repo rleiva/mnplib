@@ -8,7 +8,7 @@ from lark.exceptions import VisitError
 
 from .nodes import (
     Constant, Label, Feature, Negate, Binary, And, Conditional,
-    Vector, Element, Dense,
+    Vector, Element, Index, Sum, Comprehension, Exp,
 )
 from .normalize import normalize
 
@@ -25,6 +25,21 @@ class _Build(Transformer):
 
     def feature(self, values):
         return Feature(int(str(values[0])[1:]))
+
+    def index(self, values):
+        return Index(str(values[0]))
+
+    def literal_index(self, values):
+        return int(values[0])
+
+    def bounded_sum(self, values):
+        return Sum(str(values[1]), int(values[2]), values[0])
+
+    def comprehension(self, values):
+        return Comprehension(str(values[1]), int(values[2]), values[0])
+
+    def exponential(self, values):
+        return Exp(values[0])
 
     def negate(self, values):
         return Negate(values[0])
@@ -45,16 +60,7 @@ class _Build(Transformer):
         return Label(json.loads(json.loads(values[0])))
 
     def element(self, values):
-        index = float(values[1])
-        if not index.is_integer():
-            raise ValueError("Element index must be an integer.")
-        return Element(values[0], int(index))
-
-    def dense(self, values):
-        if any(type(row) is not Vector for row in values[1].items):
-            raise ValueError("Dense weights must be a matrix.")
-        return Dense(values[0], tuple(row.items for row in values[1].items),
-                     values[2].items, json.loads(values[3]))
+        return Element(values[0], values[1])
 
 
 def parse(text: str):

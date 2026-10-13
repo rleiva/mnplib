@@ -33,6 +33,11 @@ class Negate(ModelNode):
 
 
 @dataclass(frozen=True)
+class Exp(ModelNode):
+    operand: ModelNode
+
+
+@dataclass(frozen=True)
 class Binary(ModelNode):
     operator: Arithmetic
     left: ModelNode
@@ -57,15 +62,25 @@ class Vector(ModelNode):
 
 
 @dataclass(frozen=True)
-class Element(ModelNode):
-    vector: ModelNode
-    index: int
+class Index(ModelNode):
+    name: str
 
 
 @dataclass(frozen=True)
-class Dense(ModelNode):
-    """A feed-forward layer with input-by-output weights and fixed activation."""
-    inputs: ModelNode
-    weights: tuple[tuple[Constant, ...], ...]
-    bias: tuple[Constant, ...]
-    activation: str
+class Element(ModelNode):
+    vector: ModelNode
+    index: int | Index
+
+
+@dataclass(frozen=True)
+class Sum(ModelNode):
+    index: str
+    size: int
+    expression: ModelNode
+
+
+@dataclass(frozen=True)
+class Comprehension(ModelNode):
+    index: str
+    size: int
+    expression: ModelNode

@@ -15,17 +15,24 @@
       | atom POW unary -> binary
 ?atom: NUMBER -> number
      | FEATURE -> feature
+     | INDEX -> index
      | "(" expr ")"
      | vector
+     | "sum" "(" expr "for" INDEX "in" "range" "(" INTEGER ")" ")" -> bounded_sum
+     | "[" expr "for" INDEX "in" "range" "(" INTEGER ")" "]" -> comprehension
      | "label" "(" ESCAPED_STRING ")" -> label
-     | "at" "(" expr "," NUMBER ")" -> element
-     | "dense" "(" expr "," vector "," vector "," ESCAPED_STRING ")" -> dense
+     | "at" "(" expr "," element_index ")" -> element
+     | "exp" "(" expr ")" -> exponential
+?element_index: INTEGER -> literal_index
+              | INDEX -> index
 vector: "[" [expr ("," expr)*] "]"
 CMP: "<=" | ">=" | "==" | "<" | ">"
 ADD: "+" | "-"
 MUL: "*" | "/"
 POW: "**"
-FEATURE: /x(0|[1-9][0-9]*)/
+FEATURE.2: /x(0|[1-9][0-9]*)(?![a-z0-9_])/
+INDEX: /[a-z][a-z0-9_]*/
+INTEGER: /0|[1-9][0-9]*/
 NUMBER: /(?:[0-9]+(?:\.[0-9]+)?)(?:e[+-][0-9]+)?/
 %import common.ESCAPED_STRING
 %import common.WS

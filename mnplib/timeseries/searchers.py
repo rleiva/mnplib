@@ -163,7 +163,7 @@ class ExponentialSmoothingSearcher(ModelFamilySearcher):
 
 
 class ARIMASearcher(ModelFamilySearcher):
-    """Report that stateful ARIMA descriptions are outside schema version 2."""
+    """Report that stateful ARIMA descriptions are outside schema version 3."""
 
     family = "arima"
 
@@ -172,7 +172,7 @@ class ARIMASearcher(ModelFamilySearcher):
             "family": self.family,
             "reason": "unsupported_model_description",
             "error": f"{self.family} requires a stateful executable description; "
-                     "model-language schema version 2 does not support it.",
+                     "model-language schema version 3 does not support it.",
         }])
 
 
@@ -231,7 +231,7 @@ def candidate_metadata(
     selected = tuple(int(index) for index in selected)
     metadata: dict[str, object] = {
         "schema": "mnplib-model",
-        "schema_version": 2,
+        "schema_version": 3,
         "family": str(family),
         "model_name": str(model_name),
         "window_size": int(context.window_size),

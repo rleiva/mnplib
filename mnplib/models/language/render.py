@@ -4,7 +4,7 @@ import json
 
 from .nodes import (
     Constant, Label, Feature, Negate, Binary, And,
-    Conditional, Vector, Element, Dense
+    Conditional, Vector, Element, Index, Sum, Comprehension, Exp
 )
 from .normalize import normalize
 
@@ -69,6 +69,16 @@ def _render(node):
     if kind is Feature:
         return f"x{node.index}"
 
+    if kind is Index:
+        return node.name
+
+    if kind is Exp:
+        return "exp(" + _render(node.operand) + ")"
+
+    if kind in (Sum, Comprehension):
+        body = _render(node.expression) + f" for {node.index} in range({node.size})"
+        return "sum(" + body + ")" if kind is Sum else "[" + body + "]"
+
     if kind is Negate:
         return "-" + _child(node.operand, 6)
 
@@ -114,27 +124,7 @@ def _render(node):
             "at("
             + _render(node.vector)
             + ","
-            + str(node.index)
-            + ")"
-        )
-
-    if kind is Dense:
-        weights = Vector(
-            tuple(
-                Vector(row)
-                for row in node.weights
-            )
-        )
-
-        return (
-            "dense("
-            + _render(node.inputs)
-            + ","
-            + _render(weights)
-            + ","
-            + _render(Vector(node.bias))
-            + ","
-            + json.dumps(node.activation)
+            + (_render(node.index) if type(node.index) is Index else str(node.index))
             + ")"
         )
 
