@@ -169,6 +169,9 @@ def test_candidate_hyperparameters_are_shared_by_reports(family, options, parame
     assert report["hyperparameters"] == parameters
     assert ts.results_dataframe().iloc[0]["hyperparameters"] == parameters
     assert not parameters.keys() & ts.best_result_.metadata.keys()
+    assert "schema" not in ts.best_result_.metadata
+    assert "schema_version" not in ts.best_result_.metadata
+    assert not parameters.keys() & ts.best_artifacts_.description.metadata.keys()
 
 
 def test_lag_analysis_methods_without_exogenous_data():

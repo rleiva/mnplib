@@ -6,7 +6,7 @@ from numbers import Integral
 import numpy as np
 from sklearn.utils.validation import check_is_fitted
 from ...utils import _resolve_feature_names
-from ..artifacts import ModelArtifacts
+from ..artifacts import ModelArtifacts, _fitted_subset
 from ..description import ModelDescription
 from ..language import And, Binary, Conditional, Feature
 
@@ -49,7 +49,7 @@ class SklearnSerializer(ABC):
         names    = _resolve_feature_names(feature_names=feature_names, n_features=count)
         features = tuple(Feature(index, str(name)) for index, name in zip(indices, names))
         subset   = [indices[index] for index in self.subset(model)]
-        metadata = {"features_used": subset, **self.metadata(model)}
+        metadata = {**self.metadata(model), "features_used": subset}
 
         return ModelDescription(
             type(model).__name__,
@@ -71,13 +71,13 @@ class SklearnSerializer(ABC):
         )
 
         return ModelArtifacts(
-            list(description.metadata["features_used"]),
+            _fitted_subset(model, description.feature_indices),
             np.asarray(model.predict(X)),
             description,
         )
 
     def metadata(self, model):
-        """Return model-specific metadata."""
+        """Return compact descriptive hints, never execution or scoring inputs."""
         return {}
 
     @abstractmethod

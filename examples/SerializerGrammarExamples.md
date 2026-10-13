@@ -245,12 +245,88 @@ an `index` node. Exponentials use `{"type": "exp", "operand": ...}`.
 agreement with any supplied canonical text. An incompatible schema change
 requires a schema-version increment.
 
-Human-readable names are metadata and never alter canonical text. Tree
-metadata includes depth, node count, and leaf count; linear metadata includes
-term count. Network parameters appear as ordinary constants and vectors in
-their executable expressions.
+Human-readable feature names never alter canonical text. Network parameters
+appear as ordinary constants and vectors in their executable expressions.
 Prediction vectors are not part of model JSON.
 
-mnplib owns semantic ASTs and computational metadata. Cajal and other
-applications consume this JSON and own all presentation decisions; they need
-neither sklearn objects nor a canonical-text parser.
+## Model Metadata
+
+- **AST:** the authoritative executable description.
+- **Model metadata:** compact semantic hints and lightweight summaries.
+- **Search metadata:** candidate-generation and training information.
+
+Metadata is descriptive. It does not affect execution, predictions, canonical
+rendering, Surfeit, Mismodel, or Nescience. If a hint disagrees with the AST, the
+AST determines the computation. Metadata can be omitted without changing these
+results. External applications may use hints to choose a human-readable
+presentation, but must not use them to reconstruct execution semantics.
+
+For example, Cajal can label a hidden activation as ReLU without recognizing
+equivalent conditional arithmetic. It can derive a comprehension's width or a
+sum's range directly from the AST, so those sizes need no additional metadata.
+
+`model_type` is a first-class description field, not a metadata key.
+`features_used` appears once in metadata as a reporting summary in original
+feature coordinates. Evaluation artifacts determine their effective input
+subset independently from fitted prediction parameters, never from this hint.
+
+The serializers provide the following additional fields:
+
+| Family | Metadata | Purpose |
+| --- | --- | --- |
+| LinearRegression | `n_terms` | Cheap nonzero coefficient count |
+| LogisticRegression | `n_terms`, `n_classes` | Term count and fitted class count |
+| GaussianNB | `distribution`, `n_classes` | Distribution semantics and fitted class count |
+| Decision trees | `depth`, `n_nodes`, `n_leaves` | Lightweight cached structural summaries |
+| LinearSVC | `kernel`, `n_terms`, `n_classes` | Linear kernel semantics, term and class counts |
+| LinearSVR | `kernel`, `n_terms` | Linear kernel semantics and term count |
+| MLP | `hidden_layer_sizes`, `activations`; classifier also `n_classes` | Fitted architecture and activation semantics |
+| FixedLinearForecaster | `n_terms` | Cheap nonzero lag coefficient count |
+
+For an MLPRegressor with two ReLU hidden layers, the architecture hints are:
+
+```json
+{
+  "hidden_layer_sizes": [16, 8],
+  "activations": ["relu", "relu", "identity"]
+}
+```
+
+`activations` lists the fitted hidden activations followed by the fitted output
+activation: `"identity"` for regression, `"logistic"` for binary classification,
+or `"softmax"` for multiclass classification. The classification AST can compare
+untransformed final scores to select the same class without computing output
+probabilities. The hint preserves that semantic intent without introducing
+executable activation primitives or duplicating weight matrices and bias vectors.
+
+A three-class LinearSVC with twelve nonzero coefficients provides:
+
+```json
+{
+  "kernel": "linear",
+  "n_terms": 12,
+  "n_classes": 3
+}
+```
+
+Only LinearSVC and LinearSVR are supported SVM serializers. These estimators do
+not expose support vectors, so `n_support_vectors` is not reported. Nonlinear
+kernel models are not supported. GaussianNB is the supported Naive Bayes
+variant, with hints such as:
+
+```json
+{
+  "distribution": "gaussian",
+  "n_classes": 3
+}
+```
+
+Each example omits the common `features_used` field for brevity. Coefficients,
+intercepts, tree thresholds, probability tables, and network parameters belong
+to the AST, not metadata. Search parameters such as `C`, `solver`, `max_iter`,
+`ccp_alpha`, candidate names, and convergence diagnostics remain in candidate
+results, separate from `ModelDescription.metadata`.
+
+mnplib owns the ASTs and their semantic hints. Cajal and other applications
+consume this JSON and own all presentation decisions; they need neither
+sklearn objects nor a canonical-text parser.

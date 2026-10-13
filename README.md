@@ -617,8 +617,13 @@ significant digits consistently in text, JSON, and execution. Full-precision
 estimator predictions can differ near decision boundaries. Human-readable
 feature names never change canonical text or surfeit.
 
-The JSON schema is `mnplib-model`, version `1`. External applications such as
-Cajal consume the semantic JSON and own presentation. See
+The JSON schema is `mnplib-model`, version `3`. The AST is the authoritative
+executable description. Model metadata contains compact semantic hints, such as
+distribution, kernel, class count, or activation structure, plus lightweight
+summaries. Metadata never controls execution, canonical text, or metric scores.
+Search metadata separately records how candidates were obtained. External
+applications such as Cajal may use these hints for presentation, without
+reconstructing computation from them. See
 [the model-language guide](examples/SerializerGrammarExamples.md) for syntax,
 supported families, precision, execution safety, and schema details.
 

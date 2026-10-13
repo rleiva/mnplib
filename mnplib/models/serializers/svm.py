@@ -12,6 +12,12 @@ class LinearSVMSerializer(LinearModelSerializer):
     def task(self, model) -> ResolvedTask:
         return "classification" if isinstance(model, LinearSVC) else "regression"
 
+    def metadata(self, model):
+        metadata = {"kernel": "linear", **super().metadata(model)}
+        if isinstance(model, LinearSVC):
+            metadata["n_classes"] = int(len(model.classes_))
+        return metadata
+
     def serialize(self, model, *, features):
         if isinstance(model, LinearSVC):
             return classification_rule(model, features)

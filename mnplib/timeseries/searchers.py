@@ -226,12 +226,10 @@ def candidate_metadata(
     extra: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """
-    Return metadata shared by time-series candidate results.
+    Return search provenance kept separate from model-description hints.
     """
     selected = tuple(int(index) for index in selected)
     metadata: dict[str, object] = {
-        "schema": "mnplib-model",
-        "schema_version": 3,
         "family": str(family),
         "model_name": str(model_name),
         "window_size": int(context.window_size),

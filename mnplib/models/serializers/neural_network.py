@@ -46,8 +46,14 @@ class MLPSerializer(SklearnSerializer):
         return np.flatnonzero(np.any(model.coefs_[0] != 0, axis=1)).tolist()
 
     def metadata(self, model):
-        return {"layer_sizes": [int(model.coefs_[0].shape[0])]
-                + [int(weights.shape[1]) for weights in model.coefs_]}
+        hidden = [int(weights.shape[1]) for weights in model.coefs_[:-1]]
+        metadata = {
+            "hidden_layer_sizes": hidden,
+            "activations": [str(model.activation)] * len(hidden) + [str(model.out_activation_)],
+        }
+        if isinstance(model, MLPClassifier):
+            metadata["n_classes"] = int(len(model.classes_))
+        return metadata
 
     def serialize(self, model, *, features):
         classification = isinstance(model, MLPClassifier)

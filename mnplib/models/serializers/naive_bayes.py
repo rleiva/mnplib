@@ -20,6 +20,9 @@ class NaiveBayesSerializer(SklearnSerializer):
         used = (np.ptp(model.theta_, axis=0) != 0) | (np.ptp(model.var_, axis=0) != 0)
         return np.flatnonzero(used).tolist()
 
+    def metadata(self, model):
+        return {"distribution": "gaussian", "n_classes": int(len(model.classes_))}
+
     def serialize(self, model, *, features):
         scores = []
         for index, prior in enumerate(model.class_prior_):

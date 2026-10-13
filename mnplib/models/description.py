@@ -1,4 +1,4 @@
-"""Public, immutable computational descriptions independent of evaluation data."""
+"""Authoritative model ASTs with descriptive hints independent of evaluation."""
 
 from dataclasses import dataclass, field
 from collections.abc import Mapping
@@ -35,7 +35,13 @@ def _json_value(value):
 
 @dataclass(frozen=True)
 class ModelDescription:
-    """Canonical semantics and computational metadata, without predictions."""
+    """An authoritative executable AST with compact semantic hints.
+
+    Metadata is descriptive. Applications may use it for presentation, but it
+    does not control execution, canonical rendering, or metric computation.
+    The AST determines the computation even when a hint disagrees with it.
+    Candidate-generation and training information belongs to search results.
+    """
 
     model_type: str
     ast: ModelNode

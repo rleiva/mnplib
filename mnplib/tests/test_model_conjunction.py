@@ -9,6 +9,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.svm import LinearSVC
 
 from mnplib import describe_model, ModelDescription, Surfeit, Mismodel, Nescience
+from mnplib.models import sklearn_model_artifacts
 from mnplib.models.language import (
     And, Binary, Conditional, Constant, Feature, Label, Vector,
     execute, normalize, parse, render, node_from_dict, node_to_dict,
@@ -179,6 +180,6 @@ def test_multiclass_metric_integration_uses_explicit_description():
     ))
     nescience = Nescience().fit(X, y)
     assert nescience.nescience_model(model) == pytest.approx(nescience.nescience(
-        subset=list(description.metadata["features_used"]),
+        subset=sklearn_model_artifacts(model, X).subset,
         predictions=model.predict(X), model_string=description.canonical,
     ))

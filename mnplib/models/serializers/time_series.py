@@ -2,7 +2,7 @@
 
 import numpy as np
 from sklearn.utils.validation import check_is_fitted
-from ..artifacts import ModelArtifacts
+from ..artifacts import ModelArtifacts, _fitted_subset
 from ..description import ModelDescription
 from ..language import Feature
 from ...utils import _resolve_feature_names
@@ -29,5 +29,5 @@ def time_series_model_artifacts(model, X, *, feature_names=None, feature_indices
     """Use the shared canonical description for lag-based evaluation artifacts."""
     from ..description import describe_model
     description = describe_model(model, feature_names=feature_names, feature_indices=feature_indices)
-    return ModelArtifacts(list(description.metadata["features_used"]),
+    return ModelArtifacts(_fitted_subset(model, description.feature_indices),
                           np.asarray(model.predict(X)), description)

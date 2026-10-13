@@ -10,6 +10,7 @@ from sklearn.datasets import make_blobs
 from sklearn.neural_network import MLPClassifier, MLPRegressor
 
 from mnplib import ModelDescription, describe_model, Surfeit, Mismodel, Nescience
+from mnplib.models import sklearn_model_artifacts
 from mnplib.models.language import (
     ModelNode, Constant, Feature, Binary, Conditional, Vector, Element,
     Index, Sum, Comprehension, Exp, normalize, parse, render, execute,
@@ -317,6 +318,6 @@ def test_network_metric_integration_uses_bounded_program():
     ))
     nescience = Nescience().fit(X, y)
     assert nescience.nescience_model(model) == pytest.approx(nescience.nescience(
-        subset=list(description.metadata["features_used"]),
+        subset=sklearn_model_artifacts(model, X).subset,
         predictions=model.predict(X), model_string=description.canonical,
     ))

@@ -6,7 +6,7 @@ import numpy as np
 from sklearn.utils.validation import check_is_fitted
 
 from ..utils import _resolve_feature_names
-from .artifacts import ModelArtifacts
+from .artifacts import ModelArtifacts, _fitted_subset
 from .description import describe_model
 
 
@@ -69,5 +69,5 @@ def model_artifacts(metric, model, *, X=None, feature_names=None,
             names = [names[index] for index in feature_indices]
     names = _resolve_feature_names(source, feature_names=names)
     description = describe_model(model, feature_names=names, feature_indices=feature_indices)
-    return ModelArtifacts(list(description.metadata["features_used"]),
+    return ModelArtifacts(_fitted_subset(model, description.feature_indices),
                           np.asarray(model.predict(source)), description)

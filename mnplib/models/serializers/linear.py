@@ -57,5 +57,8 @@ class LogisticRegressionSerializer(LinearModelSerializer):
     def task(self, model) -> ResolvedTask:
         return "classification"
 
+    def metadata(self, model):
+        return {**super().metadata(model), "n_classes": int(len(model.classes_))}
+
     def serialize(self, model, *, features):
         return classification_rule(model, features)
