@@ -209,6 +209,7 @@ def test_internal_classifier_searchers_are_nescience_guided_and_include_mlp():
         "decision_tree_classifier",
         "logistic_regression",
         "linear_svc",
+        "polynomial_svc",
         "naive_bayes",
         "mlp_classifier",
     ]
@@ -221,6 +222,7 @@ def test_internal_regressor_searchers_are_nescience_guided_and_include_mlp():
         "linear_regression",
         "decision_tree_regressor",
         "linear_svr",
+        "polynomial_svr",
         "mlp_regressor",
     ]
 

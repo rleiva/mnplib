@@ -142,6 +142,7 @@ def test_default_behavior_uses_all_supported_internal_model_families(
         "decision_tree_classifier",
         "logistic_regression",
         "linear_svc",
+        "polynomial_svc",
         "naive_bayes",
         "mlp_classifier",
     ]

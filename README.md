@@ -622,6 +622,14 @@ explicit conditional arithmetic; regression outputs remain linear, and
 classification uses score comparisons without computing probabilities. AutoML
 searches features and network architecture, with ReLU fixed rather than tunable.
 
+SVM support includes `LinearSVC`/`LinearSVR` and polynomial `SVR`/binary `SVC`.
+Polynomial descriptions expose support vectors and coefficients through nested
+bounded sums and arithmetic. RBF, sigmoid, callable kernels, and multiclass
+polynomial SVC are unsupported. AutoML families `polynomial_svc` and
+`polynomial_svr` search a small C/degree grid on one standardized feature prefix.
+Candidates whose quantized descriptions fail prediction checks are skipped
+with diagnostics; the three-significant-digit policy remains fixed.
+
 The JSON schema is `mnplib-model`, version `4`. The AST is the authoritative
 executable description. Model metadata contains compact semantic hints, such as
 distribution, kernel, class count, or activation structure, plus lightweight

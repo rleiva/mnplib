@@ -125,6 +125,7 @@ def test_default_behavior_uses_all_supported_internal_model_families(
         "linear_regression",
         "decision_tree_regressor",
         "linear_svr",
+        "polynomial_svr",
         "mlp_regressor",
     ]
     assert "candidate_source" not in reg.results_dataframe().columns

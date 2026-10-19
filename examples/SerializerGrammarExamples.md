@@ -18,7 +18,7 @@ print(description.canonical)
 # 1.00e+00+2.00e+00*x0-3.00e+00*x1
 
 predictions = execute(description.ast, X)
-np.testing.assert_allclose(predictions, model.predict(X))
+np.testing.assert_allclose(predictions, model.predict(X), atol=1e-12)
 assert parse(description.canonical) == description.ast
 payload = json.dumps(description.to_dict(), allow_nan=False)
 
@@ -156,6 +156,99 @@ probability has the same index as the largest score
 therefore unnecessary for class prediction. Binary logistic regression uses
 `c1 if z>0 else c0`.
 
+### Polynomial Support Vector Machines
+
+Linear SVMs use `LinearSVC` and `LinearSVR`. Nonlinear SVM support is restricted
+to `SVR(kernel="poly")` and **binary** `SVC(kernel="poly")`. Multiclass SVC's
+one-vs-one voting is not represented by this serializer and is rejected.
+RBF kernels require `exp`, sigmoid kernels require `tanh`, and both functions
+are intentionally absent from the language. Callable and precomputed kernels
+are also rejected: their input-dependent computation is not known to the
+serializer. See [sklearn's SVM formulation](https://scikit-learn.org/stable/modules/svm.html)
+for the fitted support-vector representation.
+
+The polynomial prediction score is:
+
+```text
+f(x) = b + sum_i dual_i * (gamma * sum_j x_j * support_ij + coef0) ** degree
+```
+
+The inner `Sum` accumulates input coordinates; the outer `Sum` accumulates
+support-vector contributions. Support vectors and dual coefficients are literal
+vectors accessed through `Element` nodes. The intercept, fitted numeric gamma,
+kernel offset, and degree are explicit constants. Gamma policies such as
+`"scale"` and `"auto"` are resolved from the fitted estimator, not recomputed
+during execution. No kernel or SVM execution primitive is needed.
+
+SVR returns the score. Binary SVC uses sklearn's public dual coefficients and
+intercept, selecting `classes_[1]` for `f(x) >= 0` and `classes_[0]` otherwise.
+In particular, a score of zero selects the second fitted class. Probability
+estimates are not part of this prediction rule.
+
+The effective feature subset contains coordinates that are nonzero in at least
+one support vector with a nonzero dual coefficient. A zero gamma or degree
+makes the kernel constant and the subset empty. `coef0` cannot introduce input
+dependence into a zero support-vector coordinate. This is a conservative
+structural rule: it does not eliminate cancellations between different terms.
+
+```python
+from sklearn.svm import SVC, SVR
+
+X = np.array([[-1., -1.], [-1., 1.], [1., -1.], [1., 1.]])
+y = X[:, 0] * X[:, 1]
+regressor = SVR(kernel="poly", degree=2, gamma=0.5, coef0=1).fit(X, y)
+classifier = SVC(kernel="poly", degree=2, gamma=0.5, coef0=1).fit(X, y > 0)
+
+regression = describe_model(regressor)
+classification = describe_model(classifier)
+np.testing.assert_allclose(execute(regression.ast, X), regressor.predict(X),
+                           rtol=0.02, atol=0.03)
+np.testing.assert_array_equal(execute(classification.ast, X), classifier.predict(X))
+payload = classification.to_dict()
+assert payload["model_type"] == "SVC"
+assert payload["metadata"]["kernel"] == "poly"
+```
+
+#### AutoML Search
+
+`NescienceClassifier` and `NescienceRegressor` expose `polynomial_svc` and
+`polynomial_svr`. They participate in the default search; the classifier skips
+this family with a diagnostic for multiclass targets. Each search takes one
+miscoding-ranked prefix, limited by `max_feature_prefixes`, and standardizes it
+once. It evaluates `C_values=(0.1, 1.0, 10.0)` and `degree_values=(2, 3, 4)` on
+that fixed representation, for nine candidates by default. Gamma is `"scale"`
+and `coef0=1.0`; neither is configurable. `max_iter=5000` and `tol=1e-3` bound
+the solver. Duplicate C or degree entries do not create duplicate candidates.
+
+```python
+from mnplib import NescienceRegressor
+
+X_search = np.tile(X, (20, 1))
+y_search = np.tile(y, 20)
+search = NescienceRegressor(
+    models=["polynomial_svr"],
+    max_feature_prefixes=2,
+    search_options={"polynomial_svr": {"C_values": (0.1, 1.0), "degree_values": (2, 3)}},
+).fit(X_search, y_search)
+results = search.results_dataframe()
+selected_description = describe_model(search)
+```
+
+All candidates use the shared Nescience/CandidateEvaluator workflow. Miscoding
+evaluates effective inputs, inaccuracy evaluates estimator predictions, and
+surfeit measures the full canonical support-vector program. Mismodel and
+Nescience use the library's RMS definitions. Metadata never enters scoring.
+
+Polynomial models can amplify three-significant-digit rounding. AutoML checks
+the complete description, including standardized input expressions, on the
+search observations. It requires exact class labels or regression agreement
+with `rtol=0.02, atol=0.03`. Candidates failing this check are excluded and
+reported as `description_fidelity_failed` in `diagnostics_`. Fit failures and
+nonconvergence are also reported. If no candidate survives, fitting raises an
+error. This check does not guarantee fidelity on unseen observations; direct
+`describe_model()` calls do not perform it and retain the same quantization
+policy. Validate descriptions on their intended evaluation inputs.
+
 ## Canonicalization
 
 Numerical model parameters are rounded to **three significant digits** before
@@ -199,6 +292,8 @@ length and potentially surfeit and model ranking.
 - LogisticRegression and LinearSVC: binary score threshold or explicit nested
   class-score comparisons.
 - LinearSVR: affine arithmetic.
+- SVR with polynomial kernel: explicit support-vector accumulation.
+- Binary SVC with polynomial kernel: explicit support-vector score and sign decision.
 - DecisionTreeClassifier and DecisionTreeRegressor: nested conditionals,
   including scalar and multi-output leaves and actual class labels.
 - GaussianNB: arithmetic log-class scores with precomputed logarithmic constants.
@@ -217,8 +312,8 @@ schema version 4**. These require stateful filter/forecast semantics, including
 initialization and observation updates. Their searchers produce an
 `unsupported_model_description` diagnostic and do not create scored candidates.
 A search containing only those families raises a clear error. A mixed search
-continues with supported families. Tree ensembles and nonlinear SVMs are also
-outside the supported serializer registry.
+continues with supported families. Tree ensembles, multiclass polynomial SVC,
+RBF SVMs, sigmoid SVMs, and callable kernels are unsupported.
 
 ## Semantic JSON
 
@@ -288,6 +383,8 @@ The serializers provide the following additional fields:
 | Decision trees | `depth`, `n_nodes`, `n_leaves` | Lightweight cached structural summaries |
 | LinearSVC | `kernel`, `n_terms`, `n_classes` | Linear kernel semantics, term and class counts |
 | LinearSVR | `kernel`, `n_terms` | Linear kernel semantics and term count |
+| Polynomial SVR | `kernel`, `degree`, `n_support_vectors` | Polynomial structure and fitted support-vector count |
+| Binary polynomial SVC | `kernel`, `degree`, `n_support_vectors`, `n_classes` | Polynomial structure and binary class count |
 | MLP | `hidden_layer_sizes`, `activations`; classifier also `n_classes` | Fitted architecture and activation semantics |
 | FixedLinearForecaster | `n_terms` | Cheap nonzero lag coefficient count |
 
@@ -317,10 +414,21 @@ A three-class LinearSVC with twelve nonzero coefficients provides:
 }
 ```
 
-Only LinearSVC and LinearSVR are supported SVM serializers. These estimators do
-not expose support vectors, so `n_support_vectors` is not reported. Nonlinear
-kernel models are not supported. GaussianNB is the supported Naive Bayes
-variant, with hints such as:
+LinearSVC and LinearSVR do not expose support vectors, so their metadata does
+not include `n_support_vectors`. Polynomial SVC and SVR describe it explicitly:
+
+```json
+{
+  "kernel": "poly",
+  "degree": 3,
+  "n_support_vectors": 57,
+  "n_classes": 2
+}
+```
+
+`n_classes` is present only for SVC. Support vectors, dual coefficients, gamma,
+offset, and intercept belong to the AST, not metadata. GaussianNB is the
+supported Naive Bayes variant, with hints such as:
 
 ```json
 {

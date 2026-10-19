@@ -30,6 +30,7 @@ from .automl.searchers import (
     DecisionTreePruningSearcher,
     LinearRegressionPrefixSearcher,
     LinearSVRSearcher,
+    PolynomialSVRSearcher,
     MLPRegressorSearch,
     SearchContext,
 )
@@ -41,6 +42,7 @@ SUPPORTED_MODELS = (
     "linear_regression",
     "decision_tree",
     "linear_svr",
+    "polynomial_svr",
     "mlp",
 )
 
@@ -55,7 +57,7 @@ class NescienceRegressor(RegressorMixin, BaseEstimator):
         Supported internal model families to evaluate. If ``None``, all
         families supported are used. If provided, the order is preserved after
         removing duplicate names. Valid names are ``"linear_regression"``,
-        ``"decision_tree"``, ``"linear_svr"``, and ``"mlp"``.
+        ``"decision_tree"``, ``"linear_svr"``, ``"polynomial_svr"``, and ``"mlp"``.
     X_type : {"auto", "numeric", "categorical"}, default="numeric"
         Type policy used when fitting the nescience components on the input
         representation.
@@ -66,6 +68,7 @@ class NescienceRegressor(RegressorMixin, BaseEstimator):
     max_feature_prefixes : int or None, default=None
         Maximum number of ranked feature prefixes evaluated by searchers. If
         ``None``, every feature can appear in the prefix sequence.
+        Polynomial SVR evaluates one standardized prefix up to this limit.
     random_state : int, RandomState instance, or None, default=None
         Random state forwarded to stochastic searchers and estimators.
     search_options : mapping, optional
@@ -305,6 +308,7 @@ class NescienceRegressor(RegressorMixin, BaseEstimator):
             "linear_regression": LinearRegressionPrefixSearcher,
             "decision_tree": DecisionTreePruningSearcher,
             "linear_svr": LinearSVRSearcher,
+            "polynomial_svr": PolynomialSVRSearcher,
             "mlp": MLPRegressorSearch,
         })
         return [self._make_searcher(name) for name in names]
@@ -314,7 +318,7 @@ class NescienceRegressor(RegressorMixin, BaseEstimator):
         Instantiate the searcher for one supported model-family name.
         """
         options = dict(self._search_options_[name])
-        if name != "linear_regression":
+        if name not in {"linear_regression", "polynomial_svr"}:
             options.setdefault("random_state", self.random_state)
         if name == "linear_regression":
             return LinearRegressionPrefixSearcher(**options)
@@ -327,6 +331,9 @@ class NescienceRegressor(RegressorMixin, BaseEstimator):
 
         if name == "linear_svr":
             return LinearSVRSearcher(**options)
+
+        if name == "polynomial_svr":
+            return PolynomialSVRSearcher(**options)
 
         if name == "mlp":
             return MLPRegressorSearch(**options)

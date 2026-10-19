@@ -8,7 +8,7 @@ import pytest
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.naive_bayes import GaussianNB
 from sklearn.neural_network import MLPClassifier, MLPRegressor
-from sklearn.svm import LinearSVC, LinearSVR
+from sklearn.svm import LinearSVC, LinearSVR, SVC, SVR
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 
 from mnplib import ModelDescription, describe_model, Surfeit, Mismodel, Nescience
@@ -23,6 +23,7 @@ from mnplib.timeseries import FixedLinearForecaster
 @pytest.fixture(params=[
     "linear", "logistic", "gaussian", "tree_classifier", "tree_regressor",
     "linear_svc", "linear_svr", "mlp_classifier", "mlp_regressor", "forecaster",
+    "polynomial_svc", "polynomial_svr",
 ])
 def fitted_case(request):
     X = np.tile([[-2., -1.], [-2., 1.], [0., -1.], [0., 1.], [2., -1.], [2., 1.]], (15, 1))
@@ -36,6 +37,8 @@ def fitted_case(request):
         "tree_regressor": (DecisionTreeRegressor(max_depth=2, random_state=2), regression),
         "linear_svc": (LinearSVC(random_state=2, max_iter=10000), classes),
         "linear_svr": (LinearSVR(random_state=2, max_iter=10000), regression),
+        "polynomial_svc": (SVC(kernel="poly", degree=2, coef0=1), classes > 0),
+        "polynomial_svr": (SVR(kernel="poly", degree=2, coef0=1), regression),
         "mlp_classifier": (MLPClassifier(hidden_layer_sizes=(3, 2), activation="relu",
                                          solver="lbfgs", random_state=2, max_iter=1000), classes),
         "mlp_regressor": (MLPRegressor(hidden_layer_sizes=(3, 2), activation="relu",
@@ -60,7 +63,7 @@ def test_family_metadata_is_small_and_json_compatible(fitted_case):
     expected = {"features_used": _artifacts(model, X).subset}
     if name in {"linear", "logistic", "linear_svc", "linear_svr"}:
         expected["n_terms"] = int(np.count_nonzero(model.coef_))
-    if name in {"logistic", "gaussian", "linear_svc", "mlp_classifier"}:
+    if name in {"logistic", "gaussian", "linear_svc", "mlp_classifier", "polynomial_svc"}:
         expected["n_classes"] = int(len(model.classes_))
     if name == "gaussian":
         expected["distribution"] = "gaussian"
@@ -70,6 +73,8 @@ def test_family_metadata_is_small_and_json_compatible(fitted_case):
     if name.startswith("linear_sv"):
         expected["kernel"] = "linear"
         assert "n_support_vectors" not in metadata
+    if name.startswith("polynomial_sv"):
+        expected.update(kernel="poly", degree=2, n_support_vectors=len(model.support_))
     if name.startswith("mlp_"):
         expected.update(hidden_layer_sizes=[3, 2],
                         activations=[model.activation, model.activation, model.out_activation_])

@@ -9,6 +9,7 @@ from .linear_svm import LinearSVCSearcher, LinearSVRSearcher
 from .logistic import LogisticRegressionPrefixSearcher
 from .naive_bayes import NaiveBayesSearcher
 from .neural_network import MLPClassifierSearch, MLPRegressorSearch
+from .polynomial_svm import PolynomialSVCSearcher, PolynomialSVRSearcher
 
 __all__ = [
     "SearchContext",
@@ -21,4 +22,6 @@ __all__ = [
     "NaiveBayesSearcher",
     "MLPClassifierSearch",
     "MLPRegressorSearch",
+    "PolynomialSVCSearcher",
+    "PolynomialSVRSearcher",
 ]

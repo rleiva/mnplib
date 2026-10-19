@@ -31,6 +31,7 @@ from .automl.searchers import (
     LogisticRegressionPrefixSearcher,
     NaiveBayesSearcher,
     LinearSVCSearcher,
+    PolynomialSVCSearcher,
     MLPClassifierSearch,
     SearchContext,
 )
@@ -41,6 +42,7 @@ SUPPORTED_MODELS = (
     "decision_tree",
     "logistic_regression",
     "linear_svc",
+    "polynomial_svc",
     "naive_bayes",
     "mlp",
 )
@@ -56,7 +58,7 @@ class NescienceClassifier(ClassifierMixin, BaseEstimator):
         families supported are used. If provided, the order is
         preserved after removing duplicate names. Valid names are
         ``"decision_tree"``, ``"logistic_regression"``, ``"linear_svc"``,
-        ``"naive_bayes"``, and ``"mlp"``.
+        ``"polynomial_svc"`` (binary classification), ``"naive_bayes"``, and ``"mlp"``.
     X_type : {"auto", "numeric", "categorical"}, default="numeric"
         Type policy used when fitting the nescience components on the input
         representation.
@@ -67,6 +69,7 @@ class NescienceClassifier(ClassifierMixin, BaseEstimator):
     max_feature_prefixes : int or None, default=None
         Maximum number of ranked feature prefixes evaluated by searchers. If
         ``None``, every feature can appear in the prefix sequence.
+        Polynomial SVC evaluates one standardized prefix up to this limit.
     The canonical model string is fixed by the library because it contributes
     directly to surfeit and therefore to nescience.
 
@@ -366,6 +369,7 @@ class NescienceClassifier(ClassifierMixin, BaseEstimator):
             "decision_tree": DecisionTreePruningSearcher,
             "logistic_regression": LogisticRegressionPrefixSearcher,
             "linear_svc": LinearSVCSearcher,
+            "polynomial_svc": PolynomialSVCSearcher,
             "naive_bayes": NaiveBayesSearcher,
             "mlp": MLPClassifierSearch,
         })
@@ -376,7 +380,7 @@ class NescienceClassifier(ClassifierMixin, BaseEstimator):
         Instantiate the searcher for one supported model-family name.
         """
         options = dict(self._search_options_[name])
-        if name != "naive_bayes":
+        if name not in {"naive_bayes", "polynomial_svc"}:
             options.setdefault("random_state", self.random_state)
         if name == "decision_tree":
             return DecisionTreePruningSearcher(
@@ -393,6 +397,9 @@ class NescienceClassifier(ClassifierMixin, BaseEstimator):
             return LinearSVCSearcher(
                 **options
             )
+
+        if name == "polynomial_svc":
+            return PolynomialSVCSearcher(**options)
 
         if name == "naive_bayes":
             return NaiveBayesSearcher(**options)

@@ -13,7 +13,7 @@ from .artifacts                  import ModelArtifacts
 from .serializers.linear         import LinearModelSerializer, LogisticRegressionSerializer
 from .serializers.naive_bayes    import NaiveBayesSerializer
 from .serializers.neural_network import MLPSerializer
-from .serializers.svm            import LinearSVMSerializer
+from .serializers.svm            import LinearSVMSerializer, PolynomialSVMSerializer
 from .serializers.tree           import DecisionTreeSerializer
 
 _SUPPORTED_SERIALIZERS = (
@@ -21,6 +21,7 @@ _SUPPORTED_SERIALIZERS = (
     LinearModelSerializer(),
     LogisticRegressionSerializer(),
     LinearSVMSerializer(),
+    PolynomialSVMSerializer(),
     NaiveBayesSerializer(),
     MLPSerializer(),
 )
