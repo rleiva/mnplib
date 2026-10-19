@@ -33,11 +33,6 @@ class Negate(ModelNode):
 
 
 @dataclass(frozen=True)
-class Exp(ModelNode):
-    operand: ModelNode
-
-
-@dataclass(frozen=True)
 class Binary(ModelNode):
     operator: Arithmetic
     left: ModelNode

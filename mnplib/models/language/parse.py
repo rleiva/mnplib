@@ -8,7 +8,7 @@ from lark.exceptions import VisitError
 
 from .nodes import (
     Constant, Label, Feature, Negate, Binary, And, Conditional,
-    Vector, Element, Index, Sum, Comprehension, Exp,
+    Vector, Element, Index, Sum, Comprehension,
 )
 from .normalize import normalize
 
@@ -37,9 +37,6 @@ class _Build(Transformer):
 
     def comprehension(self, values):
         return Comprehension(str(values[1]), int(values[2]), values[0])
-
-    def exponential(self, values):
-        return Exp(values[0])
 
     def negate(self, values):
         return Negate(values[0])

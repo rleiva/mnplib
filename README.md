@@ -595,7 +595,7 @@ held-out forecast performance.
 forecast strategy, subset semantics, and executable-description availability.
 Autoregressive, moving-average, and exponential-smoothing candidates use the
 canonical model language. ARIMA and structural state-space descriptions require
-stateful semantics and are not supported by model-language schema version 3.
+stateful semantics and are not supported by model-language schema version 4.
 Their searchers report `unsupported_model_description` in `diagnostics_`; a
 search containing only these families raises an explicit error.
 
@@ -617,7 +617,12 @@ significant digits consistently in text, JSON, and execution. Full-precision
 estimator predictions can differ near decision boundaries. Human-readable
 feature names never change canonical text or surfeit.
 
-The JSON schema is `mnplib-model`, version `3`. The AST is the authoritative
+MLP models support ReLU as the only hidden-layer activation. Hidden neurons use
+explicit conditional arithmetic; regression outputs remain linear, and
+classification uses score comparisons without computing probabilities. AutoML
+searches features and network architecture, with ReLU fixed rather than tunable.
+
+The JSON schema is `mnplib-model`, version `4`. The AST is the authoritative
 executable description. Model metadata contains compact semantic hints, such as
 distribution, kernel, class count, or activation structure, plus lightweight
 summaries. Metadata never controls execution, canonical text, or metric scores.

@@ -127,11 +127,10 @@ def test_classification_execution_matches_fitted_estimator(model):
     np.testing.assert_array_equal(execute(description.ast, X), model.predict(X))
     np.testing.assert_array_equal(execute(description.canonical, X), execute(description.ast, X))
 
-@pytest.mark.parametrize("activation", ["identity", "relu", "logistic", "tanh"])
-def test_network_activations_have_executable_semantics(activation):
+def test_relu_network_has_executable_semantics():
     X = np.random.default_rng(5).normal(size=(100, 2))
     y = (X[:, 0] > 0).astype(int)
-    model = MLPClassifier(activation=activation, hidden_layer_sizes=(2,),
+    model = MLPClassifier(activation="relu", hidden_layer_sizes=(2,),
                           solver="lbfgs", random_state=1, max_iter=2000).fit(X, y)
     description = describe_model(model)
     np.testing.assert_array_equal(execute(description.ast, X), model.predict(X))
@@ -201,7 +200,7 @@ def test_dataframe_names_mapping_and_json_schema():
     assert "a" not in description.canonical
     payload = json.loads(json.dumps(description.to_dict(), allow_nan=False))
     assert payload["schema"] == "mnplib-model"
-    assert payload["schema_version"] == 3
+    assert payload["schema_version"] == 4
     assert payload["ast"]["type"] == "subtract"
     assert ModelDescription.from_dict(payload).ast == description.ast
     assert payload["metadata"]["features_used"] == [3, 1]
@@ -256,7 +255,7 @@ def test_description_pickle_preserves_immutable_semantics():
 
 
 @pytest.mark.parametrize("change", [
-    {"schema_version": 2}, {"schema_version": 4}, {"schema_version": True},
+    {"schema_version": 3}, {"schema_version": 5}, {"schema_version": True},
     {"schema": "other"}, {"canonical": "x1"},
     {"ast": {"type": "arbitrary_function"}},
     {"feature_indices": [-1]},

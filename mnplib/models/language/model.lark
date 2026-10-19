@@ -22,7 +22,6 @@
      | "[" expr "for" INDEX "in" "range" "(" INTEGER ")" "]" -> comprehension
      | "label" "(" ESCAPED_STRING ")" -> label
      | "at" "(" expr "," element_index ")" -> element
-     | "exp" "(" expr ")" -> exponential
 ?element_index: INTEGER -> literal_index
               | INDEX -> index
 vector: "[" [expr ("," expr)*] "]"

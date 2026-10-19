@@ -7,29 +7,14 @@ from sklearn.utils.validation import check_is_fitted
 from .base import SklearnSerializer, score_conditionals
 from ..language import (
     Constant, Label, Binary, Conditional, Vector, Element,
-    Index, Sum, Comprehension, Exp, Negate,
+    Index, Sum, Comprehension,
 )
 
 
-def _activation_expression(score, activation):
-    """Express hidden-layer arithmetic with non-positive exponential arguments."""
-    zero, one = Constant(0), Constant(1)
-    if activation == "identity":
-        return score
-    if activation == "relu":
-        return Conditional(Binary(">", score, zero), score, zero)
-    if activation == "logistic":
-        positive = Binary("/", one, Binary("+", one, Exp(Negate(score))))
-        exponential = Exp(score)
-        negative = Binary("/", exponential, Binary("+", one, exponential))
-        return Conditional(Binary(">=", score, zero), positive, negative)
-    if activation == "tanh":
-        positive_exp = Exp(Binary("*", Constant(-2), score))
-        negative_exp = Exp(Binary("*", Constant(2), score))
-        positive = Binary("/", Binary("-", one, positive_exp), Binary("+", one, positive_exp))
-        negative = Binary("/", Binary("-", negative_exp, one), Binary("+", negative_exp, one))
-        return Conditional(Binary(">=", score, zero), positive, negative)
-    raise ValueError(f"Unsupported MLP activation: {activation}.")
+def _relu_expression(score):
+    """Express ReLU through a comparison and conditional arithmetic."""
+    zero = Constant(0)
+    return Conditional(Binary(">", score, zero), score, zero)
 
 
 class MLPSerializer(SklearnSerializer):
@@ -56,6 +41,11 @@ class MLPSerializer(SklearnSerializer):
         return metadata
 
     def serialize(self, model, *, features):
+        if model.activation != "relu":
+            raise ValueError(
+                f"Unsupported MLP hidden activation: {model.activation!r}. "
+                "mnplib supports only ReLU hidden activation for MLP models."
+            )
         classification = isinstance(model, MLPClassifier)
         if classification and getattr(model._label_binarizer, "y_type_", "") == "multilabel-indicator":
             raise ValueError("Multilabel MLP classification is not supported.")
@@ -64,7 +54,6 @@ class MLPSerializer(SklearnSerializer):
         output = Vector(tuple(features))
         for index, (weights, bias) in enumerate(zip(model.coefs_, model.intercepts_)):
             last = index == len(model.coefs_) - 1
-            activation = "identity" if last else model.activation
             input_index, output_index = Index(f"i{index}"), Index(f"j{index}")
             parameters = Vector(tuple(
                 Vector(tuple(Constant(float(value)) for value in row))
@@ -76,7 +65,7 @@ class MLPSerializer(SklearnSerializer):
             score = Binary("+", Element(biases, output_index),
                            Sum(input_index.name, weights.shape[0], product))
             output = Comprehension(output_index.name, weights.shape[1],
-                                   _activation_expression(score, activation))
+                                   score if last else _relu_expression(score))
         if classification:
             labels = tuple(Label(value) for value in model.classes_)
             if model.out_activation_ == "logistic" and model.n_outputs_ == 1:

@@ -5,7 +5,7 @@ import numpy as np
 
 from .nodes import (
     ModelNode, Constant, Label, Feature, Negate, Binary, And, Conditional,
-    Vector, Element, Index, Sum, Comprehension, Exp,
+    Vector, Element, Index, Sum, Comprehension,
 )
 from .normalize import normalize
 from .parse import parse
@@ -48,8 +48,6 @@ def execute(description, X):
                 visit(item.expression, rows, {**indices, item.index: index})
                 for index in range(item.size)
             ], axis=1)
-        if kind is Exp:
-            return np.exp(visit(item.operand, rows, indices))
         if kind is Negate:
             return -visit(item.operand, rows, indices)
         if kind is Binary:

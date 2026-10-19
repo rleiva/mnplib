@@ -36,21 +36,18 @@ their `model_string` property is exactly `description.canonical`.
 
 The authoritative Lark grammar is
 `mnplib/models/language/model.lark`. A description is one expression.
-It supports arithmetic, unary negation, exponentials, comparisons, Boolean
+It supports arithmetic, unary negation, comparisons, Boolean
 conjunction, conditional expressions, vectors, and bounded iteration.
 Canonical feature references are `x0`,
 `x1`, and so on. Arithmetic binds more tightly than comparisons, followed by
 `and`, then conditional expressions. Conjunction evaluates to a Boolean vector.
 
-The immutable semantic nodes are Constant, Label, Feature, Negate, Exp, Binary,
+The immutable semantic nodes are Constant, Label, Feature, Negate, Binary,
 And, Conditional, Vector, Element, Index, Sum, and Comprehension. Binary operations export
 individual semantic names such as `add` and `less_equal`.
 
-Vector access and exponentials have fixed meanings:
-
-- `at(vector,index)`: select one element using a non-negative integer or a bound
-  iteration index. Nested access selects entries in explicit parameter matrices.
-- `exp(expression)`: the natural exponential, applied elementwise.
+`at(vector,index)` selects one element using a non-negative integer or a bound
+iteration index. Nested access selects entries in explicit parameter matrices.
 
 `label(encoded_json_string)` represents a categorical scalar exactly.
 For example, `label("123456")` preserves an integer category, while
@@ -118,14 +115,24 @@ weighted inputs with `Sum`. Layer-specific names `i0`, `j0`, `i1`, `j1`, and so
 on keep nested scopes distinct. This representation is deterministic and does
 not depend on which alternative string happens to be shorter.
 
-Hidden identity outputs use the score itself. ReLU uses `z if z>0 else 0`.
-Sigmoid uses arithmetic equivalent to `1/(1+exp(-z))`, and tanh uses arithmetic
-equivalent to `(exp(2*z)-1)/(exp(2*z)+1)`. The serialized expressions branch on
-the sign of `z` to keep exponential arguments non-positive. `z` is an
-explanatory placeholder for the full neuron expression, not a local variable.
-Regression returns the numeric output. Binary classification thresholds the
-final score at zero; multiclass classification compares the final scores
-directly without computing probabilities.
+mnplib supports **ReLU as the only hidden-layer activation for MLP models**.
+This deliberate restriction keeps the model family compact, reduces AutoML
+search dimensionality, simplifies executable descriptions, avoids unnecessary
+exponential computations, and improves maintainability while retaining
+nonlinear expressive power. Fitted estimators with any other hidden activation
+are rejected with a clear error.
+
+Hidden layers use `z if z>0 else 0`, expressed through ordinary comparisons and
+conditionals. `z` is an explanatory placeholder for the full neuron expression,
+not a local variable. Regression uses an identity output: negative predictions
+are preserved. Binary classification uses `c1 if z>0 else c0`; multiclass
+classification compares final scores directly, choosing the first class on
+ties. Neither classification path computes output probabilities.
+
+AutoML always constructs MLP estimators with `activation="relu"`. Search varies
+selected features, hidden-layer counts, and hidden-unit counts. Activation is
+not a search option or a candidate hyperparameter. Model-description metadata
+retains `activations` as a descriptive architecture hint for applications.
 
 ### Multiclass Decisions
 
@@ -195,8 +202,9 @@ length and potentially surfeit and model ranking.
 - DecisionTreeClassifier and DecisionTreeRegressor: nested conditionals,
   including scalar and multi-output leaves and actual class labels.
 - GaussianNB: arithmetic log-class scores with precomputed logarithmic constants.
-- MLPClassifier and MLPRegressor: bounded neuron sums and layer comprehensions, including
-  multi-output regression. Multilabel classification is unsupported.
+- MLPClassifier and MLPRegressor: ReLU hidden layers with bounded neuron sums and
+  layer comprehensions, including multi-output regression. Multilabel
+  classification is unsupported.
 - Finite-window autoregression, moving averages, and exponential smoothing:
   affine arithmetic over lag columns.
 
@@ -205,7 +213,7 @@ AutoML StandardScaler preprocessing is represented by feature expressions
 available after subset selection.
 
 ARIMA and structural state-space model serialization are **not supported by
-schema version 3**. These require stateful filter/forecast semantics, including
+schema version 4**. These require stateful filter/forecast semantics, including
 initialization and observation updates. Their searchers produce an
 `unsupported_model_description` diagnostic and do not create scored candidates.
 A search containing only those families raises a clear error. A mixed search
@@ -219,7 +227,7 @@ outside the supported serializer registry.
 ```json
 {
   "schema": "mnplib-model",
-  "schema_version": 3,
+  "schema_version": 4,
   "model_type": "LinearRegression",
   "ast": {
     "type": "multiply",
@@ -240,7 +248,7 @@ order. Multiclass score-selection expressions contain `conditional`,
 Iteration nodes use `{"type": "sum", "index": "i", "size": 3, "expression": ...}`
 and the corresponding `comprehension` type. Bound references use
 `{"type": "index", "name": "i"}`. An `element` index is either an integer or
-an `index` node. Exponentials use `{"type": "exp", "operand": ...}`.
+an `index` node.
 `ModelDescription.from_dict(payload)` validates the schema, nodes, and
 agreement with any supplied canonical text. An incompatible schema change
 requires a schema-version increment.
@@ -292,7 +300,7 @@ For an MLPRegressor with two ReLU hidden layers, the architecture hints are:
 }
 ```
 
-`activations` lists the fitted hidden activations followed by the fitted output
+`activations` lists `"relu"` for each hidden layer followed by the fitted output
 activation: `"identity"` for regression, `"logistic"` for binary classification,
 or `"softmax"` for multiclass classification. The classification AST can compare
 untransformed final scores to select the same class without computing output

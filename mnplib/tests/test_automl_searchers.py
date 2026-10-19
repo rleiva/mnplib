@@ -26,6 +26,8 @@ from mnplib.automl import CandidateEvaluator
 from mnplib.automl.searchers import (
     DecisionTreePruningSearcher,
     LinearSVRSearcher,
+    MLPClassifierSearch,
+    MLPRegressorSearch,
     SearchContext,
 )
 from mnplib.classifier import (
@@ -784,7 +786,7 @@ def test_mlp_search_is_internal_bounded_and_serializes_executable_predictor():
 
     assert len(mlp_results) == 1
     assert "hidden_layer_sizes" in mlp_results[0].hyperparameters
-    assert "activation" in mlp_results[0].hyperparameters
+    assert "activation" not in mlp_results[0].hyperparameters
     assert not hasattr(mlp_results[0], "metadata")
 
     model_string = mlp_results[0].artifacts.model_string
@@ -793,6 +795,48 @@ def test_mlp_search_is_internal_bounded_and_serializes_executable_predictor():
     assert " for j0 in range(" in model_string
     assert render(parse(model_string)) == model_string
     np.testing.assert_array_equal(execute(model_string, X), mlp_results[0].artifacts.predictions)
+
+
+@pytest.mark.parametrize("searcher_type", [MLPClassifierSearch, MLPRegressorSearch])
+def test_mlp_search_has_no_activation_parameter(searcher_type):
+    assert "activation" not in inspect.signature(searcher_type).parameters
+    assert not hasattr(searcher_type(), "activation")
+    with pytest.raises(TypeError, match="activation"):
+        searcher_type(activation="relu")
+
+
+@pytest.mark.parametrize("estimator_type", [NescienceClassifier, NescienceRegressor])
+def test_mlp_search_options_reject_activation(estimator_type):
+    estimator = estimator_type(models=["mlp"], search_options={"mlp": {"activation": "relu"}})
+    with pytest.raises(ValueError, match="activation"):
+        estimator._resolve_searchers()
+
+
+@pytest.mark.parametrize("estimator_type", [NescienceClassifier, NescienceRegressor])
+def test_mlp_relu_search_explores_features_layers_and_units(estimator_type):
+    X = np.tile([[-1., -1.], [-1., 1.], [1., -1.], [1., 1.]], (30, 1))
+    y = (X[:, 0] > 0).astype(int) if estimator_type is NescienceClassifier else X[:, 0]
+    estimator = estimator_type(models=["mlp"], random_state=2, search_options={"mlp": {
+        "initial_features": 1, "initial_hidden_units": 2, "layer_width": 2,
+        "max_candidates": 4, "max_hidden_layers": 2, "max_units_per_layer": 3,
+        "solver": "lbfgs", "max_iter": 1000,
+    }}).fit(X, y)
+    states = set()
+    for result in estimator.results_:
+        model = _base_estimator(result.model)
+        states.add((model.n_features_in_, model.hidden_layer_sizes))
+        assert model.activation == "relu"
+        assert "activation" not in result.hyperparameters
+        assert "activation" not in result.name and "relu" not in result.name
+        assert result.artifacts.description.metadata["activations"] == (
+            *("relu" for _ in model.hidden_layer_sizes), model.out_activation_,
+        )
+        assert render(parse(result.artifacts.model_string)) == result.artifacts.model_string
+    assert states == {(1, (2,)), (2, (2,)), (1, (2, 2)), (1, (3,))}
+    for move in ("initial", "add_feature", "add_layer", "add_unit"):
+        assert any(f"_{move}_" in result.name for result in estimator.results_)
+    assert all("activation" not in parameters
+               for parameters in estimator.results_dataframe()["hyperparameters"])
 
 
 def test_classifier_and_regressor_public_workflows_and_results_columns():

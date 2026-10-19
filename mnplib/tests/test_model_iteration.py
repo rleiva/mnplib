@@ -13,12 +13,12 @@ from mnplib import ModelDescription, describe_model, Surfeit, Mismodel, Nescienc
 from mnplib.models import sklearn_model_artifacts
 from mnplib.models.language import (
     ModelNode, Constant, Feature, Binary, Conditional, Vector, Element,
-    Index, Sum, Comprehension, Exp, normalize, parse, render, execute,
+    Index, Sum, Comprehension, normalize, parse, render, execute,
     node_to_dict, node_from_dict,
 )
 from mnplib.models.language.transform import substitute_features
 from mnplib.models.language.normalize import quantize
-from mnplib.models.serializers.neural_network import _activation_expression
+from mnplib.models.serializers.neural_network import _relu_expression
 
 
 def _nodes(value):
@@ -62,7 +62,7 @@ def test_iteration_matrix_access_and_json_schema():
         "*at([x0,x1],i) for i in range(2)) for j in range(2)]"
     )
     payload = json.loads(json.dumps(description.to_dict()))
-    assert payload["schema_version"] == 3
+    assert payload["schema_version"] == 4
     assert payload["ast"]["type"] == "comprehension"
     assert payload["ast"]["expression"]["type"] == "sum"
     assert payload["ast"]["expression"]["expression"]["left"]["index"] == {
@@ -103,7 +103,7 @@ def test_iteration_rejects_nonliteral_bounds(kind, size):
 
 
 @pytest.mark.parametrize("name", ["", "I", "_i", "2i", "i-j", "i.x", "x0",
-                                   "for", "sum", "range", "exp", "at", "label", None])
+                                   "for", "sum", "range", "at", "label", None])
 def test_iteration_rejects_invalid_names(name):
     with pytest.raises(ValueError, match="identifier"):
         normalize(Sum(name, 2, Constant(1)))
@@ -193,10 +193,7 @@ def test_indexed_comprehension_evaluates_only_requested_item():
         np.testing.assert_array_equal(execute(node, [[0]]), [1])
 
 
-def test_generic_exponential_and_iteration_precedence():
-    node = Sum("i", 2, Exp(Binary("*", Index("i"), Feature(0))))
-    assert render(node) == "sum(exp(i*x0) for i in range(2))"
-    np.testing.assert_allclose(execute(node, [[0], [1]]), [2, 1 + np.e])
+def test_iteration_precedence():
     for text in ("[x0 if i==0.00e+00 else x1 for i in range(2)]",
                  "-sum(i for i in range(2))**2.00e+00",
                  "sum(x0 if i==0.00e+00 else x1 for i in range(2))"):
@@ -210,24 +207,15 @@ def test_iteration_preserves_feature_substitution():
     assert node_from_dict(node_to_dict(transformed)) == normalize(transformed)
 
 
-@pytest.mark.parametrize("activation", ["identity", "relu", "logistic", "tanh"])
-def test_activation_arithmetic_is_stable(activation):
+def test_relu_uses_conditional_arithmetic():
     X = np.array([[-1000.], [-10.], [-0.001], [0.], [0.001], [10.], [1000.]])
-    node = _activation_expression(Feature(0), activation)
+    node = _relu_expression(Feature(0))
     with np.errstate(over="raise", invalid="raise", divide="raise"):
         actual = execute(node, X)
         np.testing.assert_array_equal(actual, execute(render(node), X))
-    z = X[:, 0]
-    if activation == "identity":
-        expected = z
-    elif activation == "relu":
-        expected = np.maximum(0, z)
-        assert isinstance(node, Conditional)
-    elif activation == "logistic":
-        expected = np.exp(-np.logaddexp(0, -z))
-    else:
-        expected = np.tanh(z)
-    np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-15)
+    assert isinstance(node, Conditional)
+    assert render(node) == "x0 if x0>0.00e+00 else 0.00e+00"
+    np.testing.assert_array_equal(actual, np.maximum(0, X[:, 0]))
 
 
 def test_network_neuron_and_layer_structure():
@@ -249,12 +237,11 @@ def test_network_neuron_and_layer_structure():
     assert constants == [1., 2., 3.]
 
 
-@pytest.mark.parametrize("activation", ["identity", "relu", "logistic", "tanh"])
 @pytest.mark.parametrize("hidden_layers", [(3,), (3, 2)])
-def test_network_regression_iteration_contract(activation, hidden_layers):
+def test_network_regression_iteration_contract(hidden_layers):
     X = np.random.default_rng(4).integers(-1, 2, size=(40, 2)).astype(float)
     y = 1 + X[:, 0] - 2 * X[:, 1]
-    model = MLPRegressor(hidden_layer_sizes=hidden_layers, activation=activation,
+    model = MLPRegressor(hidden_layer_sizes=hidden_layers, activation="relu",
                          solver="lbfgs", alpha=0.1, random_state=3, max_iter=2000).fit(X, y)
     description = describe_model(model)
     _assert_network_description(description, model, X, regression=True)
@@ -272,12 +259,12 @@ def test_network_execution_uses_quantized_parameters():
                                rounded.predict(X), rtol=1e-12, atol=1e-12)
 
 
-@pytest.mark.parametrize("activation", ["identity", "relu", "logistic", "tanh"])
+@pytest.mark.parametrize("hidden_layers", [(4,), (4, 3)])
 @pytest.mark.parametrize("n_classes", [2, 3, 4])
-def test_network_classification_iteration_contract(activation, n_classes):
+def test_network_classification_iteration_contract(hidden_layers, n_classes):
     X, y = make_blobs(n_samples=60, n_features=2, centers=n_classes,
                       cluster_std=0.05, random_state=10)
-    model = MLPClassifier(hidden_layer_sizes=(4,), activation=activation,
+    model = MLPClassifier(hidden_layer_sizes=hidden_layers, activation="relu",
                           solver="lbfgs", random_state=3, max_iter=2000).fit(X, y)
     description = describe_model(model)
     _assert_network_description(description, model, X, regression=False)
@@ -307,7 +294,7 @@ def _assert_network_description(description, model, X, *, regression):
 def test_network_metric_integration_uses_bounded_program():
     X = np.tile([[-1., 0.], [0., -1.], [0., 1.], [1., 0.]], (20, 1))
     y = 2 * X[:, 0] + X[:, 1]
-    model = MLPRegressor(hidden_layer_sizes=(2,), activation="identity",
+    model = MLPRegressor(hidden_layer_sizes=(2,), activation="relu",
                          solver="lbfgs", random_state=2, max_iter=1000).fit(X, y)
     description = describe_model(model)
     surfeit = Surfeit().fit(X, y)
@@ -321,3 +308,59 @@ def test_network_metric_integration_uses_bounded_program():
         subset=sklearn_model_artifacts(model, X).subset,
         predictions=model.predict(X), model_string=description.canonical,
     ))
+
+
+@pytest.mark.parametrize("activation", ["identity", "logistic", "tanh"])
+@pytest.mark.parametrize("model_type", [MLPClassifier, MLPRegressor])
+def test_network_rejects_unsupported_hidden_activations(model_type, activation):
+    X = np.tile([[-1., 0.], [0., -1.], [0., 1.], [1., 0.]], (20, 1))
+    y = (X[:, 0] > 0).astype(int) if model_type is MLPClassifier else X[:, 0]
+    model = model_type(hidden_layer_sizes=(2,), activation=activation,
+                       solver="lbfgs", random_state=2, max_iter=2000).fit(X, y)
+    predictions = model.predict(X)
+    for operation in (
+        lambda: describe_model(model),
+        lambda: sklearn_model_artifacts(model, X),
+        lambda: Surfeit().fit(X, y).surfeit_model(model),
+        lambda: Mismodel().fit(X, y).mismodel_model(model),
+        lambda: Nescience().fit(X, y).nescience_model(model),
+    ):
+        with pytest.raises(ValueError, match=f"{activation!r}.*only ReLU hidden activation"):
+            operation()
+    assert model.activation == activation
+    np.testing.assert_array_equal(model.predict(X), predictions)
+
+
+@pytest.mark.parametrize("activation", ["identity", "logistic", "tanh"])
+def test_single_class_network_validates_hidden_activation(activation):
+    X = np.arange(12).reshape(6, 2)
+    model = MLPClassifier(hidden_layer_sizes=(2,), activation=activation,
+                          solver="lbfgs", random_state=2).fit(X, ["only"] * 6)
+    with pytest.raises(ValueError, match=f"{activation!r}.*only ReLU hidden activation"):
+        describe_model(model)
+
+
+def test_network_regression_output_is_not_clipped():
+    X = np.array([[-1., 0.], [0., -1.], [0., 1.], [1., 0.]])
+    model = MLPRegressor(hidden_layer_sizes=(2,), activation="relu",
+                         solver="lbfgs", random_state=2).fit(X, X[:, 0])
+    model.coefs_ = [np.eye(2), np.array([[-2.], [-1.]])]
+    model.intercepts_ = [np.zeros(2), np.array([-1.])]
+    description = describe_model(model)
+    assert isinstance(description.ast.vector.expression, Binary)
+    assert any(isinstance(node, Conditional) for node in _nodes(description.ast))
+    np.testing.assert_array_equal(execute(description.ast, X), [-1., -1., -2., -3.])
+    _assert_network_description(description, model, X, regression=True)
+
+
+@pytest.mark.parametrize("n_classes", [2, 3])
+def test_network_classification_ties_choose_first_class(n_classes):
+    X = np.arange(n_classes * 4, dtype=float).reshape(-1, 2)
+    y = np.tile([f"class {index}" for index in range(n_classes)], 2)
+    model = MLPClassifier(hidden_layer_sizes=(2,), activation="relu",
+                          solver="lbfgs", random_state=2, max_iter=2000).fit(X, y)
+    model.coefs_[-1][:] = 0
+    model.intercepts_[-1][:] = 0
+    description = describe_model(model)
+    np.testing.assert_array_equal(execute(description.ast, X), [model.classes_[0]] * len(X))
+    _assert_network_description(description, model, X, regression=False)

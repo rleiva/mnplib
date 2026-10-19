@@ -4,7 +4,7 @@ import json
 
 from .nodes import (
     Constant, Label, Feature, Negate, Binary, And,
-    Conditional, Vector, Element, Index, Sum, Comprehension, Exp
+    Conditional, Vector, Element, Index, Sum, Comprehension
 )
 from .normalize import normalize
 
@@ -71,9 +71,6 @@ def _render(node):
 
     if kind is Index:
         return node.name
-
-    if kind is Exp:
-        return "exp(" + _render(node.operand) + ")"
 
     if kind in (Sum, Comprehension):
         body = _render(node.expression) + f" for {node.index} in range({node.size})"

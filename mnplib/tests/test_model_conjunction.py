@@ -135,7 +135,7 @@ def test_multiclass_logistic_description_roundtrips(n_classes):
     assert description.canonical.count(" if ") == n_classes - 1
     assert render(parse(description.canonical)) == description.canonical
     payload = json.loads(json.dumps(description.to_dict()))
-    assert payload["schema_version"] == 3
+    assert payload["schema_version"] == 4
     assert '"type": "and"' in json.dumps(payload["ast"])
     assert '"type": "classify"' not in json.dumps(payload["ast"])
     restored = ModelDescription.from_dict(payload)

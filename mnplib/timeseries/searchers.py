@@ -163,7 +163,7 @@ class ExponentialSmoothingSearcher(ModelFamilySearcher):
 
 
 class ARIMASearcher(ModelFamilySearcher):
-    """Report that stateful ARIMA descriptions are outside schema version 3."""
+    """Report that stateful ARIMA descriptions are outside schema version 4."""
 
     family = "arima"
 
@@ -172,7 +172,7 @@ class ARIMASearcher(ModelFamilySearcher):
             "family": self.family,
             "reason": "unsupported_model_description",
             "error": f"{self.family} requires a stateful executable description; "
-                     "model-language schema version 3 does not support it.",
+                     "model-language schema version 4 does not support it.",
         }])
 
 

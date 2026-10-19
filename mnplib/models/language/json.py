@@ -2,7 +2,7 @@
 
 from .nodes import (
     Constant, Label, Feature, Negate, Binary, And, Conditional,
-    Vector, Element, Index, Sum, Comprehension, Exp,
+    Vector, Element, Index, Sum, Comprehension,
 )
 from .normalize import normalize
 
@@ -30,8 +30,6 @@ def _node_to_dict(node):
         return {"type": "sum" if kind is Sum else "comprehension",
                 "index": node.index, "size": node.size,
                 "expression": _node_to_dict(node.expression)}
-    if kind is Exp:
-        return {"type": "exp", "operand": _node_to_dict(node.operand)}
     if kind is Negate:
         return {"type": "negate", "operand": _node_to_dict(node.operand)}
     if kind is Binary:
@@ -69,8 +67,6 @@ def _node_from_dict(data):
         elif kind in ("sum", "comprehension"):
             node = (Sum if kind == "sum" else Comprehension)(
                 data["index"], data["size"], _node_from_dict(data["expression"]))
-        elif kind == "exp":
-            node = Exp(_node_from_dict(data["operand"]))
         elif kind == "negate":
             node = Negate(_node_from_dict(data["operand"]))
         elif kind in _NAMES.values():

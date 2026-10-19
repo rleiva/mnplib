@@ -8,7 +8,7 @@ import re
 
 from .nodes import (
     ModelNode, Constant, Label, Feature, Negate, Binary, And, Conditional,
-    Vector, Element, Index, Sum, Comprehension, Exp,
+    Vector, Element, Index, Sum, Comprehension,
 )
 
 OPERATORS = frozenset(("+", "-", "*", "/", "**", "<", "<=", ">", ">=", "=="))
@@ -39,7 +39,7 @@ def _index(value):
 
 def _index_name(name):
     if (not isinstance(name, str) or re.fullmatch(r"[a-z][a-z0-9_]*", name) is None
-            or iskeyword(name) or name in {"sum", "range", "exp", "at", "label"}
+            or iskeyword(name) or name in {"sum", "range", "at", "label"}
             or re.fullmatch(r"x[0-9]+", name)):
         raise ValueError("Iteration indices require a non-reserved lowercase identifier.")
     return name
@@ -80,8 +80,6 @@ def _normalize(node, scope):
         if node.size == 0:
             return Constant(0.0) if kind is Sum else Vector(())
         return kind(name, int(node.size), expression)
-    if kind is Exp:
-        return Exp(_normalize(node.operand, scope))
     if kind is Negate:
         operand = _normalize(node.operand, scope)
         if type(operand) is Negate:

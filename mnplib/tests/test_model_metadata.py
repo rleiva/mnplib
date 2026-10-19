@@ -36,7 +36,7 @@ def fitted_case(request):
         "tree_regressor": (DecisionTreeRegressor(max_depth=2, random_state=2), regression),
         "linear_svc": (LinearSVC(random_state=2, max_iter=10000), classes),
         "linear_svr": (LinearSVR(random_state=2, max_iter=10000), regression),
-        "mlp_classifier": (MLPClassifier(hidden_layer_sizes=(3, 2), activation="tanh",
+        "mlp_classifier": (MLPClassifier(hidden_layer_sizes=(3, 2), activation="relu",
                                          solver="lbfgs", random_state=2, max_iter=1000), classes),
         "mlp_regressor": (MLPRegressor(hidden_layer_sizes=(3, 2), activation="relu",
                                        solver="lbfgs", random_state=2, max_iter=1000), regression),
@@ -157,13 +157,13 @@ def test_feature_mapping_is_independent_of_metadata(model_type, monkeypatch):
 def test_network_metadata_describes_fitted_activation_structure(hidden, model_type):
     X = np.tile([[-1., 0.], [0., -1.], [0., 1.], [1., 0.]], (10, 1))
     y = (X[:, 0] > 0).astype(int) if model_type is MLPClassifier else X[:, 0]
-    model = model_type(hidden_layer_sizes=hidden, activation="logistic", solver="lbfgs",
+    model = model_type(hidden_layer_sizes=hidden, activation="relu", solver="lbfgs",
                        random_state=2, max_iter=1000).fit(X, y)
     expected = [] if hidden == () else [2] if hidden == 2 else [2, 3]
     metadata = describe_model(model).to_dict()["metadata"]
     assert metadata["hidden_layer_sizes"] == expected
     output_activation = "logistic" if model_type is MLPClassifier else "identity"
-    assert metadata["activations"] == ["logistic"] * len(expected) + [output_activation]
+    assert metadata["activations"] == ["relu"] * len(expected) + [output_activation]
     assert "n_outputs" not in metadata
     assert "n_layers" not in metadata
 

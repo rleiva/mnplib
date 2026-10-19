@@ -38,7 +38,6 @@ class _BaseMLPSearch(ModelFamilySearcher):
         min_improvement: float = 1e-4,
         patience: int = 1,
         solver: str = "adam",
-        activation: str = "relu",
         alpha: float = 0.0001,
         max_iter: int = 100,
         tol: float = 1e-4,
@@ -55,7 +54,6 @@ class _BaseMLPSearch(ModelFamilySearcher):
         self.min_improvement = float(min_improvement)
         self.patience = int(patience)
         self.solver = solver
-        self.activation = activation
         self.alpha = float(alpha)
         self.max_iter = int(max_iter)
         self.tol = float(tol)
@@ -189,7 +187,7 @@ class _BaseMLPSearch(ModelFamilySearcher):
         X_scaled = scaler.fit_transform(X_selected)
         model = self.estimator_cls(
             hidden_layer_sizes=state[1],
-            activation=self.activation,
+            activation="relu",
             solver=self.solver,
             alpha=self.alpha,
             max_iter=self.max_iter,
@@ -238,7 +236,6 @@ class _BaseMLPSearch(ModelFamilySearcher):
             input_transformer=scaler,
             hyperparameters={
                 "hidden_layer_sizes": state[1],
-                "activation": self.activation,
                 "solver": self.solver,
                 "alpha": self.alpha,
                 "max_iter": self.max_iter,
