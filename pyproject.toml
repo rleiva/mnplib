@@ -31,6 +31,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
+    "joblib>=1.6",
     "lark>=1.2",
     "numpy>=1.23",
     "pandas>=1.5",

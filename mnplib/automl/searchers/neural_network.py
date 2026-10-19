@@ -4,16 +4,15 @@ Optional nescience-guided neural-network architecture search.
 
 from __future__ import annotations
 
-import warnings
 from typing import Literal
 
-from sklearn.exceptions import ConvergenceWarning
 from sklearn.neural_network import MLPClassifier, MLPRegressor
 from sklearn.preprocessing import StandardScaler
 
 from mnplib.automl.wrappers import SelectedFeaturesEstimator
 
 from ._feature_order import miscoding_feature_order
+from ._fit import fit_with_convergence_flag
 from .base import ModelFamilySearcher, SearchContext, search_report
 
 
@@ -199,7 +198,7 @@ class _BaseMLPSearch(ModelFamilySearcher):
         )
 
         try:
-            self._fit_with_convergence_flag(model, X_scaled, context.y)
+            converged = fit_with_convergence_flag(model, X_scaled, context.y)
         except Exception as exc:
             diagnostics.append(
                 {
@@ -212,6 +211,15 @@ class _BaseMLPSearch(ModelFamilySearcher):
                 }
             )
             return None
+
+        if not converged:
+            diagnostics.append({
+                "family": self.family,
+                "reason": "mlp_convergence_warning",
+                "move": move,
+                "n_selected_features": int(n_selected_features),
+                "hidden_layer_sizes": state[1],
+            })
 
         public_model = SelectedFeaturesEstimator(
             model,
@@ -272,17 +280,6 @@ class _BaseMLPSearch(ModelFamilySearcher):
         return (
             f"{self.family}_{move}_features_{n_selected_features}_"
             f"hidden_{hidden_text}"
-        )
-
-    @staticmethod
-    def _fit_with_convergence_flag(model, X, y) -> bool:
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always", ConvergenceWarning)
-            model.fit(X, y)
-
-        return not any(
-            issubclass(warning.category, ConvergenceWarning)
-            for warning in caught
         )
 
 class MLPClassifierSearch(_BaseMLPSearch):

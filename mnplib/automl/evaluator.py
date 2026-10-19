@@ -56,7 +56,8 @@ class CandidateEvaluator:
         else:
             feature_indices = tuple(int(index) for index in feature_indices)
             X_for_adapter = (
-                self.X[:, feature_indices]
+                (self.X.iloc[:, list(feature_indices)] if hasattr(self.X, "iloc")
+                 else self.X[:, feature_indices])
                 if X_adapter is None
                 else X_adapter
             )

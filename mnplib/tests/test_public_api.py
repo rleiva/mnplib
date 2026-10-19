@@ -1,6 +1,7 @@
 """Consistent model metrics, feature coordinates, and search configuration."""
 
 import copy
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -72,6 +73,7 @@ def test_indices_and_boolean_masks_have_distinct_meanings(data):
     assert metric.select_features().dtype == np.dtype(bool)
 
 
+@pytest.mark.filterwarnings("error:.*valid feature names.*:UserWarning")
 def test_subset_model_coordinates_match_candidate_evaluation(data):
     X, y = data
     indices = [3, 1]
@@ -80,7 +82,7 @@ def test_subset_model_coordinates_match_candidate_evaluation(data):
     metric = Nescience().fit(X, y)
     direct = metric.model_analysis(model, feature_indices=indices)
     explicit = metric.model_analysis(model, X=local_X, feature_indices=indices)
-    result = CandidateEvaluator(X=X.to_numpy(), y=y, nescience=metric,
+    result = CandidateEvaluator(X=X, y=y, nescience=metric,
                                 feature_names=X.columns).evaluate(
         name="tree", family="decision_tree", model=model, feature_indices=indices)
     assert direct["selected_features"] == [3]
@@ -137,6 +139,24 @@ def test_fit_y_allows_explicit_evaluation_inputs(data):
     assert metric.inaccuracy_model(model, X=X) == metric.inaccuracy_predictions(model.predict(X))
     metric = Surfeit().fit_y(y)
     assert np.isfinite(metric.surfeit_model(model))
+
+
+@pytest.mark.parametrize("fit_y_only", [False, True])
+@pytest.mark.parametrize("explicit_X", [False, True])
+def test_surfeit_uses_model_structure_without_predicting(data, monkeypatch, fit_y_only, explicit_X):
+    X, y = data
+    model = LinearRegression().fit(X, y)
+    metric = Surfeit().fit_y(y) if fit_y_only else Surfeit().fit(X, y)
+    expected = metric.model_analysis(model)
+
+    def reject_prediction(*args, **kwargs):
+        raise AssertionError("Description analysis must not evaluate predictions.")
+
+    monkeypatch.setattr(model, "predict", reject_prediction)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert metric.model_analysis(model, X=X if explicit_X else None) == expected
+        assert metric.surfeit_model(model, X=X if explicit_X else None) == expected["surfeit"]
 
 
 @pytest.mark.parametrize("cls,family", [(NescienceClassifier, "decision_tree"),

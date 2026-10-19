@@ -647,7 +647,7 @@ def test_logistic_regression_feature_prefix_search_evaluates_finite_prefixes():
     assert any(not result.is_reliable for result in logistic_results)
     assert all(
         result.hyperparameters == {
-            "penalty": None,
+            "C": np.inf,
             "solver": "lbfgs",
             "max_iter": 1000,
         }

@@ -4,14 +4,12 @@ Compact linear SVM model-family searchers.
 
 from __future__ import annotations
 
-import warnings
-
-from sklearn.exceptions import ConvergenceWarning
 from sklearn.svm import LinearSVC, LinearSVR
 
 from mnplib.automl.wrappers import SelectedFeaturesEstimator
 
 from ._feature_order import miscoding_feature_order
+from ._fit import fit_with_convergence_flag
 from .base import ModelFamilySearcher, SearchContext, search_report
 
 
@@ -53,7 +51,7 @@ class LinearSVCSearcher(ModelFamilySearcher):
                 random_state=self.random_state,
             )
             try:
-                _fit_with_convergence_flag(model, context.X, context.y)
+                converged = fit_with_convergence_flag(model, context.X, context.y)
             except Exception as exc:
                 diagnostics.append(
                     {
@@ -64,6 +62,13 @@ class LinearSVCSearcher(ModelFamilySearcher):
                     }
                 )
                 continue
+
+            if not converged:
+                diagnostics.append({
+                    "family": self.family,
+                    "reason": "linear_svc_convergence_warning",
+                    "C": float(C),
+                })
 
             results.append(
                 context.evaluator.evaluate(
@@ -130,7 +135,7 @@ class LinearSVRSearcher(ModelFamilySearcher):
                 random_state=self.random_state,
             )
             try:
-                converged = _fit_with_convergence_flag(
+                converged = fit_with_convergence_flag(
                     model,
                     context.X[:, selected],
                     context.y,
@@ -181,14 +186,3 @@ class LinearSVRSearcher(ModelFamilySearcher):
             )
 
         return search_report(self.family, results, diagnostics)
-
-
-def _fit_with_convergence_flag(model, X, y) -> bool:
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always", ConvergenceWarning)
-        model.fit(X, y)
-
-    return not any(
-        issubclass(warning.category, ConvergenceWarning)
-        for warning in caught
-    )

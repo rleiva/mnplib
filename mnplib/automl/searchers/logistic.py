@@ -4,14 +4,14 @@ Nescience-based feature-prefix search for logistic regression.
 
 from __future__ import annotations
 
-import warnings
+import numpy as np
 
-from sklearn.exceptions import ConvergenceWarning
 from sklearn.linear_model import LogisticRegression
 
 from mnplib.automl.wrappers import SelectedFeaturesEstimator
 
 from ._feature_order import miscoding_feature_order
+from ._fit import fit_with_convergence_flag
 from .base import ModelFamilySearcher, SearchContext, search_report
 
 
@@ -47,7 +47,6 @@ class LogisticRegressionPrefixSearcher(ModelFamilySearcher):
             raise ValueError("max_iter must be a positive integer.")
 
         self.solver       = "lbfgs"
-        self.penalty      = None
         self.max_iter     = int(max_iter)
         self.random_state = random_state
 
@@ -126,7 +125,7 @@ class LogisticRegressionPrefixSearcher(ModelFamilySearcher):
                 feature_indices = selected,
                 result_model    = public_model,
                 hyperparameters = {
-                    "penalty": None,
+                    "C": np.inf,
                     "solver": self.solver,
                     "max_iter": self.max_iter,
                 },
@@ -154,7 +153,7 @@ class LogisticRegressionPrefixSearcher(ModelFamilySearcher):
             return (
                 None,
                 {
-                    "penalty"       : None,
+                    "C"             : np.inf,
                     "solver"        : self.solver,
                     "max_iter"      : self.max_iter,
                     "converged"     : False,
@@ -164,7 +163,7 @@ class LogisticRegressionPrefixSearcher(ModelFamilySearcher):
             )
 
         fit_details: dict[str, object] = {
-            "penalty"   : None,
+            "C"         : np.inf,
             "solver"    : self.solver,
             "max_iter"  : self.max_iter,
             "converged" : bool(converged),
@@ -176,24 +175,16 @@ class LogisticRegressionPrefixSearcher(ModelFamilySearcher):
         """
         Fit the sklearn logistic-regression estimator.
 
-        No regularization parameter is supplied. In particular, C is not passed,
-        because C only has meaning for regularized logistic regression.
+        Infinite C gives zero regularization strength.
         """
         model = LogisticRegression(
-            penalty      = None,
+            C            = np.inf,
             solver       = self.solver,
             max_iter     = self.max_iter,
             random_state = self.random_state,
         )
 
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always", ConvergenceWarning)
-            model.fit(X, y)
-
-        converged = not any(
-            issubclass(warning.category, ConvergenceWarning)
-            for warning in caught
-        )
+        converged = fit_with_convergence_flag(model, X, y)
 
         return model, converged
 

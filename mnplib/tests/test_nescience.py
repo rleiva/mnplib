@@ -145,12 +145,28 @@ def test_sparse_diagnostics_and_candidate_evaluation_are_quiet():
     [
         ({"X_type": "mixed"}, "X_type"),
         ({"X_type": "invalid"}, "X_type"),
+        ({"X_type": None}, "X_type"),
+        ({"X_type": True}, "X_type"),
+        ({"X_type": ["auto"]}, "X_type"),
+        ({"X_type": np.array(["numeric"])}, "X_type"),
+        ({"X_type": np.array(["auto", "numeric"])}, "X_type"),
         ({"y_type": "invalid"}, "y_type"),
     ],
 )
 def test_constructor_rejects_invalid_configuration(kwargs, message):
     with pytest.raises(ValueError, match=message):
         Nescience(**kwargs)
+
+
+@pytest.mark.parametrize("X_type", [
+    "invalid", None, ["auto"], np.array(["numeric"]), np.array(["auto", "numeric"]),
+])
+def test_fit_revalidates_feature_policy_after_parameter_update(X_type):
+    metric, X, y = fitted_metric()
+    metric.set_params(X_type=X_type)
+    with pytest.raises(ValueError, match="Valid options for 'X_type'"):
+        metric.fit(X, y)
+    assert not metric.__sklearn_is_fitted__()
 
 
 def test_fit_sets_attributes_and_component_estimators():

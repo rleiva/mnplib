@@ -2,6 +2,7 @@
 
 import inspect
 import math
+from fractions import Fraction
 from unittest.mock import Mock
 
 import numpy as np
@@ -147,16 +148,29 @@ def test_nonfinite_dimensions_remain_visible_with_zero_weights(weight, value):
 
 
 @pytest.mark.parametrize("weight", [
-    None, -0.1, 1.1, np.nextafter(0, -1), np.nextafter(1, 2), 10**400,
+    None, -0.1, 1.1, np.nextafter(0, -1), np.nextafter(1, 2), 10**400, -(10**400),
+    Fraction(-1, 10**400), Fraction(10**400 + 1, 10**400),
     np.nan, np.inf, -np.inf, "0.5", b"0.5",
     True, np.bool_(False), 0.5+0j, [0.5], [0.5, 0.5], {"miscoding": 0.5}, np.array([0.5]),
 ])
-def test_invalid_weight_configurations_are_rejected(weight, categorical_data):
-    metric = Nescience(weight=weight)
+@pytest.mark.parametrize("set_parameters", [False, True], ids=["constructor", "set_params"])
+def test_invalid_weight_configurations_are_rejected(weight, set_parameters, categorical_data):
+    metric = Nescience().set_params(weight=weight) if set_parameters else Nescience(weight=weight)
     with pytest.raises(ValueError, match="weight.*between 0 and 1"):
         metric.aggregate_components(miscoding=0.2, mismodel=0.3)
     with pytest.raises(ValueError, match="weight.*between 0 and 1"):
         metric.fit(*categorical_data)
+
+
+@pytest.mark.parametrize("weight", [
+    np.float32(0.25), np.float64(0.75), np.int64(0), np.int64(1), Fraction(1, 4),
+])
+def test_real_scalar_weights_preserve_parameters_and_compute_scores(weight, categorical_data):
+    metric = Nescience(weight=weight).fit(*categorical_data)
+    expected = math.sqrt(float(weight) * 0.2**2 + (1 - float(weight)) * 0.8**2)
+    assert metric.aggregate_components(miscoding=0.2, mismodel=0.8) == pytest.approx(expected)
+    assert metric.get_params()["weight"] is weight
+    assert clone(metric).get_params() == metric.get_params()
 
 
 def test_weight_parameter_updates_and_cloning(categorical_data):

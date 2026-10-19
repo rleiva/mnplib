@@ -64,6 +64,7 @@ class Nescience(BaseEstimator):
         y_type: YType = "auto",
         weight: float = 0.5,
     ):
+        self._validate_init(X_type=X_type, y_type=y_type)
         self.X_type = X_type
         self.y_type = y_type
         self.weight = weight
@@ -310,22 +311,16 @@ class Nescience(BaseEstimator):
         """Return the current miscoding coefficient after validating its range."""
 
         if (not isinstance(self.weight, Real)
-            or isinstance(self.weight, (bool, np.bool_))): # Explicitly reject True and False
-            raise ValueError("weight must be a finite real number between 0 and 1."
-        )
+                or isinstance(self.weight, (bool, np.bool_))
+                or not 0 <= self.weight <= 1):
+            raise ValueError("weight must be a finite real number between 0 and 1.")
 
-        weight = float(self.weight)
-
-        if not np.isfinite(weight) or not 0.0 <= weight <= 1.0:
-            raise ValueError("weight must be a finite real number between 0 and 1."
-        )
-
-        return weight
+        return float(self.weight)
 
     @classmethod
     def _validate_init(cls, *, X_type, y_type) -> None:
         """Validate feature and target encoding policies."""
-        if X_type not in cls._VALID_X_TYPES:
+        if not isinstance(X_type, str) or X_type not in cls._VALID_X_TYPES:
             raise ValueError(
                 "Valid options for 'X_type' are {}. Got X_type={!r} instead."
                 .format(cls._VALID_X_TYPES, X_type)

@@ -23,7 +23,7 @@ from sklearn.utils import check_X_y
 from sklearn.utils.validation import check_is_fitted
 
 from ._types import YType
-from .models.inputs import model_artifacts
+from .models.inputs import model_structure
 from .utils import (
     _resolve_feature_names,
     _resolve_y_isnumeric,
@@ -195,13 +195,12 @@ class Surfeit(BaseEstimator):
         """
         check_is_fitted(self)
 
-        # Compute a canonical model description from the fitted estimator.
-        model_string = model_artifacts(
+        description, _ = model_structure(
             self, model, X=X, feature_names=feature_names,
-            feature_indices=feature_indices, allow_dummy=True,
-        ).model_string
+            feature_indices=feature_indices,
+        )
 
-        return self.surfeit_string(model_string)
+        return self.surfeit_string(description.canonical)
 
     def model_analysis(
         self,
@@ -236,16 +235,16 @@ class Surfeit(BaseEstimator):
             the diagnostics returned by ``description_analysis()``.
         """
         check_is_fitted(self)
-        artifacts = model_artifacts(
+        description, subset = model_structure(
             self, model, X=X, feature_names=feature_names,
-            feature_indices=feature_indices, allow_dummy=True,
+            feature_indices=feature_indices,
         )
         return {
-            "model_string"        : artifacts.model_string,
-            **self.description_analysis(artifacts.model_string),
-            "model_type"          : artifacts.model_type,
-            "selected_features"   : list(artifacts.subset),
-            "n_selected_features" : len(artifacts.subset),
+            "model_string"        : description.canonical,
+            **self.description_analysis(description.canonical),
+            "model_type"          : description.model_type,
+            "selected_features"   : subset,
+            "n_selected_features" : len(subset),
         }
 
     def description_analysis(self, model_string: str) -> dict[str, object]:
