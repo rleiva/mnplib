@@ -7,10 +7,10 @@ are samples whose observed and predicted target values fall in different bins of
 a common uniform discretization of the target domain.
 
 Mismatch is the anomaly criterion. Information-theoretic quantities characterize
-all observations. The class also applies supervised
-miscoding to the anomalous subset to identify attributes associated with
-systematic anomaly patterns, and measures how compressible the predicted target
-states of anomalous observations are.
+all observations. The class also applies supervised miscoding to the anomalous
+subset to identify attributes associated with systematic anomaly patterns,
+and measures how compressible the predicted target states of anomalous
+observations are.
 
 @author:    Rafael Garcia Leiva
 @mail:      rgarcialeiva@gmail.com
@@ -52,12 +52,12 @@ class ResidualAnalysis(BaseEstimator):
     do not measure generalization. Feature explanations are computed lazily.
     """
 
-    _VALID_TASKS = get_args(Task)
+    _VALID_TASKS   = get_args(Task)
     _VALID_X_TYPES = get_args(XType)
-    _VALID_KINDS = get_args(AnomalyKind)
+    _VALID_KINDS   = get_args(AnomalyKind)
 
     def __init__(self, task: Task = "auto", X_type: XType = "auto"):
-        self.task = task
+        self.task   = task
         self.X_type = X_type
 
     def fit(self, X, y, *, predictions, sample_ids=None):
@@ -119,9 +119,9 @@ class ResidualAnalysis(BaseEstimator):
             raise ValueError(f"{name} must contain only finite values.")
         return array
 
-    # ------------------------------------------------------------------
+    #
     # Public reports
-    # ------------------------------------------------------------------
+    #
 
     def anomalies(self, kind: AnomalyKind = "all") -> np.ndarray:
         """
@@ -157,28 +157,28 @@ class ResidualAnalysis(BaseEstimator):
 
         table = pd.DataFrame(
             {
-                "sample_index": np.arange(self.n_samples_in_, dtype=int),
-                "sample_id": self.sample_ids_,
-                "pattern_id": self.correction_state_,
-                "observed_state": self.y_true_state_,
-                "predicted_state": self.y_pred_state_,
-                "y_true": self.y_,
-                "y_pred": self.y_pred_,
-                "is_anomaly": self.anomaly_mask_,
-                "anomaly_kind": self.anomaly_kind_,
-                "local_correction_information": self.local_correction_information_,
-                "negative_local_explanatory_gain": self.negative_local_explanatory_gain_,
+                "sample_index"    : np.arange(self.n_samples_in_, dtype=int),
+                "sample_id"       : self.sample_ids_,
+                "pattern_id"      : self.correction_state_,
+                "observed_state"  : self.y_true_state_,
+                "predicted_state" : self.y_pred_state_,
+                "y_true"          : self.y_,
+                "y_pred"          : self.y_pred_,
+                "is_anomaly"      : self.anomaly_mask_,
+                "anomaly_kind"    : self.anomaly_kind_,
+                "local_correction_information"    : self.local_correction_information_,
+                "negative_local_explanatory_gain" : self.negative_local_explanatory_gain_,
             }
         )
 
         if self.task_ == "classification":
-            table["correct"] = self.y_ == self.y_pred_
+            table["correct"]    = self.y_ == self.y_pred_
         else:
-            table["residual"] = self.residual_
-            table["direction"] = self.direction_
+            table["residual"]   = self.residual_
+            table["direction"]  = self.direction_
             table["y_true_bin"] = self.y_true_bin_
             table["y_pred_bin"] = self.y_pred_bin_
-            table["bin_match"] = self.y_true_bin_ == self.y_pred_bin_
+            table["bin_match"]  = self.y_true_bin_ == self.y_pred_bin_
 
         if only_anomalies:
             table = table[table["is_anomaly"]].copy()
@@ -396,9 +396,9 @@ class ResidualAnalysis(BaseEstimator):
         }
 
 
-    # ------------------------------------------------------------------
+    #
     # Anomaly detection
-    # ------------------------------------------------------------------
+    #
 
     def _compute_anomalies(self) -> None:
         """Compute task-specific anomaly masks and symbolic target states."""
@@ -450,9 +450,9 @@ class ResidualAnalysis(BaseEstimator):
         self.anomaly_mask_ = np.asarray(mismatched, dtype=bool)
         self.anomaly_kind_ = np.where(self.anomaly_mask_, self.direction_, "regular")
 
-    # ------------------------------------------------------------------
+    #
     # Information diagnostics
-    # ------------------------------------------------------------------
+    #
 
     def _compute_information_diagnostics(self) -> None:
         """
@@ -578,9 +578,9 @@ class ResidualAnalysis(BaseEstimator):
 
         return max(1, n_states)
 
-    # ------------------------------------------------------------------
+    #
     # Encoding helpers
-    # ------------------------------------------------------------------
+    #
 
     def _common_numeric_bins(
         self,
@@ -630,9 +630,9 @@ class ResidualAnalysis(BaseEstimator):
         n = observed.shape[0]
         return codes[:n].astype(int), codes[n:].astype(int)
 
-    # ------------------------------------------------------------------
+    #
     # Masks
-    # ------------------------------------------------------------------
+    #
 
     def _mask_for_kind(self, kind: AnomalyKind) -> np.ndarray:
         """Return a boolean anomaly mask for the requested kind."""
@@ -667,9 +667,9 @@ class ResidualAnalysis(BaseEstimator):
         """Return samples for which the model predicted too large a value."""
         return np.asarray(getattr(self, "residual_", np.array([]))) < 0
 
-    # ------------------------------------------------------------------
+    #
     # Validation and configuration
-    # ------------------------------------------------------------------
+    #
 
     def _validate_configuration(self) -> None:
         """Validate constructor parameters before fitting."""

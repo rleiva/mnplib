@@ -100,7 +100,7 @@ class NescienceClassifier(ClassifierMixin, BaseEstimator):
         self.feature_ranking_criterion  = feature_ranking_criterion
         self.max_feature_prefixes       = max_feature_prefixes
         self.random_state               = random_state
-        self.search_options            = search_options
+        self.search_options             = search_options
         self.verbose                    = verbose
 
         # Addtional private attributes
@@ -299,10 +299,7 @@ class NescienceClassifier(ClassifierMixin, BaseEstimator):
         return candidate_results_dataframe(self.results_, self.feature_names_in_)
 
 
-    def model_description(
-        self,
-        candidate: str | None = None,
-    ) -> dict[str, object]:
+    def model_description(self, candidate: str | None = None) -> dict[str, object]:
         """
         Return model-description diagnostics for an evaluated candidate.
         """
